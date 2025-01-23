@@ -90,7 +90,7 @@ const PostManager = ({ darkMode }) => {
       await addDoc(postsCollection, {
         ...currentPost,
         authorId: user.uid,
-        authorName: user.name || user.displayName,
+        authorName: user.displayName || user.email.split("@")[0],
         authorEmail: user.email,
         imageUrl: imageData?.url || null,
         imagePath: imageData?.path || null,
@@ -146,7 +146,7 @@ const PostManager = ({ darkMode }) => {
           imagePath: imageData.path,
         }),
         updatedAt: serverTimestamp(),
-        lastEditedBy: user.name || user.displayName,
+        lastEditedBy: user.displayName || user.email.split("@")[0],
         lastEditedById: user.uid,
       });
 

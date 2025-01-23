@@ -231,7 +231,7 @@ const PostDetail = () => {
         postId,
         content: newComment,
         authorId: user.uid,
-        authorName: user.name || user.displayName,
+        authorName: user.displayName || user.email.split("@")[0],
         parentId: null,
         createdAt: serverTimestamp(),
       });
@@ -240,7 +240,7 @@ const PostDetail = () => {
         id: commentRef.id,
         content: newComment,
         authorId: user.uid,
-        authorName: user.name || user.displayName,
+        authorName: user.displayName || user.email.split("@")[0],
         parentId: null,
         createdAt: new Date(),
         replies: [],
@@ -261,7 +261,7 @@ const PostDetail = () => {
         postId,
         content,
         authorId: user.uid,
-        authorName: user.name || user.displayName,
+        authorName: user.displayName || user.email.split("@")[0],
         parentId,
         createdAt: serverTimestamp(),
       });
@@ -270,7 +270,7 @@ const PostDetail = () => {
         id: replyRef.id,
         content,
         authorId: user.uid,
-        authorName: user.name || user.displayName,
+        authorName: user.displayName || user.email.split("@")[0],
         parentId,
         createdAt: new Date(),
       };
