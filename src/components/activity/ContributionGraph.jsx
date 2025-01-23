@@ -232,31 +232,23 @@ const ContributionGraph = () => {
           ))}
         </div>
 
-        <div className="flex">
-          <div className="flex flex-col text-xs text-[#7D8590] mr-2 mt-4 space-y-3">
-            <span>Mon</span>
-            <span>Wed</span>
-            <span>Fri</span>
-          </div>
-
-          <div className="flex gap-[3px] flex-1">
-            {yearData.map((week, weekIndex) => (
-              <div key={weekIndex} className="flex flex-col gap-[3px] flex-1">
-                {week.map((day, dayIndex) => (
-                  <div
-                    key={`${weekIndex}-${dayIndex}`}
-                    className={`w-[10px] h-[10px] rounded-sm ${getContributionColor(
-                      day.count,
-                      day.date
-                    )}`}
-                    title={`${day.count} contributions on ${formatDate(
-                      day.date
-                    )}`}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+        <div className="flex gap-[3px] flex-1 mt-4">
+          {yearData.map((week, weekIndex) => (
+            <div key={weekIndex} className="flex flex-col gap-[3px] flex-1">
+              {week.map((day, dayIndex) => (
+                <div
+                  key={`${weekIndex}-${dayIndex}`}
+                  className={`w-[10px] h-[10px] rounded-sm ${getContributionColor(
+                    day.count,
+                    day.date
+                  )}`}
+                  title={`${day.count} contributions on ${formatDate(
+                    day.date
+                  )}`}
+                />
+              ))}
+            </div>
+          ))}
         </div>
 
         <div className="flex items-center mt-4 text-xs text-[#7D8590] space-x-2">

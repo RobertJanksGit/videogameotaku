@@ -59,7 +59,7 @@ const PasswordInput = ({ id, label, value, onChange, required = true }) => {
           id={id}
           value={value}
           onChange={onChange}
-          className="w-full px-3 py-1.5 text-sm bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors pr-8"
+          className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors pr-8"
           required={required}
         />
         <button
@@ -89,10 +89,10 @@ PasswordInput.propTypes = {
 const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
   const [mode, setMode] = useState(initialMode);
 
-  // Reset mode when initialMode changes
+  // Reset mode when initialMode changes or modal closes
   useEffect(() => {
     setMode(initialMode);
-  }, [initialMode]);
+  }, [initialMode, isOpen]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -117,8 +117,14 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
     try {
       if (mode === "login") {
         await login(email, password);
+        setEmail("");
+        setPassword("");
       } else {
         await signup(email, password, displayName);
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
+        setDisplayName("");
       }
       onClose();
     } catch (err) {
@@ -161,7 +167,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
               id="displayName"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
+              className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
               required
             />
           </div>
@@ -179,7 +185,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
             id="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3 py-1.5 text-sm bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
+            className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
             required
           />
         </div>
