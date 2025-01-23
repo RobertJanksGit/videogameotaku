@@ -10,6 +10,7 @@ import {
   limit,
   doc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
@@ -74,7 +75,16 @@ const HomePage = () => {
         const allPosts = await Promise.all(
           postsSnapshot.docs.map(async (doc) => {
             const post = { id: doc.id, ...doc.data() };
-            return migratePost(post);
+
+            // Fetch comment count for each post
+            const commentsQuery = query(
+              collection(db, "comments"),
+              where("postId", "==", doc.id)
+            );
+            const commentsSnapshot = await getDocs(commentsQuery);
+            const commentCount = commentsSnapshot.size;
+
+            return { ...(await migratePost(post)), commentCount };
           })
         );
 
@@ -85,7 +95,6 @@ const HomePage = () => {
         const sortedByVotes = [...allPosts].sort((a, b) => {
           const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
           if (voteDiff !== 0) return voteDiff;
-          // If votes are equal, use date as secondary sort
           return b.createdAt?.toMillis() - a.createdAt?.toMillis();
         });
 
@@ -179,15 +188,26 @@ const HomePage = () => {
               )}
               <div className="p-6">
                 <div className="flex items-center justify-between mb-2">
-                  <span
-                    className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                      darkMode
-                        ? "bg-gray-700 text-gray-300"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {post.category}
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span
+                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                        darkMode
+                          ? "bg-gray-700 text-gray-300"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {post.category}
+                    </span>
+                    <span
+                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                        darkMode
+                          ? "bg-gray-700 text-gray-300"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {post.platform || "N/A"}
+                    </span>
+                  </div>
                   {renderVoteButtons(post)}
                 </div>
                 <h3
@@ -235,13 +255,35 @@ const HomePage = () => {
                       <span>{post.authorName}</span>
                     </div>
                   </span>
-                  <span
-                    className={`text-xs ${
-                      darkMode ? "text-gray-400" : "text-gray-500"
-                    }`}
-                  >
-                    {post.createdAt?.toDate().toLocaleDateString()}
-                  </span>
+                  <div className="flex items-center space-x-4">
+                    <span
+                      className={`text-xs flex items-center space-x-1 ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                        />
+                      </svg>
+                      <span>{post.commentCount || 0}</span>
+                    </span>
+                    <span
+                      className={`text-xs ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      {post.createdAt?.toDate().toLocaleDateString()}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -277,31 +319,33 @@ const HomePage = () => {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-4">
-                    <span
-                      className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                        darkMode
-                          ? "bg-gray-700 text-gray-300"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {post.category}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                          darkMode
+                            ? "bg-gray-700 text-gray-300"
+                            : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {post.category}
+                      </span>
+                      <span
+                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                          darkMode
+                            ? "bg-gray-700 text-gray-300"
+                            : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {post.platform || "N/A"}
+                      </span>
+                    </div>
                     {renderVoteButtons(post)}
                   </div>
-                  <div className="flex items-center space-x-4">
-                    <ShareButtons
-                      url={`${window.location.origin}/post/${post.id}`}
-                      title={post.title}
-                      darkMode={darkMode}
-                    />
-                    <span
-                      className={`text-sm ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      {post.createdAt?.toDate().toLocaleDateString()}
-                    </span>
-                  </div>
+                  <ShareButtons
+                    url={`${window.location.origin}/post/${post.id}`}
+                    title={post.title}
+                    darkMode={darkMode}
+                  />
                 </div>
                 <h3
                   className={`text-2xl font-bold mb-4 ${
@@ -348,15 +392,37 @@ const HomePage = () => {
                       {post.authorName}
                     </span>
                   </div>
-                  <span
-                    className={`text-sm font-medium ${
-                      darkMode
-                        ? "text-blue-400 hover:text-blue-300"
-                        : "text-blue-600 hover:text-blue-700"
-                    }`}
-                  >
-                    Read more
-                  </span>
+                  <div className="flex items-center space-x-4">
+                    <span
+                      className={`text-sm flex items-center space-x-1 ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                        />
+                      </svg>
+                      <span>{post.commentCount || 0}</span>
+                    </span>
+                    <span
+                      className={`text-sm font-medium ${
+                        darkMode
+                          ? "text-blue-400 hover:text-blue-300"
+                          : "text-blue-600 hover:text-blue-700"
+                      }`}
+                    >
+                      Read more
+                    </span>
+                  </div>
                 </div>
               </div>
             </article>
