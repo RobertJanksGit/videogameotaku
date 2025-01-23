@@ -19,6 +19,14 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Profile images rules
+    match /profile-images/{userId}/{imageId} {
+      // Anyone can read profile images
+      allow read: if true;
+      // Users can only upload/update/delete their own profile images
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
     // Post images rules
     match /post-images/{imageId} {
       // Anyone can read post images

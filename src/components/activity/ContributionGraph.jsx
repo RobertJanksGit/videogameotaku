@@ -1,10 +1,16 @@
-import PropTypes from "prop-types";
 import { useState, useEffect } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { db } from "../../config/firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
 
-const ContributionGraph = ({ contributions }) => {
+const ContributionGraph = () => {
   const { darkMode } = useTheme();
+  const { user } = useAuth();
   const [yearData, setYearData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [totalWeeks, setTotalWeeks] = useState(52);
   const months = [
     "Jan",
     "Feb",
@@ -20,31 +26,146 @@ const ContributionGraph = ({ contributions }) => {
     "Dec",
   ];
 
+  // Check for year change every minute
   useEffect(() => {
-    // Create a year's worth of data
-    const today = new Date();
-    const startDate = new Date(today);
-    startDate.setFullYear(today.getFullYear() - 1);
+    const checkYear = () => {
+      const newYear = new Date().getFullYear();
+      if (newYear !== currentYear) {
+        setCurrentYear(newYear);
+      }
+    };
 
-    const data = [];
-    let currentDate = new Date(startDate);
+    const interval = setInterval(checkYear, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [currentYear]);
 
-    while (currentDate <= today) {
-      const dateStr = currentDate.toISOString().split("T")[0];
-      const count = contributions[dateStr] || 0;
+  // Calculate weeks per month for proper spacing
+  const getMonthWeeks = () => {
+    const startDate = new Date(currentYear, 0, 1);
+    startDate.setHours(0, 0, 0, 0);
 
-      data.push({
-        date: new Date(currentDate),
-        count: count,
-      });
+    const monthWeeks = months.map((_, index) => {
+      const date = new Date(startDate);
+      date.setMonth(index);
+      const daysInMonth = new Date(
+        date.getFullYear(),
+        date.getMonth() + 1,
+        0
+      ).getDate();
+      return Math.ceil(daysInMonth / 7);
+    });
 
-      currentDate.setDate(currentDate.getDate() + 1);
+    return monthWeeks;
+  };
+
+  useEffect(() => {
+    const fetchContributions = async () => {
+      if (!user) return;
+
+      try {
+        setIsLoading(true);
+
+        const postsQuery = query(
+          collection(db, "posts"),
+          where("authorId", "==", user.uid)
+        );
+        const commentsQuery = query(
+          collection(db, "comments"),
+          where("authorId", "==", user.uid)
+        );
+
+        const [postsSnapshot, commentsSnapshot] = await Promise.all([
+          getDocs(postsQuery),
+          getDocs(commentsQuery),
+        ]);
+
+        // Start from January 1st of the current year
+        const startDate = new Date(currentYear, 0, 1);
+        startDate.setHours(0, 0, 0, 0);
+
+        // Calculate the end date (December 31st)
+        const endDate = new Date(currentYear, 11, 31);
+
+        // Adjust start date to previous Sunday
+        const dayOfWeek = startDate.getDay();
+        startDate.setDate(startDate.getDate() - dayOfWeek);
+
+        // Calculate total weeks needed
+        const totalDays =
+          Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        const weeksNeeded = Math.ceil(totalDays / 7);
+        setTotalWeeks(weeksNeeded);
+
+        // Create empty data array for all weeks
+        const data = [];
+        const currentDate = new Date(startDate);
+
+        // Fill in dates week by week
+        while (data.length < weeksNeeded) {
+          const week = [];
+          for (let day = 0; day < 7; day++) {
+            week.push({
+              date: new Date(currentDate),
+              count: 0,
+            });
+            currentDate.setDate(currentDate.getDate() + 1);
+          }
+          data.push(week);
+        }
+
+        // Count contributions
+        const countContribution = (timestamp) => {
+          if (!timestamp) return;
+
+          const date = timestamp.toDate();
+          // Convert both dates to UTC midnight for comparison
+          const contributionDate = new Date(
+            Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+          );
+
+          for (let week = 0; week < data.length; week++) {
+            for (let day = 0; day < 7; day++) {
+              const gridDate = new Date(
+                Date.UTC(
+                  data[week][day].date.getFullYear(),
+                  data[week][day].date.getMonth(),
+                  data[week][day].date.getDate()
+                )
+              );
+
+              if (contributionDate.getTime() === gridDate.getTime()) {
+                data[week][day].count++;
+                return;
+              }
+            }
+          }
+        };
+
+        // Process posts and comments
+        postsSnapshot.docs.forEach((doc) =>
+          countContribution(doc.data().createdAt)
+        );
+        commentsSnapshot.docs.forEach((doc) =>
+          countContribution(doc.data().createdAt)
+        );
+
+        setYearData(data);
+      } catch (error) {
+        console.error("Error fetching contributions:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchContributions();
+  }, [user, currentYear]);
+
+  const getContributionColor = (count, date) => {
+    // Check if date is outside current year
+    if (date.getFullYear() !== currentYear) {
+      return darkMode ? "bg-[#161B22] opacity-50" : "bg-[#ebedf0] opacity-50";
     }
 
-    setYearData(data);
-  }, [contributions]);
-
-  const getContributionColor = (count) => {
     if (count === 0) return darkMode ? "bg-[#161B22]" : "bg-[#ebedf0]";
     if (count <= 3) return darkMode ? "bg-[#0E4429]" : "bg-[#9be9a8]";
     if (count <= 6) return darkMode ? "bg-[#006D32]" : "bg-[#40c463]";
@@ -60,21 +181,28 @@ const ContributionGraph = ({ contributions }) => {
     }).format(date);
   };
 
-  const getWeeks = () => {
-    const weeks = [];
-    let currentWeek = [];
+  if (isLoading) {
+    return (
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-2">
+          <h3
+            className={`text-base font-semibold ${
+              darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+            }`}
+          >
+            Loading contributions...
+          </h3>
+        </div>
+      </div>
+    );
+  }
 
-    yearData.forEach((day, index) => {
-      currentWeek.push(day);
+  const totalContributions = yearData.reduce(
+    (total, week) => total + week.reduce((sum, day) => sum + day.count, 0),
+    0
+  );
 
-      if (currentWeek.length === 7 || index === yearData.length - 1) {
-        weeks.push(currentWeek);
-        currentWeek = [];
-      }
-    });
-
-    return weeks;
-  };
+  const monthWeeks = getMonthWeeks();
 
   return (
     <div className="w-full">
@@ -84,8 +212,7 @@ const ContributionGraph = ({ contributions }) => {
             darkMode ? "text-[#ADBAC7]" : "text-gray-900"
           }`}
         >
-          {yearData.reduce((sum, day) => sum + day.count, 0)} contributions in
-          the last year
+          {totalContributions} contributions in the last year
         </h3>
       </div>
 
@@ -94,8 +221,11 @@ const ContributionGraph = ({ contributions }) => {
           {months.map((month, i) => (
             <div
               key={month}
-              className="flex-1"
-              style={{ marginLeft: i === 0 ? "34px" : "0" }}
+              style={{
+                width: `${(monthWeeks[i] / totalWeeks) * 100}%`,
+                marginLeft: i === 0 ? "34px" : "0",
+                paddingLeft: i === 0 ? "0" : "4px",
+              }}
             >
               {month}
             </div>
@@ -109,15 +239,16 @@ const ContributionGraph = ({ contributions }) => {
             <span>Fri</span>
           </div>
 
-          <div className="grid grid-flow-col gap-[3px]">
-            {getWeeks().map((week, weekIndex) => (
-              <div key={weekIndex} className="grid grid-rows-7 gap-[3px]">
+          <div className="flex gap-[3px] flex-1">
+            {yearData.map((week, weekIndex) => (
+              <div key={weekIndex} className="flex flex-col gap-[3px] flex-1">
                 {week.map((day, dayIndex) => (
                   <div
                     key={`${weekIndex}-${dayIndex}`}
                     className={`w-[10px] h-[10px] rounded-sm ${getContributionColor(
-                      day.count
-                    )} cursor-pointer`}
+                      day.count,
+                      day.date
+                    )}`}
                     title={`${day.count} contributions on ${formatDate(
                       day.date
                     )}`}
@@ -157,13 +288,18 @@ const ContributionGraph = ({ contributions }) => {
           />
           <span>More</span>
         </div>
+
+        <p
+          className={`mt-4 text-xs ${
+            darkMode ? "text-[#7D8590]" : "text-gray-500"
+          }`}
+        >
+          Contributions are counted when you create a new post or comment on an
+          existing post. Each action counts as one contribution.
+        </p>
       </div>
     </div>
   );
-};
-
-ContributionGraph.propTypes = {
-  contributions: PropTypes.object.isRequired,
 };
 
 export default ContributionGraph;

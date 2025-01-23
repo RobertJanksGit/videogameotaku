@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
-import { storage, db } from "../../config/firebase";
+import { storage, db, auth } from "../../config/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
 import { updateProfile } from "firebase/auth";
@@ -12,12 +12,14 @@ const Settings = () => {
   const { darkMode } = useTheme();
   const [displayName, setDisplayName] = useState(user?.displayName || "");
   const [selectedImage, setSelectedImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [contributions, setContributions] = useState({});
   const fileInputRef = useRef(null);
+  const dropZoneRef = useRef(null);
 
   useEffect(() => {
     const fetchContributions = async () => {
@@ -35,34 +37,74 @@ const Settings = () => {
     fetchContributions();
   }, [user]);
 
+  const createImagePreview = (file) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImagePreview(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleImageChange = (e) => {
-    if (e.target.files[0]) {
-      setSelectedImage(e.target.files[0]);
+    const file = e.target.files[0];
+    if (file && isValidImageFile(file)) {
+      setSelectedImage(file);
+      createImagePreview(file);
+      setError("");
+    } else if (file) {
+      setError("Please select a valid image file (PNG, JPG, GIF) up to 5MB");
+      setSelectedImage(null);
+      setImagePreview(null);
     }
+  };
+
+  const isValidImageFile = (file) => {
+    const validTypes = ["image/jpeg", "image/png", "image/gif"];
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    return validTypes.includes(file.type) && file.size <= maxSize;
   };
 
   const handleDragEnter = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(true);
   };
 
   const handleDragLeave = (e) => {
     e.preventDefault();
-    setIsDragging(false);
+    e.stopPropagation();
+    if (e.target === dropZoneRef.current) {
+      setIsDragging(false);
+    }
   };
 
   const handleDragOver = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(true);
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      setSelectedImage(files[0]);
+
+    const file = e.dataTransfer.files[0];
+    if (file && isValidImageFile(file)) {
+      setSelectedImage(file);
+      createImagePreview(file);
+      setError("");
+    } else if (file) {
+      setError("Please select a valid image file (PNG, JPG, GIF) up to 5MB");
+      setSelectedImage(null);
+      setImagePreview(null);
     }
+  };
+
+  const clearImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    setError("");
   };
 
   const handleSubmit = async (e) => {
@@ -85,10 +127,13 @@ const Settings = () => {
       }
 
       // Update auth profile
-      await updateProfile(user, {
-        displayName,
-        photoURL,
-      });
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        await updateProfile(currentUser, {
+          displayName,
+          photoURL,
+        });
+      }
 
       // Update Firestore document
       const userRef = doc(db, "users", user.uid);
@@ -98,6 +143,7 @@ const Settings = () => {
       });
 
       setSuccess("Profile updated successfully!");
+      clearImage(); // Clear selected image after successful update
     } catch (err) {
       setError("Failed to update profile. Please try again.");
       console.error("Error updating profile:", err);
@@ -162,6 +208,7 @@ const Settings = () => {
                 Profile Image
               </label>
               <div
+                ref={dropZoneRef}
                 className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg transition-colors ${
                   isDragging
                     ? darkMode
@@ -177,7 +224,20 @@ const Settings = () => {
                 onDrop={handleDrop}
               >
                 <div className="flex flex-col items-center space-y-4 mb-4">
-                  {user.photoURL ? (
+                  {imagePreview ? (
+                    <div className="relative group">
+                      <img
+                        src={imagePreview}
+                        alt="Preview"
+                        className={`w-32 h-32 rounded-full object-cover ring-4 ${
+                          darkMode ? "ring-gray-700" : "ring-gray-100"
+                        }`}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-white text-sm">Change photo</span>
+                      </div>
+                    </div>
+                  ) : user.photoURL ? (
                     <div className="relative group">
                       <img
                         src={user.photoURL}
@@ -222,7 +282,7 @@ const Settings = () => {
                       </span>
                       <button
                         type="button"
-                        onClick={() => setSelectedImage(null)}
+                        onClick={clearImage}
                         className="text-red-500 hover:text-red-600"
                       >
                         ×
