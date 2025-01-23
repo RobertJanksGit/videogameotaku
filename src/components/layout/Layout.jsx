@@ -3,6 +3,7 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import PropTypes from "prop-types";
 import AuthModal from "../auth/AuthModal";
+import { Link } from "react-router-dom";
 
 const SunIcon = () => (
   <svg
@@ -68,12 +69,21 @@ const Layout = ({ children }) => {
       <div className="min-h-screen w-full bg-white dark:bg-gray-900">
         <header className="sticky top-0 z-50 w-full bg-[#0D1117] border-b border-gray-800">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
-            <h1 className="text-xl font-semibold text-white">
+            <Link
+              to="/"
+              className="text-xl font-semibold text-white hover:text-gray-300 transition-colors"
+            >
               VideoGame Otaku
-            </h1>
+            </Link>
             <nav className="flex items-center space-x-4">
               {user ? (
                 <div className="flex items-center space-x-4">
+                  <Link
+                    to="/settings"
+                    className="text-sm text-[#7D8590] hover:text-white transition-colors"
+                  >
+                    Settings
+                  </Link>
                   <span className="text-sm text-[#7D8590]">
                     {user.displayName || user.email}
                   </span>
