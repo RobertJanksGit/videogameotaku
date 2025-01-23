@@ -344,168 +344,167 @@ const PostDetail = () => {
   if (!post) return null;
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* Post Header */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center space-x-4">
-            <span
-              className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                darkMode
-                  ? "bg-gray-700 text-gray-300"
-                  : "bg-gray-100 text-gray-600"
-              }`}
-            >
-              {post.category}
-            </span>
-            <VoteButtons
-              post={post}
-              darkMode={darkMode}
-              onVoteChange={handleVoteChange}
-            />
-          </div>
-          <div className="flex items-center space-x-4">
-            <ShareButtons
-              url={window.location.href}
-              title={post.title}
-              darkMode={darkMode}
-            />
-            <span
-              className={`text-sm ${
-                darkMode ? "text-gray-400" : "text-gray-500"
-              }`}
-            >
-              {post.createdAt?.toDate().toLocaleDateString()}
-            </span>
-          </div>
-        </div>
-        <h1
-          className={`text-4xl font-bold mb-4 ${
-            darkMode ? "text-white" : "text-gray-900"
-          }`}
-        >
-          {post.title}
-        </h1>
-        <div className="flex items-center">
-          <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
-              darkMode ? "bg-gray-700" : "bg-gray-100"
-            }`}
-          >
-            {post.authorPhotoURL ? (
-              <img
-                src={post.authorPhotoURL}
-                alt={post.authorName}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span
-                className={`text-lg font-medium ${
-                  darkMode ? "text-gray-300" : "text-gray-600"
-                }`}
-              >
-                {post.authorName?.[0]?.toUpperCase() || "A"}
-              </span>
-            )}
-          </div>
-          <div className="ml-3">
-            <span
-              className={`font-medium ${
-                darkMode ? "text-gray-200" : "text-gray-900"
-              }`}
-            >
-              {post.authorName}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Post Image */}
-      {post.imageUrl && (
-        <div className="mb-8">
-          <img
-            src={post.imageUrl}
-            alt={post.title}
-            className="w-full h-auto rounded-lg"
-          />
-        </div>
-      )}
-
-      {/* Post Content */}
-      <div
-        className={`prose max-w-none mb-12 ${
-          darkMode ? "text-gray-300" : "text-gray-800"
-        }`}
-      >
-        <p className="whitespace-pre-wrap">{post.content}</p>
-      </div>
-
-      {/* Comments Section */}
-      <div className="mt-12">
-        <h2
-          className={`text-2xl font-bold mb-6 ${
-            darkMode ? "text-white" : "text-gray-900"
-          }`}
-        >
-          Comments
-        </h2>
-
-        {/* New Comment Form */}
-        {user ? (
-          <form onSubmit={handleSubmitComment} className="mb-8">
-            <textarea
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Write a comment..."
-              className={`w-full p-4 rounded-lg ${
-                darkMode
-                  ? "bg-gray-800 text-gray-200 border-gray-700"
-                  : "bg-white text-gray-900 border-gray-200"
-              } border`}
-              rows="3"
-            />
-            <div className="flex justify-end mt-2">
-              <button
-                type="submit"
-                className={`px-4 py-2 text-sm font-medium text-white rounded-md ${
-                  darkMode
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : "bg-blue-500 hover:bg-blue-600"
-                }`}
-              >
-                Post Comment
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div
-            className={`p-4 rounded-lg mb-8 ${
-              darkMode ? "bg-gray-800" : "bg-gray-100"
-            }`}
-          >
-            <p
-              className={`text-center ${
-                darkMode ? "text-gray-300" : "text-gray-600"
-              }`}
-            >
-              Please sign in to leave a comment.
-            </p>
-          </div>
-        )}
-
-        {/* Comments List */}
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      {loading ? (
+        <div>Loading...</div>
+      ) : post ? (
         <div className="space-y-6">
-          {comments.map((comment) => (
-            <Comment
-              key={comment.id}
-              comment={comment}
-              darkMode={darkMode}
-              onReply={handleReply}
-              user={user}
-            />
-          ))}
+          <div
+            className={`rounded-lg shadow-lg overflow-hidden ${
+              darkMode ? "bg-gray-800" : "bg-white"
+            }`}
+          >
+            {post.imageUrl && (
+              <img
+                src={post.imageUrl}
+                alt={post.title}
+                className="w-full h-64 object-cover"
+              />
+            )}
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center">
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
+                        darkMode ? "bg-gray-700" : "bg-gray-100"
+                      }`}
+                    >
+                      {post.authorPhotoURL ? (
+                        <img
+                          src={post.authorPhotoURL}
+                          alt={post.authorName}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span
+                          className={`text-lg font-medium ${
+                            darkMode ? "text-gray-300" : "text-gray-600"
+                          }`}
+                        >
+                          {post.authorName[0].toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <div className="ml-3">
+                      <p
+                        className={`text-sm font-medium ${
+                          darkMode ? "text-gray-200" : "text-gray-900"
+                        }`}
+                      >
+                        {post.authorName}
+                      </p>
+                      <p
+                        className={`text-xs ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        {post.createdAt?.toDate().toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className={`px-3 py-1 rounded-full text-sm ${
+                      darkMode
+                        ? "bg-gray-700 text-gray-300"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {post.platform}
+                  </div>
+                </div>
+                <ShareButtons
+                  url={window.location.href}
+                  title={post.title}
+                  darkMode={darkMode}
+                />
+              </div>
+              <h1
+                className={`text-2xl font-bold mb-4 ${
+                  darkMode ? "text-gray-100" : "text-gray-900"
+                }`}
+              >
+                {post.title}
+              </h1>
+              <div
+                className={`prose max-w-none ${darkMode ? "prose-invert" : ""}`}
+              >
+                {post.content}
+              </div>
+              <div className="mt-6">
+                <VoteButtons post={post} onVoteChange={handleVoteChange} />
+              </div>
+            </div>
+          </div>
+
+          {/* Comments Section */}
+          <div className="mt-12">
+            <h2
+              className={`text-2xl font-bold mb-6 ${
+                darkMode ? "text-white" : "text-gray-900"
+              }`}
+            >
+              Comments
+            </h2>
+
+            {/* New Comment Form */}
+            {user ? (
+              <form onSubmit={handleSubmitComment} className="mb-8">
+                <textarea
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder="Write a comment..."
+                  className={`w-full p-4 rounded-lg ${
+                    darkMode
+                      ? "bg-gray-800 text-gray-200 border-gray-700"
+                      : "bg-white text-gray-900 border-gray-200"
+                  } border`}
+                  rows="3"
+                />
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="submit"
+                    className={`px-4 py-2 text-sm font-medium text-white rounded-md ${
+                      darkMode
+                        ? "bg-blue-600 hover:bg-blue-700"
+                        : "bg-blue-500 hover:bg-blue-600"
+                    }`}
+                  >
+                    Post Comment
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div
+                className={`p-4 rounded-lg mb-8 ${
+                  darkMode ? "bg-gray-800" : "bg-gray-100"
+                }`}
+              >
+                <p
+                  className={`text-center ${
+                    darkMode ? "text-gray-300" : "text-gray-600"
+                  }`}
+                >
+                  Please sign in to leave a comment.
+                </p>
+              </div>
+            )}
+
+            {/* Comments List */}
+            <div className="space-y-6">
+              {comments.map((comment) => (
+                <Comment
+                  key={comment.id}
+                  comment={comment}
+                  darkMode={darkMode}
+                  onReply={handleReply}
+                  user={user}
+                />
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 };

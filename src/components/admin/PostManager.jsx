@@ -27,6 +27,7 @@ const PostManager = ({ darkMode }) => {
     title: "",
     content: "",
     category: "news",
+    platform: "Nintendo",
   });
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -130,7 +131,12 @@ const PostManager = ({ darkMode }) => {
       });
 
       // Reset form and refresh posts
-      setCurrentPost({ title: "", content: "", category: "news" });
+      setCurrentPost({
+        title: "",
+        content: "",
+        category: "news",
+        platform: "Nintendo",
+      });
       setImageFile(null);
       setImagePreview(null);
       const postsSnapshot = await getDocs(postsCollection);
@@ -172,6 +178,7 @@ const PostManager = ({ darkMode }) => {
         title: currentPost.title,
         content: currentPost.content,
         category: currentPost.category,
+        platform: currentPost.platform,
         ...(imageData && {
           imageUrl: imageData.url,
           imagePath: imageData.path,
@@ -182,7 +189,12 @@ const PostManager = ({ darkMode }) => {
       });
 
       // Reset form and refresh posts
-      setCurrentPost({ title: "", content: "", category: "news" });
+      setCurrentPost({
+        title: "",
+        content: "",
+        category: "news",
+        platform: "Nintendo",
+      });
       setImageFile(null);
       setImagePreview(null);
       setIsEditing(false);
@@ -252,13 +264,42 @@ const PostManager = ({ darkMode }) => {
             onChange={(e) =>
               setCurrentPost({ ...currentPost, title: e.target.value })
             }
+            required
             className={`mt-1 block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
               darkMode
                 ? "bg-[#1C2128] border-gray-700 text-white"
                 : "border-gray-300"
             }`}
-            required
           />
+        </div>
+
+        <div>
+          <label
+            htmlFor="platform"
+            className={`block text-sm font-medium ${
+              darkMode ? "text-gray-200" : "text-gray-700"
+            }`}
+          >
+            Platform
+          </label>
+          <select
+            id="platform"
+            value={currentPost.platform}
+            onChange={(e) =>
+              setCurrentPost({ ...currentPost, platform: e.target.value })
+            }
+            required
+            className={`mt-1 block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+              darkMode
+                ? "bg-[#1C2128] border-gray-700 text-white"
+                : "border-gray-300"
+            }`}
+          >
+            <option value="Nintendo">Nintendo</option>
+            <option value="Sony">Sony</option>
+            <option value="Microsoft">Microsoft</option>
+            <option value="PC">PC</option>
+          </select>
         </div>
 
         <div>
@@ -352,7 +393,12 @@ const PostManager = ({ darkMode }) => {
             <button
               type="button"
               onClick={() => {
-                setCurrentPost({ title: "", content: "", category: "news" });
+                setCurrentPost({
+                  title: "",
+                  content: "",
+                  category: "news",
+                  platform: "Nintendo",
+                });
                 setImageFile(null);
                 setImagePreview(null);
                 setIsEditing(false);
