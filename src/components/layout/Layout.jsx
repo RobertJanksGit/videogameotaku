@@ -133,7 +133,7 @@ const Layout = ({ children }) => {
               to="/"
               className="text-xl font-semibold text-white hover:text-gray-300 transition-colors"
             >
-              VideoGame Otaku
+              Video Game Otaku
             </Link>
             <nav className="flex items-center space-x-4">
               {user ? (
@@ -199,7 +199,7 @@ const Layout = ({ children }) => {
         </main>
         <footer className="w-full border-t border-gray-200 dark:border-gray-700">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-gray-600 dark:text-gray-400">
-            © {new Date().getFullYear()} VideoGame Otaku. All rights reserved.
+            © {new Date().getFullYear()} Video Game Otaku. All rights reserved.
           </div>
         </footer>
       </div>
