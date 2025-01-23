@@ -13,8 +13,10 @@ import {
   orderBy,
   getDocs,
   serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
 import PropTypes from "prop-types";
+import VoteButtons from "./VoteButtons";
 
 const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -308,6 +310,22 @@ const PostDetail = () => {
     }
   };
 
+  const handleVoteChange = async (updatedPost) => {
+    try {
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, {
+        usersThatLiked: updatedPost.usersThatLiked || [],
+        usersThatDisliked: updatedPost.usersThatDisliked || [],
+        totalVotes:
+          (updatedPost.usersThatLiked?.length || 0) -
+          (updatedPost.usersThatDisliked?.length || 0),
+      });
+      setPost(updatedPost);
+    } catch (error) {
+      console.error("Error updating post votes:", error);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -329,15 +347,22 @@ const PostDetail = () => {
       {/* Post Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <span
-            className={`px-3 py-1 text-sm font-semibold rounded-full ${
-              darkMode
-                ? "bg-gray-700 text-gray-300"
-                : "bg-gray-100 text-gray-600"
-            }`}
-          >
-            {post.category}
-          </span>
+          <div className="flex items-center space-x-4">
+            <span
+              className={`px-3 py-1 text-sm font-semibold rounded-full ${
+                darkMode
+                  ? "bg-gray-700 text-gray-300"
+                  : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {post.category}
+            </span>
+            <VoteButtons
+              post={post}
+              darkMode={darkMode}
+              onVoteChange={handleVoteChange}
+            />
+          </div>
           <span
             className={`text-sm ${
               darkMode ? "text-gray-400" : "text-gray-500"
