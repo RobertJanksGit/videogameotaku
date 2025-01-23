@@ -8,6 +8,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  query,
   serverTimestamp,
 } from "firebase/firestore";
 import {
@@ -57,7 +58,7 @@ const PostManager = ({ darkMode }) => {
     return { url: downloadURL, path: `post-images/${fileName}` };
   };
 
-  // Fetch posts
+  // Fetch posts with vote counts
   useEffect(() => {
     const fetchPosts = async () => {
       try {
@@ -66,8 +67,34 @@ const PostManager = ({ darkMode }) => {
         const postsList = postsSnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
+          voteCount: 0, // Initialize vote count
         }));
-        setPosts(postsList);
+
+        // Fetch all votes
+        const votesQuery = query(collection(db, "votes"));
+        const votesSnapshot = await getDocs(votesQuery);
+        const postVoteCounts = {};
+
+        votesSnapshot.docs.forEach((doc) => {
+          const vote = doc.data();
+          postVoteCounts[vote.postId] =
+            (postVoteCounts[vote.postId] || 0) + (vote.type === "up" ? 1 : -1);
+        });
+
+        // Update posts with vote counts
+        const postsWithVotes = postsList.map((post) => ({
+          ...post,
+          voteCount: postVoteCounts[post.id] || 0,
+        }));
+
+        // Sort by votes and date
+        const sortedPosts = [...postsWithVotes].sort((a, b) => {
+          const voteDiff = (b.voteCount || 0) - (a.voteCount || 0);
+          if (voteDiff !== 0) return voteDiff;
+          return b.createdAt?.toDate() - a.createdAt?.toDate();
+        });
+
+        setPosts(sortedPosts);
       } catch (error) {
         console.error("Error fetching posts:", error);
       }
@@ -97,6 +124,7 @@ const PostManager = ({ darkMode }) => {
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        totalVotes: 0, // Initialize totalVotes field
       });
 
       // Reset form and refresh posts
@@ -350,133 +378,151 @@ const PostManager = ({ darkMode }) => {
         </div>
       </form>
 
-      <div
-        className={`rounded-md border ${
-          darkMode ? "border-gray-700" : "border-gray-200"
-        }`}
-      >
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className={darkMode ? "bg-[#1C2128]" : "bg-gray-50"}>
-            <tr>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Title
-              </th>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Category
-              </th>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Image
-              </th>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Author
-              </th>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Created At
-              </th>
-              <th
-                className={`px-6 py-3 text-left text-xs font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-500"
-                } uppercase tracking-wider`}
-              >
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody
-            className={`divide-y ${
-              darkMode ? "divide-gray-700" : "divide-gray-200"
-            }`}
-          >
-            {posts.map((post) => (
-              <tr key={post.id}>
-                <td
-                  className={`px-6 py-4 whitespace-nowrap text-sm ${
-                    darkMode ? "text-gray-200" : "text-gray-900"
-                  }`}
+      <div className="overflow-x-auto">
+        <div
+          className={`rounded-md border ${
+            darkMode ? "border-gray-700" : "border-gray-200"
+          }`}
+        >
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className={darkMode ? "bg-[#1C2128]" : "bg-gray-50"}>
+              <tr>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
                 >
-                  {post.title}
-                </td>
-                <td
-                  className={`px-6 py-4 whitespace-nowrap text-sm ${
-                    darkMode ? "text-gray-200" : "text-gray-900"
-                  }`}
+                  Title
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
                 >
-                  {post.category}
-                </td>
-                <td
-                  className={`px-6 py-4 whitespace-nowrap text-sm ${
-                    darkMode ? "text-gray-200" : "text-gray-900"
-                  }`}
+                  Category
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
                 >
-                  {post.imageUrl ? (
-                    <img
-                      src={post.imageUrl}
-                      alt={post.title}
-                      className="h-10 w-10 object-cover rounded"
-                    />
-                  ) : (
-                    "No image"
-                  )}
-                </td>
-                <td
-                  className={`px-6 py-4 whitespace-nowrap text-sm ${
-                    darkMode ? "text-gray-200" : "text-gray-900"
-                  }`}
+                  Votes
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
                 >
-                  {post.authorName || post.authorEmail}
-                  {post.lastEditedBy && (
-                    <span className="text-xs text-gray-500 block">
-                      Last edited by: {post.lastEditedBy}
-                    </span>
-                  )}
-                </td>
-                <td
-                  className={`px-6 py-4 whitespace-nowrap text-sm ${
-                    darkMode ? "text-gray-200" : "text-gray-900"
-                  }`}
+                  Image
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
                 >
-                  {post.createdAt?.toDate().toLocaleDateString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <button
-                    onClick={() => handleEditPost(post)}
-                    className={`text-sm ${
-                      darkMode ? "text-blue-400" : "text-blue-600"
-                    } hover:underline mr-4`}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDeletePost(post.id)}
-                    className="text-sm text-red-600 hover:underline"
-                  >
-                    Delete
-                  </button>
-                </td>
+                  Author
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
+                >
+                  Created At
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
+                >
+                  Actions
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody
+              className={`divide-y ${
+                darkMode ? "divide-gray-700" : "divide-gray-200"
+              }`}
+            >
+              {posts.map((post) => (
+                <tr key={post.id}>
+                  <td
+                    className={`px-6 py-4 text-sm max-w-xs truncate ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    {post.title}
+                  </td>
+                  <td
+                    className={`px-6 py-4 whitespace-nowrap text-sm ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    {post.category}
+                  </td>
+                  <td
+                    className={`px-6 py-4 whitespace-nowrap text-sm ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    {post.voteCount || 0}
+                  </td>
+                  <td
+                    className={`px-6 py-4 whitespace-nowrap text-sm ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    {post.imageUrl ? (
+                      <img
+                        src={post.imageUrl}
+                        alt={post.title}
+                        className="h-10 w-10 object-cover rounded"
+                      />
+                    ) : (
+                      "No image"
+                    )}
+                  </td>
+                  <td
+                    className={`px-6 py-4 whitespace-nowrap text-sm ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    <div className="max-w-[150px] truncate">
+                      {post.authorName || post.authorEmail}
+                      {post.lastEditedBy && (
+                        <span className="text-xs text-gray-500 block truncate">
+                          Last edited by: {post.lastEditedBy}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td
+                    className={`px-6 py-4 whitespace-nowrap text-sm ${
+                      darkMode ? "text-gray-200" : "text-gray-900"
+                    }`}
+                  >
+                    {post.createdAt?.toDate().toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <button
+                      onClick={() => handleEditPost(post)}
+                      className={`text-sm ${
+                        darkMode ? "text-blue-400" : "text-blue-600"
+                      } hover:underline mr-4`}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeletePost(post.id)}
+                      className="text-sm text-red-600 hover:underline"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

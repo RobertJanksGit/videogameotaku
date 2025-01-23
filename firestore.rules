@@ -13,6 +13,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts
@@ -46,7 +50,16 @@ service cloud.firestore {
                    (request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['role', 'isActive']));
       // Allow user creation during signup
-      allow create: if request.auth.uid == userId;
+      allow create: if isSignedIn() && isOwner(userId);
+      allow delete: if isAdmin();
+    }
+
+    // Votes collection
+    match /votes/{voteId} {
+      allow read: if true;
+      allow create: if isSignedIn() && voteId == request.resource.data.postId + "_" + request.auth.uid;
+      allow update: if false; // Votes cannot be updated, only created or deleted
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // Default deny
