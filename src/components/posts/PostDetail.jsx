@@ -42,17 +42,25 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
       >
         <div className="flex items-center mb-2">
           <div
-            className={`w-8 h-8 rounded-full flex items-center justify-center ${
+            className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
               darkMode ? "bg-gray-700" : "bg-gray-100"
             }`}
           >
-            <span
-              className={`text-sm font-medium ${
-                darkMode ? "text-gray-300" : "text-gray-600"
-              }`}
-            >
-              {comment.authorName?.[0]?.toUpperCase() || "A"}
-            </span>
+            {comment.authorPhotoURL ? (
+              <img
+                src={comment.authorPhotoURL}
+                alt={comment.authorName}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span
+                className={`text-sm font-medium ${
+                  darkMode ? "text-gray-300" : "text-gray-600"
+                }`}
+              >
+                {comment.authorName?.[0]?.toUpperCase() || "A"}
+              </span>
+            )}
           </div>
           <div className="ml-2">
             <span
@@ -150,6 +158,7 @@ Comment.propTypes = {
     id: PropTypes.string.isRequired,
     content: PropTypes.string.isRequired,
     authorName: PropTypes.string.isRequired,
+    authorPhotoURL: PropTypes.string,
     createdAt: PropTypes.shape({
       toDate: PropTypes.func.isRequired,
     }),
@@ -232,6 +241,7 @@ const PostDetail = () => {
         content: newComment,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
+        authorPhotoURL: user.photoURL,
         parentId: null,
         createdAt: serverTimestamp(),
       });
@@ -241,6 +251,7 @@ const PostDetail = () => {
         content: newComment,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
+        authorPhotoURL: user.photoURL,
         parentId: null,
         createdAt: new Date(),
         replies: [],
@@ -262,6 +273,7 @@ const PostDetail = () => {
         content,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
+        authorPhotoURL: user.photoURL,
         parentId,
         createdAt: serverTimestamp(),
       });
@@ -271,6 +283,7 @@ const PostDetail = () => {
         content,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
+        authorPhotoURL: user.photoURL,
         parentId,
         createdAt: new Date(),
       };
