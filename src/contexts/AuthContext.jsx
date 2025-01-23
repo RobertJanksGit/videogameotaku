@@ -7,7 +7,16 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  getDoc,
+  serverTimestamp,
+  collection,
+  query,
+  where,
+  getDocs,
+} from "firebase/firestore";
 import { auth, db } from "../config/firebase";
 
 const AuthContext = createContext();
@@ -29,6 +38,8 @@ const formatAuthError = (error) => {
       return "Invalid email or password";
     case "auth/too-many-requests":
       return "Too many attempts. Please try again later";
+    case "username/already-exists":
+      return "This username is already taken";
     default:
       return error.message;
   }
@@ -38,9 +49,32 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Check if username is already taken
+  async function isUsernameTaken(username, excludeUserId = null) {
+    const q = query(collection(db, "users"), where("name", "==", username));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) return false;
+
+    // If we're checking for an existing user (e.g., during profile update),
+    // we need to exclude their current username from the check
+    if (excludeUserId) {
+      const docs = querySnapshot.docs.filter((doc) => doc.id !== excludeUserId);
+      return docs.length > 0;
+    }
+
+    return true;
+  }
+
   // Sign up function
   async function signup(email, password, displayName) {
     try {
+      // Check if username is taken
+      const usernameTaken = await isUsernameTaken(displayName);
+      if (usernameTaken) {
+        throw { code: "username/already-exists" };
+      }
+
       // Create the user in Firebase Auth
       const { user: newUser } = await createUserWithEmailAndPassword(
         auth,
@@ -152,6 +186,7 @@ export function AuthProvider({ children }) {
     signup,
     login,
     logout,
+    isUsernameTaken,
   };
 
   return (

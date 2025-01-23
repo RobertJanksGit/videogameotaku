@@ -8,7 +8,7 @@ import { updateProfile } from "firebase/auth";
 import ContributionGraph from "../activity/ContributionGraph";
 
 const Settings = () => {
-  const { user } = useAuth();
+  const { user, isUsernameTaken } = useAuth();
   const { darkMode } = useTheme();
   const [displayName, setDisplayName] = useState(user?.displayName || "");
   const [selectedImage, setSelectedImage] = useState(null);
@@ -114,6 +114,31 @@ const Settings = () => {
     setSuccess("");
 
     try {
+      // Validate username format
+      if (displayName.length < 3) {
+        setError("Username must be at least 3 characters long");
+        setLoading(false);
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(displayName)) {
+        setError(
+          "Username can only contain letters, numbers, underscores, and hyphens"
+        );
+        setLoading(false);
+        return;
+      }
+
+      // Check if username is taken (excluding current user)
+      if (displayName !== user.name) {
+        const usernameTaken = await isUsernameTaken(displayName, user.uid);
+        if (usernameTaken) {
+          setError("This username is already taken");
+          setLoading(false);
+          return;
+        }
+      }
+
       let photoURL = user.photoURL;
 
       // Upload new profile image if selected
@@ -145,7 +170,7 @@ const Settings = () => {
       setSuccess("Profile updated successfully!");
       clearImage(); // Clear selected image after successful update
     } catch (err) {
-      setError("Failed to update profile. Please try again.");
+      setError(err.message || "Failed to update profile. Please try again.");
       console.error("Error updating profile:", err);
     } finally {
       setLoading(false);

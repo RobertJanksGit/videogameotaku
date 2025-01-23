@@ -107,9 +107,23 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
     e.preventDefault();
     setError("");
 
-    if (mode === "register" && password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
+    if (mode === "register") {
+      if (password !== confirmPassword) {
+        setError("Passwords do not match");
+        return;
+      }
+
+      if (displayName.length < 3) {
+        setError("Username must be at least 3 characters long");
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(displayName)) {
+        setError(
+          "Username can only contain letters, numbers, underscores, and hyphens"
+        );
+        return;
+      }
     }
 
     setLoading(true);
