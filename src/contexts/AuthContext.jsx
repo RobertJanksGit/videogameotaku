@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
 
 const AuthContext = createContext();
@@ -53,7 +53,7 @@ export function AuthProvider({ children }) {
 
       // Create the user document in Firestore
       const userRef = doc(db, "users", newUser.uid);
-      await setDoc(userRef, {
+      const userData = {
         uid: newUser.uid,
         email: newUser.email,
         name: displayName,
@@ -62,9 +62,12 @@ export function AuthProvider({ children }) {
         isActive: true,
         createdAt: serverTimestamp(),
         lastLogin: serverTimestamp(),
-      });
+      };
 
-      return newUser;
+      await setDoc(userRef, userData);
+
+      // Return the user with Firestore data
+      return { ...newUser, ...userData };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -79,8 +82,12 @@ export function AuthProvider({ children }) {
         password
       );
 
-      // Update last login time
+      // Get user data from Firestore
       const userRef = doc(db, "users", currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
+
+      // Update last login time
       await setDoc(
         userRef,
         {
@@ -89,7 +96,8 @@ export function AuthProvider({ children }) {
         { merge: true }
       );
 
-      return currentUser;
+      // Return the user with Firestore data
+      return { ...currentUser, ...userData };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -108,17 +116,30 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Update last login time when user is authenticated
-        const userRef = doc(db, "users", currentUser.uid);
-        await setDoc(
-          userRef,
-          {
-            lastLogin: serverTimestamp(),
-          },
-          { merge: true }
-        );
+        try {
+          // Get user data from Firestore
+          const userRef = doc(db, "users", currentUser.uid);
+          const userDoc = await getDoc(userRef);
+          const userData = userDoc.data();
+
+          // Update last login time
+          await setDoc(
+            userRef,
+            {
+              lastLogin: serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          // Set user with combined Auth and Firestore data
+          setUser({ ...currentUser, ...userData });
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          setUser(currentUser);
+        }
+      } else {
+        setUser(null);
       }
-      setUser(currentUser);
       setLoading(false);
     });
 

@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import Settings from "./components/settings/Settings";
+import AdminPage from "./components/admin/AdminPage";
 import PropTypes from "prop-types";
 
 function App() {
@@ -48,6 +49,14 @@ function App() {
                   </PrivateRoute>
                 }
               />
+              <Route
+                path="/admin"
+                element={
+                  <AdminRoute>
+                    <AdminPage />
+                  </AdminRoute>
+                }
+              />
             </Routes>
           </Layout>
         </ThemeProvider>
@@ -62,7 +71,17 @@ function PrivateRoute({ children }) {
   return user ? children : <Navigate to="/" replace />;
 }
 
+// AdminRoute component to protect routes that require admin access
+function AdminRoute({ children }) {
+  const { user } = useAuth();
+  return user?.role === "admin" ? children : <Navigate to="/" replace />;
+}
+
 PrivateRoute.propTypes = {
+  children: PropTypes.node.isRequired,
+};
+
+AdminRoute.propTypes = {
   children: PropTypes.node.isRequired,
 };
 

@@ -2,10 +2,37 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User profiles
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // Helper function to check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Posts collection rules
+    match /posts/{postId} {
+      // Anyone can read posts
+      allow read: if true;
+      // Only admins can create, update, delete posts
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Users collection rules
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      // Users can read other users' basic info
+      allow read: if isSignedIn();
+      // Users can update their own data
+      allow update: if request.auth.uid == userId;
+      // Only admins can update other users' roles and status
+      allow update: if isAdmin() && 
+                   (request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['role', 'isActive']));
+      // Allow user creation during signup
+      allow create: if request.auth.uid == userId;
     }
 
     // Default deny

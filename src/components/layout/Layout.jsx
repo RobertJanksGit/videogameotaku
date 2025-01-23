@@ -151,6 +151,18 @@ const Layout = ({ children }) => {
 
                   {showDropdown && (
                     <div className="absolute right-0 mt-2 w-48 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
+                      {user.role === "admin" && (
+                        <>
+                          <Link
+                            to="/admin"
+                            onClick={() => setShowDropdown(false)}
+                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                          >
+                            Admin Dashboard
+                          </Link>
+                          <div className="my-1 h-px bg-[#373E47]"></div>
+                        </>
+                      )}
                       <Link
                         to="/settings"
                         onClick={() => setShowDropdown(false)}
