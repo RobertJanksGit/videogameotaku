@@ -119,9 +119,14 @@ const VoteButtons = ({ post, darkMode, onVoteChange }) => {
         </svg>
       </button>
       <span
-        className={`text-sm font-medium ${
+        className={`text-sm font-medium transition-all duration-700 transform ${
           darkMode ? "text-gray-300" : "text-gray-700"
         }`}
+        style={{
+          display: "inline-block",
+          transform: isVoting ? "scale(1.2)" : "scale(1)",
+          transition: "all 0.7s ease-in-out",
+        }}
       >
         {totalVotes}
       </span>

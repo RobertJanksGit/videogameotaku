@@ -63,14 +63,13 @@ const HomePage = () => {
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        // Fetch posts ordered by total votes and date
-        const postsQuery = query(
+        // Fetch all posts ordered by date first
+        const allPostsQuery = query(
           collection(db, "posts"),
-          orderBy("totalVotes", "desc"),
           orderBy("createdAt", "desc"),
           limit(20)
         );
-        const postsSnapshot = await getDocs(postsQuery);
+        const postsSnapshot = await getDocs(allPostsQuery);
         const allPosts = await Promise.all(
           postsSnapshot.docs.map(async (doc) => {
             const post = { id: doc.id, ...doc.data() };
@@ -78,8 +77,18 @@ const HomePage = () => {
           })
         );
 
-        setFeaturedPosts(allPosts.slice(0, 4));
+        // Set latest posts directly from the date-ordered query
         setLatestPosts(allPosts);
+
+        // Sort a copy for featured posts by votes
+        const sortedByVotes = [...allPosts].sort((a, b) => {
+          const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
+          if (voteDiff !== 0) return voteDiff;
+          // If votes are equal, use date as secondary sort
+          return b.createdAt?.toMillis() - a.createdAt?.toMillis();
+        });
+
+        setFeaturedPosts(sortedByVotes.slice(0, 4));
       } catch (error) {
         console.error("Error fetching posts:", error);
       }
@@ -89,12 +98,22 @@ const HomePage = () => {
   }, [user]);
 
   const handleVoteChange = (updatedPost) => {
-    setFeaturedPosts((posts) =>
-      posts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
-    );
+    // Update latest posts without re-sorting
     setLatestPosts((posts) =>
       posts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
     );
+
+    // Update and re-sort featured posts
+    setFeaturedPosts((posts) => {
+      const updatedPosts = posts.map((post) =>
+        post.id === updatedPost.id ? updatedPost : post
+      );
+      return [...updatedPosts].sort((a, b) => {
+        const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
+        if (voteDiff !== 0) return voteDiff;
+        return b.createdAt?.toMillis() - a.createdAt?.toMillis();
+      });
+    });
   };
 
   const renderVoteButtons = (post) => {
@@ -118,7 +137,7 @@ const HomePage = () => {
         <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
           Featured Posts
         </h2>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 relative">
           {featuredPosts.map((post) => (
             <div
               key={post.id}
@@ -127,7 +146,12 @@ const HomePage = () => {
                 darkMode
                   ? "bg-gray-800 border-gray-700"
                   : "bg-white border-gray-200"
-              } shadow-lg border cursor-pointer transition-transform hover:scale-[1.02]`}
+              } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
+              style={{
+                gridColumn: "auto",
+                gridRow: "auto",
+                transition: "all 1s ease-in-out",
+              }}
             >
               {post.imageUrl ? (
                 <div className="aspect-w-16 aspect-h-9">
