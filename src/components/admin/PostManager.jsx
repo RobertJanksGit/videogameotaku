@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import { db } from "../../config/firebase";
+import { db, storage } from "../../config/firebase";
 import {
   collection,
   addDoc,
@@ -10,6 +10,12 @@ import {
   getDocs,
   serverTimestamp,
 } from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
 import PropTypes from "prop-types";
 
 const PostManager = ({ darkMode }) => {
@@ -19,8 +25,37 @@ const PostManager = ({ darkMode }) => {
   const [currentPost, setCurrentPost] = useState({
     title: "",
     content: "",
-    category: "news", // Default category
+    category: "news",
   });
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // Handle image selection
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Upload image to Firebase Storage
+  const uploadImage = async (file) => {
+    if (!file) return null;
+
+    const fileExtension = file.name.split(".").pop();
+    const fileName = `${Date.now()}.${fileExtension}`;
+    const storageRef = ref(storage, `post-images/${fileName}`);
+
+    await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(storageRef);
+    return { url: downloadURL, path: `post-images/${fileName}` };
+  };
 
   // Fetch posts
   useEffect(() => {
@@ -44,19 +79,29 @@ const PostManager = ({ darkMode }) => {
   // Create new post
   const handleCreatePost = async (e) => {
     e.preventDefault();
+    setIsUploading(true);
     try {
+      let imageData = null;
+      if (imageFile) {
+        imageData = await uploadImage(imageFile);
+      }
+
       const postsCollection = collection(db, "posts");
       await addDoc(postsCollection, {
         ...currentPost,
         authorId: user.uid,
         authorName: user.name || user.displayName,
         authorEmail: user.email,
+        imageUrl: imageData?.url || null,
+        imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
       // Reset form and refresh posts
       setCurrentPost({ title: "", content: "", category: "news" });
+      setImageFile(null);
+      setImagePreview(null);
       const postsSnapshot = await getDocs(postsCollection);
       const postsList = postsSnapshot.docs.map((doc) => ({
         id: doc.id,
@@ -65,18 +110,41 @@ const PostManager = ({ darkMode }) => {
       setPosts(postsList);
     } catch (error) {
       console.error("Error creating post:", error);
+    } finally {
+      setIsUploading(false);
     }
   };
 
   // Update post
   const handleUpdatePost = async (e) => {
     e.preventDefault();
+    setIsUploading(true);
     try {
+      let imageData = null;
+
+      // If there's a new image, upload it and delete the old one
+      if (imageFile) {
+        // Delete old image if it exists
+        if (currentPost.imagePath) {
+          const oldImageRef = ref(storage, currentPost.imagePath);
+          try {
+            await deleteObject(oldImageRef);
+          } catch (error) {
+            console.error("Error deleting old image:", error);
+          }
+        }
+        imageData = await uploadImage(imageFile);
+      }
+
       const postRef = doc(db, "posts", currentPost.id);
       await updateDoc(postRef, {
         title: currentPost.title,
         content: currentPost.content,
         category: currentPost.category,
+        ...(imageData && {
+          imageUrl: imageData.url,
+          imagePath: imageData.path,
+        }),
         updatedAt: serverTimestamp(),
         lastEditedBy: user.name || user.displayName,
         lastEditedById: user.uid,
@@ -84,6 +152,8 @@ const PostManager = ({ darkMode }) => {
 
       // Reset form and refresh posts
       setCurrentPost({ title: "", content: "", category: "news" });
+      setImageFile(null);
+      setImagePreview(null);
       setIsEditing(false);
       const postsSnapshot = await getDocs(collection(db, "posts"));
       const postsList = postsSnapshot.docs.map((doc) => ({
@@ -93,6 +163,8 @@ const PostManager = ({ darkMode }) => {
       setPosts(postsList);
     } catch (error) {
       console.error("Error updating post:", error);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -100,6 +172,18 @@ const PostManager = ({ darkMode }) => {
   const handleDeletePost = async (postId) => {
     if (window.confirm("Are you sure you want to delete this post?")) {
       try {
+        const post = posts.find((p) => p.id === postId);
+
+        // Delete image if it exists
+        if (post.imagePath) {
+          const imageRef = ref(storage, post.imagePath);
+          try {
+            await deleteObject(imageRef);
+          } catch (error) {
+            console.error("Error deleting image:", error);
+          }
+        }
+
         await deleteDoc(doc(db, "posts", postId));
         setPosts(posts.filter((post) => post.id !== postId));
       } catch (error) {
@@ -111,6 +195,7 @@ const PostManager = ({ darkMode }) => {
   // Edit post
   const handleEditPost = (post) => {
     setCurrentPost(post);
+    setImagePreview(post.imageUrl);
     setIsEditing(true);
   };
 
@@ -175,6 +260,39 @@ const PostManager = ({ darkMode }) => {
 
         <div>
           <label
+            htmlFor="image"
+            className={`block text-sm font-medium ${
+              darkMode ? "text-gray-200" : "text-gray-700"
+            }`}
+          >
+            Featured Image
+          </label>
+          <input
+            type="file"
+            id="image"
+            accept="image/*"
+            onChange={handleImageChange}
+            className={`mt-1 block w-full text-sm ${
+              darkMode ? "text-gray-200" : "text-gray-700"
+            } file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium ${
+              darkMode
+                ? "file:bg-gray-700 file:text-gray-200"
+                : "file:bg-gray-100 file:text-gray-700"
+            } hover:file:bg-opacity-80`}
+          />
+          {imagePreview && (
+            <div className="mt-2">
+              <img
+                src={imagePreview}
+                alt="Preview"
+                className="h-32 w-auto object-cover rounded-md"
+              />
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label
             htmlFor="content"
             className={`block text-sm font-medium ${
               darkMode ? "text-gray-200" : "text-gray-700"
@@ -204,6 +322,8 @@ const PostManager = ({ darkMode }) => {
               type="button"
               onClick={() => {
                 setCurrentPost({ title: "", content: "", category: "news" });
+                setImageFile(null);
+                setImagePreview(null);
                 setIsEditing(false);
               }}
               className="mr-4 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
@@ -213,13 +333,18 @@ const PostManager = ({ darkMode }) => {
           )}
           <button
             type="submit"
+            disabled={isUploading}
             className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               darkMode
                 ? "bg-[#316DCA] hover:bg-[#2760AA] focus:ring-[#316DCA]"
                 : "bg-blue-600 hover:bg-blue-700 focus:ring-blue-500"
-            }`}
+            } ${isUploading ? "opacity-50 cursor-not-allowed" : ""}`}
           >
-            {isEditing ? "Update Post" : "Create Post"}
+            {isUploading
+              ? "Uploading..."
+              : isEditing
+              ? "Update Post"
+              : "Create Post"}
           </button>
         </div>
       </form>
@@ -245,6 +370,13 @@ const PostManager = ({ darkMode }) => {
                 } uppercase tracking-wider`}
               >
                 Category
+              </th>
+              <th
+                className={`px-6 py-3 text-left text-xs font-medium ${
+                  darkMode ? "text-gray-200" : "text-gray-500"
+                } uppercase tracking-wider`}
+              >
+                Image
               </th>
               <th
                 className={`px-6 py-3 text-left text-xs font-medium ${
@@ -289,6 +421,21 @@ const PostManager = ({ darkMode }) => {
                   }`}
                 >
                   {post.category}
+                </td>
+                <td
+                  className={`px-6 py-4 whitespace-nowrap text-sm ${
+                    darkMode ? "text-gray-200" : "text-gray-900"
+                  }`}
+                >
+                  {post.imageUrl ? (
+                    <img
+                      src={post.imageUrl}
+                      alt={post.title}
+                      className="h-10 w-10 object-cover rounded"
+                    />
+                  ) : (
+                    "No image"
+                  )}
                 </td>
                 <td
                   className={`px-6 py-4 whitespace-nowrap text-sm ${

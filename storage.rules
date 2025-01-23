@@ -5,12 +5,28 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
-    match /profile-images/{userId}/{fileName} {
-      allow read: if true;  // Anyone can view profile images
-      allow write: if request.auth != null 
-                  && request.auth.uid == userId 
-                  && request.resource.size < 5 * 1024 * 1024 
-                  && request.resource.contentType.matches('image/.*');
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // Helper function to check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Post images rules
+    match /post-images/{imageId} {
+      // Anyone can read post images
+      allow read: if true;
+      // Only admins can upload, update, or delete post images
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }
