@@ -22,7 +22,7 @@ import ShareButtons from "../common/ShareButtons";
 const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyContent, setReplyContent] = useState("");
-  const maxLevel = 2; // Maximum nesting level
+  const [showReplies, setShowReplies] = useState(false);
 
   const handleSubmitReply = async (e) => {
     e.preventDefault();
@@ -30,8 +30,11 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
       await onReply(comment.id, replyContent);
       setReplyContent("");
       setShowReplyForm(false);
+      setShowReplies(true); // Show replies after adding a new one
     }
   };
+
+  const hasReplies = comment.replies && comment.replies.length > 0;
 
   return (
     <div
@@ -91,8 +94,8 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
         >
           {comment.content}
         </p>
-        {user && level < maxLevel && (
-          <div>
+        <div className="flex items-center space-x-4">
+          {user && level === 0 && (
             <button
               onClick={() => setShowReplyForm(!showReplyForm)}
               className={`text-sm font-medium ${
@@ -103,57 +106,91 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
             >
               Reply
             </button>
-            {showReplyForm && (
-              <form onSubmit={handleSubmitReply} className="mt-2">
-                <textarea
-                  value={replyContent}
-                  onChange={(e) => setReplyContent(e.target.value)}
-                  className={`w-full p-2 text-sm rounded-md ${
-                    darkMode
-                      ? "bg-gray-700 text-gray-200 border-gray-600"
-                      : "bg-white text-gray-900 border-gray-300"
-                  } border`}
-                  rows="2"
-                  placeholder="Write a reply..."
+          )}
+          {hasReplies && (
+            <button
+              onClick={() => setShowReplies(!showReplies)}
+              className={`text-sm font-medium flex items-center space-x-1 ${
+                darkMode
+                  ? "text-gray-400 hover:text-gray-300"
+                  : "text-gray-600 hover:text-gray-700"
+              }`}
+            >
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  showReplies ? "rotate-90" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M9 5l7 7-7 7"
                 />
-                <div className="flex justify-end mt-2 space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowReplyForm(false)}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      darkMode
-                        ? "text-gray-300 hover:text-gray-200"
-                        : "text-gray-600 hover:text-gray-700"
-                    }`}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className={`px-3 py-1 text-sm text-white rounded-md ${
-                      darkMode
-                        ? "bg-blue-600 hover:bg-blue-700"
-                        : "bg-blue-500 hover:bg-blue-600"
-                    }`}
-                  >
-                    Reply
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
+              </svg>
+              <span>
+                {comment.replies.length}{" "}
+                {comment.replies.length === 1 ? "reply" : "replies"}
+              </span>
+            </button>
+          )}
+        </div>
+        {showReplyForm && (
+          <form onSubmit={handleSubmitReply} className="mt-2">
+            <textarea
+              value={replyContent}
+              onChange={(e) => setReplyContent(e.target.value)}
+              className={`w-full p-2 text-sm rounded-md ${
+                darkMode
+                  ? "bg-gray-700 text-gray-200 border-gray-600"
+                  : "bg-white text-gray-900 border-gray-300"
+              } border`}
+              rows="2"
+              placeholder="Write a reply..."
+            />
+            <div className="flex justify-end mt-2 space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowReplyForm(false)}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  darkMode
+                    ? "text-gray-300 hover:text-gray-200"
+                    : "text-gray-600 hover:text-gray-700"
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className={`px-3 py-1 text-sm text-white rounded-md ${
+                  darkMode
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-blue-500 hover:bg-blue-600"
+                }`}
+              >
+                Reply
+              </button>
+            </div>
+          </form>
         )}
       </div>
-      {comment.replies?.map((reply) => (
-        <Comment
-          key={reply.id}
-          comment={reply}
-          darkMode={darkMode}
-          onReply={onReply}
-          user={user}
-          level={level + 1}
-        />
-      ))}
+      {hasReplies && showReplies && (
+        <div className="mt-2">
+          {comment.replies.map((reply) => (
+            <Comment
+              key={reply.id}
+              comment={reply}
+              darkMode={darkMode}
+              onReply={onReply}
+              user={user}
+              level={level + 1}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
