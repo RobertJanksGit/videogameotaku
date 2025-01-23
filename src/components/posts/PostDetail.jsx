@@ -75,7 +75,9 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
                 darkMode ? "text-gray-400" : "text-gray-500"
               }`}
             >
-              {comment.createdAt?.toDate().toLocaleDateString()}
+              {comment.createdAt instanceof Date
+                ? comment.createdAt.toLocaleDateString()
+                : comment.createdAt?.toDate().toLocaleDateString()}
             </span>
           </div>
         </div>
@@ -159,9 +161,12 @@ Comment.propTypes = {
     content: PropTypes.string.isRequired,
     authorName: PropTypes.string.isRequired,
     authorPhotoURL: PropTypes.string,
-    createdAt: PropTypes.shape({
-      toDate: PropTypes.func.isRequired,
-    }),
+    createdAt: PropTypes.oneOfType([
+      PropTypes.instanceOf(Date),
+      PropTypes.shape({
+        toDate: PropTypes.func.isRequired,
+      }),
+    ]),
     replies: PropTypes.arrayOf(PropTypes.object),
   }).isRequired,
   darkMode: PropTypes.bool.isRequired,
@@ -350,17 +355,25 @@ const PostDetail = () => {
         </h1>
         <div className="flex items-center">
           <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center ${
+            className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
               darkMode ? "bg-gray-700" : "bg-gray-100"
             }`}
           >
-            <span
-              className={`text-lg font-medium ${
-                darkMode ? "text-gray-300" : "text-gray-600"
-              }`}
-            >
-              {post.authorName?.[0]?.toUpperCase() || "A"}
-            </span>
+            {post.authorPhotoURL ? (
+              <img
+                src={post.authorPhotoURL}
+                alt={post.authorName}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span
+                className={`text-lg font-medium ${
+                  darkMode ? "text-gray-300" : "text-gray-600"
+                }`}
+              >
+                {post.authorName?.[0]?.toUpperCase() || "A"}
+              </span>
+            )}
           </div>
           <div className="ml-3">
             <span

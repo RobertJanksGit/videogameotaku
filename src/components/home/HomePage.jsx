@@ -114,7 +114,30 @@ const HomePage = () => {
                       darkMode ? "text-gray-400" : "text-gray-500"
                     }`}
                   >
-                    By {post.authorName}
+                    <div className="flex items-center space-x-2">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
+                          darkMode ? "bg-gray-700" : "bg-gray-100"
+                        }`}
+                      >
+                        {post.authorPhotoURL ? (
+                          <img
+                            src={post.authorPhotoURL}
+                            alt={post.authorName}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span
+                            className={`text-xs font-medium ${
+                              darkMode ? "text-gray-300" : "text-gray-600"
+                            }`}
+                          >
+                            {post.authorName?.[0]?.toUpperCase() || "A"}
+                          </span>
+                        )}
+                      </div>
+                      <span>{post.authorName}</span>
+                    </div>
                   </span>
                   <span
                     className={`text-xs ${
@@ -191,17 +214,25 @@ const HomePage = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
                         darkMode ? "bg-gray-700" : "bg-gray-100"
                       }`}
                     >
-                      <span
-                        className={`text-sm font-medium ${
-                          darkMode ? "text-gray-300" : "text-gray-600"
-                        }`}
-                      >
-                        {post.authorName?.[0]?.toUpperCase() || "A"}
-                      </span>
+                      {post.authorPhotoURL ? (
+                        <img
+                          src={post.authorPhotoURL}
+                          alt={post.authorName}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span
+                          className={`text-sm font-medium ${
+                            darkMode ? "text-gray-300" : "text-gray-600"
+                          }`}
+                        >
+                          {post.authorName?.[0]?.toUpperCase() || "A"}
+                        </span>
+                      )}
                     </div>
                     <span
                       className={`text-sm ${

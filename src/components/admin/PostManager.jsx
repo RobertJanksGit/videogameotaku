@@ -92,6 +92,7 @@ const PostManager = ({ darkMode }) => {
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorEmail: user.email,
+        authorPhotoURL: user.photoURL,
         imageUrl: imageData?.url || null,
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
