@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
+import ShareButtons from "../common/ShareButtons";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -287,13 +288,20 @@ const HomePage = () => {
                     </span>
                     {renderVoteButtons(post)}
                   </div>
-                  <span
-                    className={`text-sm ${
-                      darkMode ? "text-gray-400" : "text-gray-500"
-                    }`}
-                  >
-                    {post.createdAt?.toDate().toLocaleDateString()}
-                  </span>
+                  <div className="flex items-center space-x-4">
+                    <ShareButtons
+                      url={`${window.location.origin}/post/${post.id}`}
+                      title={post.title}
+                      darkMode={darkMode}
+                    />
+                    <span
+                      className={`text-sm ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      {post.createdAt?.toDate().toLocaleDateString()}
+                    </span>
+                  </div>
                 </div>
                 <h3
                   className={`text-2xl font-bold mb-4 ${

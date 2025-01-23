@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import PropTypes from "prop-types";
 import VoteButtons from "./VoteButtons";
+import ShareButtons from "../common/ShareButtons";
 
 const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -363,13 +364,20 @@ const PostDetail = () => {
               onVoteChange={handleVoteChange}
             />
           </div>
-          <span
-            className={`text-sm ${
-              darkMode ? "text-gray-400" : "text-gray-500"
-            }`}
-          >
-            {post.createdAt?.toDate().toLocaleDateString()}
-          </span>
+          <div className="flex items-center space-x-4">
+            <ShareButtons
+              url={window.location.href}
+              title={post.title}
+              darkMode={darkMode}
+            />
+            <span
+              className={`text-sm ${
+                darkMode ? "text-gray-400" : "text-gray-500"
+              }`}
+            >
+              {post.createdAt?.toDate().toLocaleDateString()}
+            </span>
+          </div>
         </div>
         <h1
           className={`text-4xl font-bold mb-4 ${
