@@ -16,7 +16,8 @@ const ShareButtons = ({ url, title, darkMode }) => {
     )}&title=${encodeURIComponent(title)}`,
   };
 
-  const handleShare = (platform) => {
+  const handleShare = (platform, e) => {
+    e.stopPropagation();
     window.open(shareUrls[platform], "_blank", "width=600,height=400");
   };
 
@@ -24,7 +25,7 @@ const ShareButtons = ({ url, title, darkMode }) => {
     <div className="flex items-center space-x-2">
       {/* Facebook */}
       <button
-        onClick={() => handleShare("facebook")}
+        onClick={(e) => handleShare("facebook", e)}
         className={`p-2 rounded-full transition-colors ${
           darkMode
             ? "bg-gray-800 hover:bg-gray-700 text-gray-300"
@@ -39,7 +40,7 @@ const ShareButtons = ({ url, title, darkMode }) => {
 
       {/* X (formerly Twitter) */}
       <button
-        onClick={() => handleShare("twitter")}
+        onClick={(e) => handleShare("twitter", e)}
         className={`p-2 rounded-full transition-colors ${
           darkMode
             ? "bg-gray-800 hover:bg-gray-700 text-gray-300"
@@ -54,7 +55,7 @@ const ShareButtons = ({ url, title, darkMode }) => {
 
       {/* LinkedIn */}
       <button
-        onClick={() => handleShare("linkedin")}
+        onClick={(e) => handleShare("linkedin", e)}
         className={`p-2 rounded-full transition-colors ${
           darkMode
             ? "bg-gray-800 hover:bg-gray-700 text-gray-300"
@@ -69,7 +70,7 @@ const ShareButtons = ({ url, title, darkMode }) => {
 
       {/* Reddit */}
       <button
-        onClick={() => handleShare("reddit")}
+        onClick={(e) => handleShare("reddit", e)}
         className={`p-2 rounded-full transition-colors ${
           darkMode
             ? "bg-gray-800 hover:bg-gray-700 text-gray-300"
