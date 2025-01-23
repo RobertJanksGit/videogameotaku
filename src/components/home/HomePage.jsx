@@ -9,12 +9,10 @@ import {
   orderBy,
   limit,
   doc,
-  setDoc,
   updateDoc,
-  increment,
-  serverTimestamp,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import VoteButtons from "../posts/VoteButtons";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -22,7 +20,45 @@ const HomePage = () => {
   const navigate = useNavigate();
   const [featuredPosts, setFeaturedPosts] = useState([]);
   const [latestPosts, setLatestPosts] = useState([]);
-  const [votes, setVotes] = useState({});
+
+  // Migrate old voting system to new array-based system
+  const migratePost = async (post) => {
+    if (
+      Array.isArray(post.usersThatLiked) &&
+      Array.isArray(post.usersThatDisliked)
+    ) {
+      return post; // Already migrated
+    }
+
+    const usersThatLiked = [];
+    const usersThatDisliked = [];
+
+    // Convert old object format to arrays
+    if (post.usersThatLiked && typeof post.usersThatLiked === "object") {
+      Object.entries(post.usersThatLiked).forEach(([userId, voteType]) => {
+        if (voteType === "upvote") {
+          usersThatLiked.push(userId);
+        } else if (voteType === "downvote") {
+          usersThatDisliked.push(userId);
+        }
+      });
+    }
+
+    // Update the post in Firestore
+    const postRef = doc(db, "posts", post.id);
+    await updateDoc(postRef, {
+      usersThatLiked,
+      usersThatDisliked,
+      totalVotes: usersThatLiked.length - usersThatDisliked.length,
+    });
+
+    return {
+      ...post,
+      usersThatLiked,
+      usersThatDisliked,
+      totalVotes: usersThatLiked.length - usersThatDisliked.length,
+    };
+  };
 
   useEffect(() => {
     const fetchPosts = async () => {
@@ -35,26 +71,12 @@ const HomePage = () => {
           limit(20)
         );
         const postsSnapshot = await getDocs(postsQuery);
-        const allPosts = postsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        // If user is logged in, fetch their votes
-        if (user) {
-          const votesQuery = query(collection(db, "votes"));
-          const votesSnapshot = await getDocs(votesQuery);
-          const userVotes = {};
-
-          votesSnapshot.docs.forEach((doc) => {
-            const vote = doc.data();
-            if (vote.userId === user.uid) {
-              userVotes[vote.postId] = vote.type;
-            }
-          });
-
-          setVotes(userVotes);
-        }
+        const allPosts = await Promise.all(
+          postsSnapshot.docs.map(async (doc) => {
+            const post = { id: doc.id, ...doc.data() };
+            return migratePost(post);
+          })
+        );
 
         setFeaturedPosts(allPosts.slice(0, 4));
         setLatestPosts(allPosts);
@@ -66,149 +88,22 @@ const HomePage = () => {
     fetchPosts();
   }, [user]);
 
-  const handleVote = async (postId, voteType) => {
-    if (!user) {
-      // TODO: Show login prompt
-      return;
-    }
-
-    try {
-      const voteId = `${postId}_${user.uid}`;
-      const voteRef = doc(db, "votes", voteId);
-      const postRef = doc(db, "posts", postId);
-      const currentVote = votes[postId];
-
-      // Only allow voting if user hasn't voted or is voting in the opposite direction
-      if (currentVote && currentVote === voteType) {
-        return; // Do nothing if trying to vote in same direction
-      }
-
-      // Calculate vote change
-      let voteChange = voteType === "up" ? 1 : -1;
-      if (currentVote) {
-        // If changing vote, double the effect (e.g., changing from down to up is +2)
-        voteChange *= 2;
-      }
-
-      // Optimistically update UI
-      const updatePosts = (posts) =>
-        posts.map((post) => {
-          if (post.id === postId) {
-            return {
-              ...post,
-              totalVotes: (post.totalVotes || 0) + voteChange,
-            };
-          }
-          return post;
-        });
-
-      setVotes({ ...votes, [postId]: voteType });
-      setFeaturedPosts(updatePosts(featuredPosts));
-      setLatestPosts(updatePosts(latestPosts));
-
-      // Update Firestore atomically
-      await Promise.all([
-        setDoc(voteRef, {
-          postId,
-          userId: user.uid,
-          type: voteType,
-          createdAt: serverTimestamp(),
-        }),
-        updateDoc(postRef, {
-          totalVotes: increment(voteChange),
-        }),
-      ]);
-    } catch (error) {
-      console.error("Error voting:", error);
-      // Revert optimistic update on error
-      const fetchPosts = async () => {
-        const postsQuery = query(
-          collection(db, "posts"),
-          orderBy("totalVotes", "desc"),
-          orderBy("createdAt", "desc"),
-          limit(20)
-        );
-        const postsSnapshot = await getDocs(postsQuery);
-        const allPosts = postsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setFeaturedPosts(allPosts.slice(0, 4));
-        setLatestPosts(allPosts);
-      };
-      fetchPosts();
-    }
+  const handleVoteChange = (updatedPost) => {
+    setFeaturedPosts((posts) =>
+      posts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
+    );
+    setLatestPosts((posts) =>
+      posts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
+    );
   };
 
   const renderVoteButtons = (post) => {
-    const userVote = votes[post.id];
-
     return (
-      <div className="flex items-center space-x-2">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleVote(post.id, "up");
-          }}
-          disabled={userVote === "up"}
-          className={`p-1 rounded transition-colors bg-transparent border-0 ${
-            userVote === "up"
-              ? "text-blue-500 cursor-default"
-              : darkMode
-              ? "text-gray-400 hover:text-blue-400"
-              : "text-gray-600 hover:text-blue-600"
-          }`}
-          style={{ background: "transparent", padding: "0.25rem" }}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-          >
-            <path
-              fillRule="evenodd"
-              d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
-        <span
-          className={`text-sm font-medium ${
-            darkMode ? "text-gray-300" : "text-gray-700"
-          }`}
-        >
-          {post.totalVotes || 0}
-        </span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleVote(post.id, "down");
-          }}
-          disabled={userVote === "down"}
-          className={`p-1 rounded transition-colors bg-transparent border-0 ${
-            userVote === "down"
-              ? "text-red-500 cursor-default"
-              : darkMode
-              ? "text-gray-400 hover:text-red-400"
-              : "text-gray-600 hover:text-red-600"
-          }`}
-          style={{ background: "transparent", padding: "0.25rem" }}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-          >
-            <path
-              fillRule="evenodd"
-              d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
-      </div>
+      <VoteButtons
+        post={post}
+        darkMode={darkMode}
+        onVoteChange={handleVoteChange}
+      />
     );
   };
 

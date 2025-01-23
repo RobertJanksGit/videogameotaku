@@ -4,8 +4,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Helper function to check if user is admin
     function isAdmin() {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return request.auth != null && 
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+             user != null && 
+             user.data != null && 
+             user.data.role == "admin";
     }
 
     // Helper function to check if user is signed in
@@ -17,12 +20,34 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Helper function to validate vote changes
+    function isValidVoteUpdate(existing, updated) {
+      let onlyVotingFieldsChanged = updated.diff(existing).affectedKeys()
+        .hasOnly(['usersThatLiked', 'usersThatDisliked', 'totalVotes']);
+      
+      let validArrays = updated.usersThatLiked is list && updated.usersThatDisliked is list;
+      let validVoteCount = updated.totalVotes == (updated.usersThatLiked.size() - updated.usersThatDisliked.size());
+      
+      return onlyVotingFieldsChanged && validArrays && validVoteCount;
+    }
+
+    // Helper function to validate post data
+    function isValidPostData(data) {
+      return data.usersThatLiked is list && 
+             data.usersThatDisliked is list &&
+             data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked']);
+    }
+
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts
       allow read: if true;
-      // Only admins can create, update, delete posts
-      allow create, update, delete: if isAdmin();
+      // Only admins can create posts with valid data
+      allow create: if isAdmin() && isValidPostData(request.resource.data);
+      // Allow admins to update anything, or users to update only their vote
+      allow update: if isAdmin() || 
+        (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
+      allow delete: if isAdmin();
     }
 
     // Comments collection rules
@@ -30,13 +55,9 @@ service cloud.firestore {
       // Anyone can read comments
       allow read: if true;
       // Only signed-in users can create comments
-      allow create: if isSignedIn() && 
-                   request.resource.data.authorId == request.auth.uid;
+      allow create: if isSignedIn();
       // Users can only edit/delete their own comments
-      allow update, delete: if isSignedIn() && 
-                          resource.data.authorId == request.auth.uid;
-      // Admins can moderate all comments
-      allow update, delete: if isAdmin();
+      allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Users collection rules
@@ -44,7 +65,7 @@ service cloud.firestore {
       // Users can read other users' basic info
       allow read: if isSignedIn();
       // Users can update their own data
-      allow update: if request.auth.uid == userId;
+      allow write: if isSignedIn() && userId == request.auth.uid;
       // Only admins can update other users' roles and status
       allow update: if isAdmin() && 
                    (request.resource.data.diff(resource.data).affectedKeys()
@@ -57,8 +78,9 @@ service cloud.firestore {
     // Votes collection
     match /votes/{voteId} {
       allow read: if true;
-      allow create: if isSignedIn() && voteId == request.resource.data.postId + "_" + request.auth.uid;
-      allow update: if false; // Votes cannot be updated, only created or deleted
+      allow create, update: if isSignedIn() && 
+        voteId == request.resource.data.postId + '_' + request.auth.uid &&
+        request.resource.data.userId == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 

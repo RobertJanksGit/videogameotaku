@@ -124,6 +124,8 @@ const PostManager = ({ darkMode }) => {
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        usersThatLiked: [], // Initialize empty likes array
+        usersThatDisliked: [], // Initialize empty dislikes array
         totalVotes: 0, // Initialize totalVotes field
       });
 
