@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useAuth } from "../../contexts/AuthContext";
 import PropTypes from "prop-types";
+import AuthModal from "../auth/AuthModal";
 
 const SunIcon = () => (
   <svg
@@ -37,19 +40,69 @@ const MoonIcon = () => (
 
 const Layout = ({ children }) => {
   const { darkMode, toggleTheme } = useTheme();
+  const { user, logout } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+
+  const handleAuthClick = (mode) => {
+    setAuthMode(mode);
+    setShowAuthModal(true);
+  };
+
+  const handleModalClose = () => {
+    setShowAuthModal(false);
+    // Reset auth mode when modal is closed
+    setAuthMode("login");
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Failed to log out:", error);
+    }
+  };
 
   return (
     <div className={`w-full ${darkMode ? "dark" : ""}`}>
       <div className="min-h-screen w-full bg-white dark:bg-gray-900">
-        <header className="sticky top-0 z-50 w-full bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+        <header className="sticky top-0 z-50 w-full bg-[#0D1117] border-b border-gray-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+            <h1 className="text-xl font-semibold text-white">
               VideoGame Otaku
             </h1>
-            <nav className="flex items-center gap-4">
+            <nav className="flex items-center space-x-4">
+              {user ? (
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm text-[#7D8590]">
+                    {user.displayName || user.email}
+                  </span>
+                  <button
+                    onClick={handleLogout}
+                    className="text-sm text-[#7D8590] hover:text-white transition-colors"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => handleAuthClick("register")}
+                    className="text-sm text-[#7D8590] hover:text-white transition-colors"
+                  >
+                    Register
+                  </button>
+                  <button
+                    onClick={() => handleAuthClick("login")}
+                    className="text-sm bg-[#2D7FF9] text-white px-4 py-1.5 rounded-md hover:bg-[#2872E0] transition-colors"
+                  >
+                    Login
+                  </button>
+                </div>
+              )}
               <button
                 onClick={toggleTheme}
-                className="p-2.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                className="p-2 text-[#7D8590] hover:text-white transition-colors"
                 aria-label="Toggle theme"
               >
                 {darkMode ? <SunIcon /> : <MoonIcon />}
@@ -66,6 +119,11 @@ const Layout = ({ children }) => {
           </div>
         </footer>
       </div>
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={handleModalClose}
+        initialMode={authMode}
+      />
     </div>
   );
 };
