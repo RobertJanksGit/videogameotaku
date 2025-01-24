@@ -164,6 +164,13 @@ const Layout = ({ children }) => {
                         </>
                       )}
                       <Link
+                        to="/dashboard"
+                        onClick={() => setShowDropdown(false)}
+                        className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                      >
+                        My Dashboard
+                      </Link>
+                      <Link
                         to="/settings"
                         onClick={() => setShowDropdown(false)}
                         className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"

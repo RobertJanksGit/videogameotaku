@@ -9,6 +9,7 @@ import {
 import Layout from "./components/layout/Layout";
 import Settings from "./components/settings/Settings";
 import AdminPage from "./components/admin/AdminPage";
+import UserDashboard from "./components/user/UserDashboard";
 import HomePage from "./components/home/HomePage";
 import PostDetail from "./components/posts/PostDetail";
 import PropTypes from "prop-types";
@@ -27,6 +28,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <Settings />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <PrivateRoute>
+                    <UserDashboard />
                   </PrivateRoute>
                 }
               />
