@@ -256,9 +256,9 @@ const HomePage = () => {
                       <span>{post.authorName}</span>
                     </div>
                   </span>
-                  <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-6">
                     <span
-                      className={`text-xs flex items-center space-x-1 ${
+                      className={`text-xs flex items-center space-x-2 ${
                         darkMode ? "text-gray-400" : "text-gray-500"
                       }`}
                     >
@@ -415,13 +415,11 @@ const HomePage = () => {
                       <span>{post.commentCount || 0}</span>
                     </span>
                     <span
-                      className={`text-sm font-medium ${
-                        darkMode
-                          ? "text-blue-400 hover:text-blue-300"
-                          : "text-blue-600 hover:text-blue-700"
+                      className={`text-xs ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
                       }`}
                     >
-                      Read more
+                      {post.createdAt?.toDate().toLocaleDateString()}
                     </span>
                   </div>
                 </div>
