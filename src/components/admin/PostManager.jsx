@@ -128,6 +128,7 @@ const PostManager = ({ darkMode }) => {
         usersThatLiked: [], // Initialize empty likes array
         usersThatDisliked: [], // Initialize empty dislikes array
         totalVotes: 0, // Initialize totalVotes field
+        status: "published", // Set status as published for admin posts
       });
 
       // Reset form and refresh posts
@@ -173,20 +174,24 @@ const PostManager = ({ darkMode }) => {
         imageData = await uploadImage(imageFile);
       }
 
-      const postRef = doc(db, "posts", currentPost.id);
-      await updateDoc(postRef, {
+      const updateData = {
         title: currentPost.title,
         content: currentPost.content,
-        category: currentPost.category,
-        platform: currentPost.platform,
-        ...(imageData && {
-          imageUrl: imageData.url,
-          imagePath: imageData.path,
-        }),
+        category: currentPost.category || "news",
+        platform: currentPost.platform || "Nintendo",
         updatedAt: serverTimestamp(),
         lastEditedBy: user.displayName || user.email.split("@")[0],
         lastEditedById: user.uid,
-      });
+      };
+
+      // Only add image data if there's a new image
+      if (imageData) {
+        updateData.imageUrl = imageData.url;
+        updateData.imagePath = imageData.path;
+      }
+
+      const postRef = doc(db, "posts", currentPost.id);
+      await updateDoc(postRef, updateData);
 
       // Reset form and refresh posts
       setCurrentPost({
@@ -237,7 +242,15 @@ const PostManager = ({ darkMode }) => {
 
   // Edit post
   const handleEditPost = (post) => {
-    setCurrentPost(post);
+    setCurrentPost({
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      category: post.category || "news",
+      platform: post.platform || "Nintendo",
+      imageUrl: post.imageUrl,
+      imagePath: post.imagePath,
+    });
     setImagePreview(post.imageUrl);
     setIsEditing(true);
   };

@@ -35,7 +35,8 @@ service cloud.firestore {
     function isValidPostData(data) {
       return data.usersThatLiked is list && 
              data.usersThatDisliked is list &&
-             data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked']);
+             data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked', 'status']) &&
+             data.status in ['pending', 'published', 'rejected'];
     }
 
     // Posts collection rules
@@ -45,10 +46,12 @@ service cloud.firestore {
       // Allow authenticated users to create posts with valid data
       allow create: if isSignedIn() && 
                    isValidPostData(request.resource.data) && 
-                   request.resource.data.authorId == request.auth.uid;
+                   request.resource.data.authorId == request.auth.uid &&
+                   request.resource.data.status == 'pending';
       // Allow users to update their own posts, admins to update any post, or users to update votes
       allow update: if isAdmin() || 
-                   (isSignedIn() && resource.data.authorId == request.auth.uid) ||
+                   (isSignedIn() && resource.data.authorId == request.auth.uid && 
+                    !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])) ||
                    (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
       // Allow users to delete their own posts or admins to delete any post
       allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == request.auth.uid);

@@ -65,9 +65,10 @@ const HomePage = () => {
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        // Fetch all posts ordered by date first
+        // Fetch only published posts ordered by date
         const allPostsQuery = query(
           collection(db, "posts"),
+          where("status", "==", "published"), // Only get published posts
           orderBy("createdAt", "desc"),
           limit(20)
         );

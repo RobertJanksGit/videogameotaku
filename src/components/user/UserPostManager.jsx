@@ -11,6 +11,7 @@ import {
   query,
   where,
   serverTimestamp,
+  getDoc,
 } from "firebase/firestore";
 import {
   ref,
@@ -19,7 +20,6 @@ import {
   deleteObject,
 } from "firebase/storage";
 import PropTypes from "prop-types";
-import { validateContent } from "../../utils/aiContentCheck";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -35,6 +35,23 @@ const UserPostManager = ({ darkMode }) => {
   const [imagePreview, setImagePreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [validationError, setValidationError] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Add admin check
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          setIsAdmin(userDoc.exists() && userDoc.data().role === "admin");
+        } catch (error) {
+          console.error("Error checking admin status:", error);
+          setIsAdmin(false);
+        }
+      }
+    };
+    checkAdminStatus();
+  }, [user]);
 
   // Handle image selection
   const handleImageChange = (e) => {
@@ -57,7 +74,14 @@ const UserPostManager = ({ darkMode }) => {
     const fileName = `${Date.now()}.${fileExtension}`;
     const storageRef = ref(storage, `post-images/${fileName}`);
 
-    await uploadBytes(storageRef, file);
+    // Add metadata including user ID
+    const metadata = {
+      customMetadata: {
+        userId: user.uid,
+      },
+    };
+
+    await uploadBytes(storageRef, file, metadata);
     const downloadURL = await getDownloadURL(storageRef);
     return { url: downloadURL, path: `post-images/${fileName}` };
   };
@@ -116,6 +140,19 @@ const UserPostManager = ({ darkMode }) => {
     }
   }, [user]);
 
+  // Add this function before handleCreatePost
+  const convertImageToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result.split(",")[1];
+        resolve(base64String);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Create new post
   const handleCreatePost = async (e) => {
     e.preventDefault();
@@ -123,25 +160,15 @@ const UserPostManager = ({ darkMode }) => {
     setValidationError(null);
 
     try {
-      // Validate content with AI
-      const validationResult = await validateContent({
-        title: currentPost.title,
-        content: currentPost.content,
-        image: imageFile,
-      });
-
-      if (!validationResult.isValid) {
-        setValidationError(validationResult.message);
-        return;
-      }
-
+      // First upload the image if exists
       let imageData = null;
       if (imageFile) {
         imageData = await uploadImage(imageFile);
       }
 
+      // Create the post document with pending status (or published if admin)
       const postsCollection = collection(db, "posts");
-      await addDoc(postsCollection, {
+      const newPost = {
         ...currentPost,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
@@ -154,9 +181,22 @@ const UserPostManager = ({ darkMode }) => {
         usersThatLiked: [],
         usersThatDisliked: [],
         totalVotes: 0,
-      });
+        status: isAdmin ? "published" : "pending", // Set as published immediately if admin
+      };
 
-      // Reset form
+      const docRef = await addDoc(postsCollection, newPost);
+      const newPostWithId = {
+        ...newPost,
+        id: docRef.id,
+        createdAt: {
+          toDate: () => new Date(),
+        },
+      };
+
+      // Immediately update the UI with the new post
+      setPosts((prevPosts) => [...prevPosts, newPostWithId]);
+
+      // Reset form immediately
       setCurrentPost({
         title: "",
         content: "",
@@ -165,23 +205,88 @@ const UserPostManager = ({ darkMode }) => {
       });
       setImageFile(null);
       setImagePreview(null);
+      setIsUploading(false);
 
-      // Refresh posts
-      const userPostsQuery = query(
-        postsCollection,
-        where("authorId", "==", user.uid)
-      );
-      const postsSnapshot = await getDocs(userPostsQuery);
-      const postsList = postsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setPosts(postsList);
+      // Skip validation for admin users
+      if (!isAdmin) {
+        // Prepare validation payload
+        const payload = {
+          prompt: import.meta.env.VITE_AI_MODERATION_PROMPT,
+          title: newPost.title,
+          content: newPost.content,
+        };
+
+        if (imageData) {
+          const base64Image = await convertImageToBase64(imageFile);
+          payload.image = base64Image;
+        }
+
+        // Validate content in the background
+        const response = await fetch(
+          "https://simple-calorie-c68468523a43.herokuapp.com/api/validate-content",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || "Content validation failed");
+        }
+
+        const result = await response.json();
+        console.log("Validation result:", result);
+
+        // Parse the nested JSON from the message field
+        let parsedResult;
+        try {
+          // Clean up the markdown code blocks and extract just the JSON
+          const cleanJson = result.message
+            .replace(/```json\n/, "") // Remove opening code block
+            .replace(/\n```$/, "") // Remove closing code block
+            .trim(); // Remove any extra whitespace
+
+          parsedResult = JSON.parse(cleanJson);
+          console.log("Parsed validation result:", parsedResult);
+        } catch (error) {
+          console.error("Error parsing validation result:", error);
+          parsedResult = {
+            isValid: false,
+            message: "Error parsing validation result",
+          };
+        }
+
+        // Update the post status based on parsed validation result
+        const validationStatus = parsedResult.isValid
+          ? "published"
+          : "rejected";
+        await updateDoc(doc(db, "posts", docRef.id), {
+          status: validationStatus,
+          moderationMessage: parsedResult.message || null,
+          moderationDetails: parsedResult.details || null,
+        });
+
+        // Update the local posts state with the validation result
+        setPosts((prevPosts) =>
+          prevPosts.map((post) =>
+            post.id === docRef.id
+              ? {
+                  ...post,
+                  status: validationStatus,
+                  moderationMessage: parsedResult.message || null,
+                  moderationDetails: parsedResult.details || null,
+                }
+              : post
+          )
+        );
+      }
     } catch (error) {
       console.error("Error creating post:", error);
       setValidationError(error.message);
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -192,16 +297,63 @@ const UserPostManager = ({ darkMode }) => {
     setValidationError(null);
 
     try {
-      // Validate content with AI
-      const validationResult = await validateContent({
-        title: currentPost.title,
-        content: currentPost.content,
-        image: imageFile,
-      });
+      // Skip validation for admin users
+      if (!isAdmin) {
+        // Prepare validation payload
+        const payload = {
+          prompt: import.meta.env.VITE_AI_MODERATION_PROMPT,
+          title: currentPost.title,
+          content: currentPost.content,
+        };
 
-      if (!validationResult.isValid) {
-        setValidationError(validationResult.message);
-        return;
+        if (imageFile) {
+          const base64Image = await convertImageToBase64(imageFile);
+          payload.image = base64Image;
+        }
+
+        // Validate content
+        const response = await fetch(
+          "https://simple-calorie-c68468523a43.herokuapp.com/api/validate-content",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || "Content validation failed");
+        }
+
+        const result = await response.json();
+        console.log("Validation result:", result);
+
+        // Parse the nested JSON from the message field
+        let parsedResult;
+        try {
+          // Clean up the markdown code blocks and extract just the JSON
+          const cleanJson = result.message
+            .replace(/```json\n/, "") // Remove opening code block
+            .replace(/\n```$/, "") // Remove closing code block
+            .trim(); // Remove any extra whitespace
+
+          parsedResult = JSON.parse(cleanJson);
+          console.log("Parsed validation result:", parsedResult);
+
+          if (!parsedResult.isValid) {
+            setValidationError(parsedResult.message);
+            setIsUploading(false);
+            return;
+          }
+        } catch (error) {
+          console.error("Error parsing validation result:", error);
+          setValidationError("Error validating content. Please try again.");
+          setIsUploading(false);
+          return;
+        }
       }
 
       let imageData = null;
@@ -229,6 +381,7 @@ const UserPostManager = ({ darkMode }) => {
           imagePath: imageData.path,
         }),
         updatedAt: serverTimestamp(),
+        status: isAdmin ? "published" : "published", // Set as published after validation
       });
 
       // Reset form
@@ -268,19 +421,26 @@ const UserPostManager = ({ darkMode }) => {
       try {
         const post = posts.find((p) => p.id === postId);
 
+        // First delete the document from Firestore
+        await deleteDoc(doc(db, "posts", postId));
+
+        // Then attempt to delete the image if it exists
         if (post.imagePath) {
           const imageRef = ref(storage, post.imagePath);
           try {
             await deleteObject(imageRef);
           } catch (error) {
+            // Log the error but don't throw it since the post is already deleted
             console.error("Error deleting image:", error);
+            // Continue with the UI update even if image deletion fails
           }
         }
 
-        await deleteDoc(doc(db, "posts", postId));
+        // Update the UI
         setPosts(posts.filter((post) => post.id !== postId));
       } catch (error) {
         console.error("Error deleting post:", error);
+        alert("Error deleting post. Please try again.");
       }
     }
   };
@@ -533,6 +693,13 @@ const UserPostManager = ({ darkMode }) => {
                     darkMode ? "text-gray-200" : "text-gray-500"
                   } uppercase tracking-wider`}
                 >
+                  Status
+                </th>
+                <th
+                  className={`px-6 py-3 text-left text-xs font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-500"
+                  } uppercase tracking-wider`}
+                >
                   Votes
                 </th>
                 <th
@@ -571,6 +738,11 @@ const UserPostManager = ({ darkMode }) => {
                     }`}
                   >
                     {post.title}
+                    {post.status === "rejected" && post.moderationMessage && (
+                      <div className="text-xs text-red-500 mt-1">
+                        {post.moderationMessage}
+                      </div>
+                    )}
                   </td>
                   <td
                     className={`px-6 py-4 whitespace-nowrap text-sm ${
@@ -578,6 +750,20 @@ const UserPostManager = ({ darkMode }) => {
                     }`}
                   >
                     {post.category}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm`}>
+                    <span
+                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        (post.status || "pending") === "published"
+                          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                          : (post.status || "pending") === "rejected"
+                          ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+                          : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+                      }`}
+                    >
+                      {(post.status || "pending").charAt(0).toUpperCase() +
+                        (post.status || "pending").slice(1)}
+                    </span>
                   </td>
                   <td
                     className={`px-6 py-4 whitespace-nowrap text-sm ${
@@ -606,7 +792,10 @@ const UserPostManager = ({ darkMode }) => {
                       darkMode ? "text-gray-200" : "text-gray-900"
                     }`}
                   >
-                    {post.createdAt?.toDate().toLocaleDateString()}
+                    {post.createdAt &&
+                    typeof post.createdAt.toDate === "function"
+                      ? post.createdAt.toDate().toLocaleDateString()
+                      : new Date(post.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <button
