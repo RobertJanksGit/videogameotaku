@@ -19,6 +19,7 @@ import {
   deleteObject,
 } from "firebase/storage";
 import PropTypes from "prop-types";
+import { validateContent } from "../../utils/aiContentCheck";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -33,6 +34,7 @@ const UserPostManager = ({ darkMode }) => {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [validationError, setValidationError] = useState(null);
 
   // Handle image selection
   const handleImageChange = (e) => {
@@ -118,7 +120,21 @@ const UserPostManager = ({ darkMode }) => {
   const handleCreatePost = async (e) => {
     e.preventDefault();
     setIsUploading(true);
+    setValidationError(null);
+
     try {
+      // Validate content with AI
+      const validationResult = await validateContent({
+        title: currentPost.title,
+        content: currentPost.content,
+        image: imageFile,
+      });
+
+      if (!validationResult.isValid) {
+        setValidationError(validationResult.message);
+        return;
+      }
+
       let imageData = null;
       if (imageFile) {
         imageData = await uploadImage(imageFile);
@@ -163,6 +179,7 @@ const UserPostManager = ({ darkMode }) => {
       setPosts(postsList);
     } catch (error) {
       console.error("Error creating post:", error);
+      setValidationError(error.message);
     } finally {
       setIsUploading(false);
     }
@@ -172,7 +189,21 @@ const UserPostManager = ({ darkMode }) => {
   const handleUpdatePost = async (e) => {
     e.preventDefault();
     setIsUploading(true);
+    setValidationError(null);
+
     try {
+      // Validate content with AI
+      const validationResult = await validateContent({
+        title: currentPost.title,
+        content: currentPost.content,
+        image: imageFile,
+      });
+
+      if (!validationResult.isValid) {
+        setValidationError(validationResult.message);
+        return;
+      }
+
       let imageData = null;
 
       if (imageFile) {
@@ -225,6 +256,7 @@ const UserPostManager = ({ darkMode }) => {
       setPosts(postsList);
     } catch (error) {
       console.error("Error updating post:", error);
+      setValidationError(error.message);
     } finally {
       setIsUploading(false);
     }
@@ -266,6 +298,35 @@ const UserPostManager = ({ darkMode }) => {
         onSubmit={isEditing ? handleUpdatePost : handleCreatePost}
         className="space-y-4"
       >
+        {validationError && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg
+                  className="h-5 w-5 text-red-400"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p
+                  className={`text-sm ${
+                    darkMode ? "text-red-200" : "text-red-800"
+                  }`}
+                >
+                  {validationError}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div>
           <label
             htmlFor="title"

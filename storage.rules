@@ -31,8 +31,10 @@ service firebase.storage {
     match /post-images/{imageId} {
       // Anyone can read post images
       allow read: if true;
-      // Only admins can upload, update, or delete post images
-      allow create, update, delete: if isAdmin();
+      // Any authenticated user can create post images
+      allow create: if isSignedIn();
+      // Only admins can update or delete post images
+      allow update, delete: if isAdmin();
     }
 
     // Default deny

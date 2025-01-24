@@ -42,12 +42,16 @@ service cloud.firestore {
     match /posts/{postId} {
       // Anyone can read posts
       allow read: if true;
-      // Only admins can create posts with valid data
-      allow create: if isAdmin() && isValidPostData(request.resource.data);
-      // Allow admins to update anything, or users to update only their vote
+      // Allow authenticated users to create posts with valid data
+      allow create: if isSignedIn() && 
+                   isValidPostData(request.resource.data) && 
+                   request.resource.data.authorId == request.auth.uid;
+      // Allow users to update their own posts, admins to update any post, or users to update votes
       allow update: if isAdmin() || 
-        (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
-      allow delete: if isAdmin();
+                   (isSignedIn() && resource.data.authorId == request.auth.uid) ||
+                   (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
+      // Allow users to delete their own posts or admins to delete any post
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == request.auth.uid);
     }
 
     // Comments collection rules
