@@ -23,6 +23,73 @@ import {
   getNotificationMessage,
 } from "../../utils/notifications";
 
+const ReplyForm = ({ onSubmit, darkMode, isMainThreadComment }) => {
+  const [replyContent, setReplyContent] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (replyContent.trim()) {
+      await onSubmit(replyContent);
+      setReplyContent("");
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <textarea
+        value={replyContent}
+        onChange={(e) => setReplyContent(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className={`w-full p-2 text-sm rounded-md ${
+          darkMode
+            ? "bg-gray-700 text-gray-200 border-gray-600"
+            : "bg-white text-gray-900 border-gray-300"
+        } border`}
+        rows="2"
+        placeholder="Write a reply... (Press Enter to submit, Shift+Enter for new line)"
+      />
+      <div className="flex justify-end mt-2 space-x-2">
+        {!isMainThreadComment && (
+          <button
+            type="button"
+            onClick={() => onSubmit(null)}
+            className={`px-3 py-1 text-sm rounded-md ${
+              darkMode
+                ? "text-gray-300 hover:text-gray-200"
+                : "text-gray-600 hover:text-gray-700"
+            }`}
+          >
+            Cancel
+          </button>
+        )}
+        <button
+          type="submit"
+          className={`px-3 py-1 text-sm text-white rounded-md ${
+            darkMode
+              ? "bg-blue-600 hover:bg-blue-700"
+              : "bg-blue-500 hover:bg-blue-600"
+          }`}
+        >
+          Reply
+        </button>
+      </div>
+    </form>
+  );
+};
+
+ReplyForm.propTypes = {
+  onSubmit: PropTypes.func.isRequired,
+  darkMode: PropTypes.bool.isRequired,
+  isMainThreadComment: PropTypes.bool.isRequired,
+};
+
 const Comment = ({
   comment,
   darkMode,
@@ -32,37 +99,31 @@ const Comment = ({
   allComments,
   onLoadReplies,
   isLoadingReplies,
+  isInThread = false,
 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
-  const [replyContent, setReplyContent] = useState("");
 
   // Find all replies to this comment from the loaded comments
   const replies = allComments.filter((c) => c.parentId === comment.id);
   const hasReplies = comment.replyCount > 0;
+  const isMainThreadComment = isInThread && !comment.parentId;
 
   const handleCommentClick = async () => {
-    if (hasReplies) {
-      if (replies.length === 0) {
-        await onLoadReplies(comment.id);
-      }
-      onThreadClick(comment.id);
+    // Only load replies if there are any and they haven't been loaded yet
+    if (hasReplies && replies.length === 0) {
+      await onLoadReplies(comment.id);
     }
+    // Always trigger thread view for any clicked comment
+    onThreadClick(comment.id);
   };
 
-  const handleSubmitReply = async (e) => {
-    e.preventDefault();
-    if (replyContent.trim()) {
-      await onReply(comment.id, replyContent);
-      setReplyContent("");
+  const handleReplySubmit = async (content) => {
+    if (content === null) {
       setShowReplyForm(false);
+      return;
     }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmitReply(e);
-    }
+    await onReply(comment.id, content);
+    setShowReplyForm(false);
   };
 
   return (
@@ -70,7 +131,7 @@ const Comment = ({
       <div
         id={`comment-${comment.id}`}
         onClick={handleCommentClick}
-        className={`p-4 ${hasReplies ? "cursor-pointer" : ""} ${
+        className={`p-4 ${!isInThread ? "cursor-pointer" : ""} ${
           darkMode ? "hover:bg-gray-800" : "hover:bg-gray-50"
         } transition-colors duration-200 border-b ${
           darkMode ? "border-gray-800" : "border-gray-100"
@@ -125,7 +186,7 @@ const Comment = ({
               {comment.content}
             </p>
             <div className="flex items-center space-x-4 mt-2">
-              {user && (
+              {user && !isMainThreadComment && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -140,7 +201,7 @@ const Comment = ({
                   Reply
                 </button>
               )}
-              {hasReplies && (
+              {hasReplies && !isInThread && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -163,45 +224,25 @@ const Comment = ({
         </div>
       </div>
 
-      {showReplyForm && (
+      {/* Show reply form directly under main thread comment */}
+      {isMainThreadComment && user && (
+        <div className="ml-11 mt-2 mb-4">
+          <ReplyForm
+            onSubmit={handleReplySubmit}
+            darkMode={darkMode}
+            isMainThreadComment={true}
+          />
+        </div>
+      )}
+
+      {/* Show reply form for other comments when requested */}
+      {!isMainThreadComment && showReplyForm && (
         <div className="ml-11 mt-2" onClick={(e) => e.stopPropagation()}>
-          <form onSubmit={handleSubmitReply}>
-            <textarea
-              value={replyContent}
-              onChange={(e) => setReplyContent(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className={`w-full p-2 text-sm rounded-md ${
-                darkMode
-                  ? "bg-gray-700 text-gray-200 border-gray-600"
-                  : "bg-white text-gray-900 border-gray-300"
-              } border`}
-              rows="2"
-              placeholder="Write a reply... (Press Enter to submit, Shift+Enter for new line)"
-            />
-            <div className="flex justify-end mt-2 space-x-2">
-              <button
-                type="button"
-                onClick={() => setShowReplyForm(false)}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  darkMode
-                    ? "text-gray-300 hover:text-gray-200"
-                    : "text-gray-600 hover:text-gray-700"
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className={`px-3 py-1 text-sm text-white rounded-md ${
-                  darkMode
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : "bg-blue-500 hover:bg-blue-600"
-                }`}
-              >
-                Reply
-              </button>
-            </div>
-          </form>
+          <ReplyForm
+            onSubmit={handleReplySubmit}
+            darkMode={darkMode}
+            isMainThreadComment={false}
+          />
         </div>
       )}
 
@@ -224,6 +265,7 @@ Comment.propTypes = {
     content: PropTypes.string.isRequired,
     authorName: PropTypes.string.isRequired,
     authorPhotoURL: PropTypes.string,
+    parentId: PropTypes.string,
     createdAt: PropTypes.oneOfType([
       PropTypes.instanceOf(Date),
       PropTypes.shape({
@@ -239,6 +281,7 @@ Comment.propTypes = {
   allComments: PropTypes.array.isRequired,
   onLoadReplies: PropTypes.func.isRequired,
   isLoadingReplies: PropTypes.bool.isRequired,
+  isInThread: PropTypes.bool,
 };
 
 const PostDetail = () => {
@@ -803,7 +846,6 @@ const PostDetail = () => {
             {/* Comments List */}
             <div className="space-y-6">
               {currentThreadId ? (
-                // Show the current thread
                 <>
                   <button
                     onClick={() => setCurrentThreadId(null)}
@@ -828,7 +870,6 @@ const PostDetail = () => {
                     </svg>
                     <span>Back to all comments</span>
                   </button>
-                  {/* Use Set to ensure unique comments */}
                   {Array.from(
                     new Set(
                       comments
@@ -852,6 +893,7 @@ const PostDetail = () => {
                         allComments={comments}
                         onLoadReplies={loadReplies}
                         isLoadingReplies={comment.isLoadingReplies}
+                        isInThread={true}
                       />
                     );
                   })}
@@ -871,6 +913,7 @@ const PostDetail = () => {
                       allComments={comments}
                       onLoadReplies={loadReplies}
                       isLoadingReplies={comment.isLoadingReplies}
+                      isInThread={false}
                     />
                   ))
               )}
