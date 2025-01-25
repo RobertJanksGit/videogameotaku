@@ -135,6 +135,12 @@ const Layout = ({ children }) => {
   const dropdownRef = useRef(null);
   const notificationsRef = useRef(null);
 
+  // Reset dropdowns when user changes
+  useEffect(() => {
+    setShowDropdown(false);
+    setShowNotifications(false);
+  }, [user]);
+
   useEffect(() => {
     if (!user) return;
 
