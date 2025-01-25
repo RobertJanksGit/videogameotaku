@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
@@ -26,7 +26,14 @@ import {
 const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyContent, setReplyContent] = useState("");
-  const [showReplies, setShowReplies] = useState(false);
+  const [showReplies, setShowReplies] = useState(comment.showReplies || false);
+
+  // Update showReplies when comment.showReplies changes
+  useEffect(() => {
+    if (comment.showReplies !== undefined) {
+      setShowReplies(comment.showReplies);
+    }
+  }, [comment.showReplies]);
 
   const handleSubmitReply = async (e) => {
     e.preventDefault();
@@ -215,6 +222,7 @@ Comment.propTypes = {
       }),
     ]),
     replies: PropTypes.arrayOf(PropTypes.object),
+    showReplies: PropTypes.bool,
   }).isRequired,
   darkMode: PropTypes.bool.isRequired,
   onReply: PropTypes.func.isRequired,
@@ -232,49 +240,48 @@ const PostDetail = () => {
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
+  const hasScrolledToComment = useRef(false);
 
-  // Function to scroll to and highlight a comment
   const scrollToComment = (commentId) => {
     if (!commentId) return;
 
-    // First try to find the comment in top-level comments
-    let commentElement = document.getElementById(`comment-${commentId}`);
+    const maxAttempts = 10;
+    let attempts = 0;
 
-    if (!commentElement) {
-      // If not found, it might be a reply. Find the parent comment and expand it
-      const parentComment = comments.find((comment) =>
-        comment.replies?.some((reply) => reply.id === commentId)
-      );
+    const attemptScroll = () => {
+      let commentElement = document.getElementById(`comment-${commentId}`);
 
-      if (parentComment) {
-        // Find the comment in the DOM and update its state to show replies
-        const commentIndex = comments.findIndex(
-          (c) => c.id === parentComment.id
+      if (!commentElement) {
+        // If not found, it might be a reply. Find the parent comment and expand it
+        const parentComment = comments.find((comment) =>
+          comment.replies?.some((reply) => reply.id === commentId)
         );
-        const newComments = [...comments];
-        newComments[commentIndex] = { ...parentComment, showReplies: true };
-        setComments(newComments);
 
-        // Wait for the DOM to update before scrolling
-        setTimeout(() => {
-          const replyElement = document.getElementById(`comment-${commentId}`);
-          if (replyElement) {
-            replyElement.scrollIntoView({ behavior: "smooth" });
-            replyElement.classList.add("highlight-comment");
-            setTimeout(() => {
-              replyElement.classList.remove("highlight-comment");
-            }, 3000);
+        if (parentComment) {
+          // Update all comments, setting showReplies to true for the parent comment
+          const updatedComments = comments.map((comment) => ({
+            ...comment,
+            showReplies:
+              comment.id === parentComment.id ? true : comment.showReplies,
+          }));
+          setComments(updatedComments);
+
+          if (attempts < maxAttempts) {
+            attempts++;
+            setTimeout(attemptScroll, 200);
           }
-        }, 100);
+        }
+      } else {
+        commentElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        commentElement.classList.add("highlight-comment");
+        setTimeout(() => {
+          commentElement.classList.remove("highlight-comment");
+        }, 3000);
       }
-    } else {
-      // If it's a top-level comment, scroll to it directly
-      commentElement.scrollIntoView({ behavior: "smooth" });
-      commentElement.classList.add("highlight-comment");
-      setTimeout(() => {
-        commentElement.classList.remove("highlight-comment");
-      }, 3000);
-    }
+    };
+
+    // Start the first attempt after a short delay to ensure comments are loaded
+    setTimeout(attemptScroll, 100);
   };
 
   useEffect(() => {
@@ -315,16 +322,14 @@ const PostDetail = () => {
           })
         );
 
-        setComments(commentsWithReplies);
-        setLoading(false);
+        // Initialize comments with showReplies state
+        const initializedComments = commentsWithReplies.map((comment) => ({
+          ...comment,
+          showReplies: false,
+        }));
 
-        // After comments are loaded, scroll to target comment if specified
-        if (location.state?.targetCommentId) {
-          // Small delay to ensure DOM is updated
-          setTimeout(() => {
-            scrollToComment(location.state.targetCommentId);
-          }, 100);
-        }
+        setComments(initializedComments);
+        setLoading(false);
       } catch (error) {
         console.error("Error fetching post:", error);
         navigate("/");
@@ -332,7 +337,25 @@ const PostDetail = () => {
     };
 
     fetchPost();
-  }, [postId, navigate, location.state?.targetCommentId]);
+  }, [postId, navigate]);
+
+  // Separate useEffect for handling comment scrolling
+  useEffect(() => {
+    if (
+      !loading &&
+      comments.length > 0 &&
+      location.state?.targetCommentId &&
+      !hasScrolledToComment.current
+    ) {
+      scrollToComment(location.state.targetCommentId);
+      hasScrolledToComment.current = true;
+    }
+  }, [loading, comments, location.state?.targetCommentId]);
+
+  // Reset the scroll flag when the postId changes
+  useEffect(() => {
+    hasScrolledToComment.current = false;
+  }, [postId]);
 
   useEffect(() => {
     // Add styles for comment highlighting
