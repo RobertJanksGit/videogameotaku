@@ -23,17 +23,28 @@ import {
   getNotificationMessage,
 } from "../../utils/notifications";
 
-const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
+const Comment = ({
+  comment,
+  darkMode,
+  onReply,
+  user,
+  level = 0,
+  onThreadClick,
+  allComments,
+}) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyContent, setReplyContent] = useState("");
   const [showReplies, setShowReplies] = useState(comment.showReplies || false);
 
-  // Update showReplies when comment.showReplies changes
-  useEffect(() => {
-    if (comment.showReplies !== undefined) {
-      setShowReplies(comment.showReplies);
+  // Find all replies to this comment
+  const replies = allComments.filter((c) => c.parentId === comment.id);
+  const hasReplies = replies.length > 0;
+
+  const handleCommentClick = () => {
+    if (hasReplies) {
+      setShowReplies(!showReplies);
     }
-  }, [comment.showReplies]);
+  };
 
   const handleSubmitReply = async (e) => {
     e.preventDefault();
@@ -41,170 +52,177 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
       await onReply(comment.id, replyContent);
       setReplyContent("");
       setShowReplyForm(false);
-      setShowReplies(true); // Show replies after adding a new one
+      setShowReplies(true);
     }
   };
 
-  const hasReplies = comment.replies && comment.replies.length > 0;
-
   return (
-    <div
-      className={`${level > 0 ? "ml-8" : ""} mb-4`}
-      style={{ marginLeft: `${level * 2}rem` }}
-    >
+    <div className="relative">
       <div
-        id={`comment-${comment.id}`}
-        className={`p-4 rounded-lg ${
-          darkMode ? "bg-gray-800" : "bg-white"
-        } border ${
-          darkMode ? "border-gray-700" : "border-gray-200"
-        } transition-all duration-300 highlight-comment:bg-blue-100 dark:highlight-comment:bg-blue-900`}
+        className={`${
+          level > 0
+            ? "ml-5 before:absolute before:left-[-12px] before:top-0 before:h-full before:w-0.5 before:bg-gray-700"
+            : ""
+        }`}
       >
-        <div className="flex items-center mb-2">
-          <div
-            className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
-              darkMode ? "bg-gray-700" : "bg-gray-100"
-            }`}
-          >
-            {comment.authorPhotoURL ? (
-              <img
-                src={comment.authorPhotoURL}
-                alt={comment.authorName}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span
-                className={`text-sm font-medium ${
+        <div
+          id={`comment-${comment.id}`}
+          onClick={handleCommentClick}
+          className={`p-4 ${hasReplies ? "cursor-pointer" : ""} ${
+            darkMode ? "hover:bg-gray-800" : "hover:bg-gray-50"
+          } transition-colors duration-200 border-b ${
+            darkMode ? "border-gray-800" : "border-gray-100"
+          }`}
+        >
+          <div className="flex items-start space-x-3">
+            <div
+              className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0 ${
+                darkMode ? "bg-gray-700" : "bg-gray-100"
+              } ring-2 ${darkMode ? "ring-gray-600" : "ring-gray-200"}`}
+            >
+              {comment.authorPhotoURL ? (
+                <img
+                  src={comment.authorPhotoURL}
+                  alt={comment.authorName}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span
+                  className={`text-sm font-medium ${
+                    darkMode ? "text-gray-300" : "text-gray-600"
+                  }`}
+                >
+                  {comment.authorName?.[0]?.toUpperCase() || "A"}
+                </span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-2">
+                <span
+                  className={`font-medium ${
+                    darkMode ? "text-gray-200" : "text-gray-900"
+                  }`}
+                >
+                  {comment.authorName}
+                </span>
+                <span
+                  className={`text-xs ${
+                    darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}
+                >
+                  {comment.createdAt instanceof Date
+                    ? comment.createdAt.toLocaleDateString()
+                    : comment.createdAt?.toDate().toLocaleDateString()}
+                </span>
+              </div>
+              <p
+                className={`text-sm mt-1 ${
                   darkMode ? "text-gray-300" : "text-gray-600"
                 }`}
               >
-                {comment.authorName?.[0]?.toUpperCase() || "A"}
-              </span>
-            )}
-          </div>
-          <div className="ml-2">
-            <span
-              className={`font-medium ${
-                darkMode ? "text-gray-200" : "text-gray-900"
-              }`}
-            >
-              {comment.authorName}
-            </span>
-            <span
-              className={`text-xs ml-2 ${
-                darkMode ? "text-gray-400" : "text-gray-500"
-              }`}
-            >
-              {comment.createdAt instanceof Date
-                ? comment.createdAt.toLocaleDateString()
-                : comment.createdAt?.toDate().toLocaleDateString()}
-            </span>
-          </div>
-        </div>
-        <p
-          className={`text-sm mb-3 ${
-            darkMode ? "text-gray-300" : "text-gray-600"
-          }`}
-        >
-          {comment.content}
-        </p>
-        <div className="flex items-center space-x-4">
-          {user && level === 0 && (
-            <button
-              onClick={() => setShowReplyForm(!showReplyForm)}
-              className={`text-sm font-medium ${
-                darkMode
-                  ? "text-blue-400 hover:text-blue-300"
-                  : "text-blue-600 hover:text-blue-700"
-              }`}
-            >
-              Reply
-            </button>
-          )}
-          {hasReplies && (
-            <button
-              onClick={() => setShowReplies(!showReplies)}
-              className={`text-sm font-medium flex items-center space-x-1 ${
-                darkMode
-                  ? "text-gray-400 hover:text-gray-300"
-                  : "text-gray-600 hover:text-gray-700"
-              }`}
-            >
-              <svg
-                className={`w-4 h-4 transform transition-transform ${
-                  showReplies ? "rotate-90" : ""
-                }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-              <span>
-                {comment.replies.length}{" "}
-                {comment.replies.length === 1 ? "reply" : "replies"}
-              </span>
-            </button>
-          )}
-        </div>
-        {showReplyForm && (
-          <form onSubmit={handleSubmitReply} className="mt-2">
-            <textarea
-              value={replyContent}
-              onChange={(e) => setReplyContent(e.target.value)}
-              className={`w-full p-2 text-sm rounded-md ${
-                darkMode
-                  ? "bg-gray-700 text-gray-200 border-gray-600"
-                  : "bg-white text-gray-900 border-gray-300"
-              } border`}
-              rows="2"
-              placeholder="Write a reply..."
-            />
-            <div className="flex justify-end mt-2 space-x-2">
-              <button
-                type="button"
-                onClick={() => setShowReplyForm(false)}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  darkMode
-                    ? "text-gray-300 hover:text-gray-200"
-                    : "text-gray-600 hover:text-gray-700"
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className={`px-3 py-1 text-sm text-white rounded-md ${
-                  darkMode
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : "bg-blue-500 hover:bg-blue-600"
-                }`}
-              >
-                Reply
-              </button>
+                {comment.content}
+              </p>
+              <div className="flex items-center space-x-4 mt-2">
+                {user && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowReplyForm(!showReplyForm);
+                    }}
+                    className={`text-sm font-medium ${
+                      darkMode
+                        ? "text-blue-400 hover:text-blue-300"
+                        : "text-blue-600 hover:text-blue-700"
+                    }`}
+                  >
+                    Reply
+                  </button>
+                )}
+                {hasReplies && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowReplies(!showReplies);
+                    }}
+                    className={`text-sm font-medium flex items-center space-x-1 ${
+                      darkMode
+                        ? "text-gray-400 hover:text-gray-300"
+                        : "text-gray-600 hover:text-gray-700"
+                    }`}
+                  >
+                    <span>
+                      {replies.length}{" "}
+                      {replies.length === 1 ? "reply" : "replies"}
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
-          </form>
+          </div>
+        </div>
+
+        {showReplyForm && (
+          <div className="ml-11 mt-2" onClick={(e) => e.stopPropagation()}>
+            <form onSubmit={handleSubmitReply}>
+              <textarea
+                value={replyContent}
+                onChange={(e) => setReplyContent(e.target.value)}
+                className={`w-full p-2 text-sm rounded-md ${
+                  darkMode
+                    ? "bg-gray-700 text-gray-200 border-gray-600"
+                    : "bg-white text-gray-900 border-gray-300"
+                } border`}
+                rows="2"
+                placeholder="Write a reply..."
+              />
+              <div className="flex justify-end mt-2 space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReplyForm(false)}
+                  className={`px-3 py-1 text-sm rounded-md ${
+                    darkMode
+                      ? "text-gray-300 hover:text-gray-200"
+                      : "text-gray-600 hover:text-gray-700"
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`px-3 py-1 text-sm text-white rounded-md ${
+                    darkMode
+                      ? "bg-blue-600 hover:bg-blue-700"
+                      : "bg-blue-500 hover:bg-blue-600"
+                  }`}
+                >
+                  Reply
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {hasReplies && showReplies && (
+          <div
+            className={`mt-1 pl-3 border-l-2 ${
+              darkMode ? "border-gray-700" : "border-gray-200"
+            }`}
+          >
+            {replies.map((reply) => (
+              <Comment
+                key={reply.id}
+                comment={reply}
+                darkMode={darkMode}
+                onReply={onReply}
+                user={user}
+                level={level + 1}
+                onThreadClick={onThreadClick}
+                allComments={allComments}
+              />
+            ))}
+          </div>
         )}
       </div>
-      {hasReplies && showReplies && (
-        <div className="mt-2">
-          {comment.replies.map((reply) => (
-            <Comment
-              key={reply.id}
-              comment={reply}
-              darkMode={darkMode}
-              onReply={onReply}
-              user={user}
-              level={level + 1}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 };
@@ -223,11 +241,14 @@ Comment.propTypes = {
     ]),
     replies: PropTypes.arrayOf(PropTypes.object),
     showReplies: PropTypes.bool,
+    parentId: PropTypes.string,
   }).isRequired,
   darkMode: PropTypes.bool.isRequired,
   onReply: PropTypes.func.isRequired,
   user: PropTypes.object,
   level: PropTypes.number,
+  onThreadClick: PropTypes.func,
+  allComments: PropTypes.array.isRequired,
 };
 
 const PostDetail = () => {
@@ -252,17 +273,17 @@ const PostDetail = () => {
       let commentElement = document.getElementById(`comment-${commentId}`);
 
       if (!commentElement) {
-        // If not found, it might be a reply. Find the parent comment and expand it
-        const parentComment = comments.find((comment) =>
+        // Find the root comment that contains this reply
+        const rootComment = comments.find((comment) =>
           comment.replies?.some((reply) => reply.id === commentId)
         );
 
-        if (parentComment) {
-          // Update all comments, setting showReplies to true for the parent comment
+        if (rootComment) {
+          // Update all comments, setting showReplies to true only for the root comment
           const updatedComments = comments.map((comment) => ({
             ...comment,
             showReplies:
-              comment.id === parentComment.id ? true : comment.showReplies,
+              comment.id === rootComment.id ? true : comment.showReplies,
           }));
           setComments(updatedComments);
 
@@ -455,17 +476,13 @@ const PostDetail = () => {
     if (!user) return;
 
     try {
-      // Find the parent comment to get the author's ID
-      const parentComment = comments.find((comment) => comment.id === parentId);
-      if (!parentComment) return;
-
       const replyRef = await addDoc(collection(db, "comments"), {
         postId,
         content,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: user.photoURL,
-        parentId,
+        parentId, // Store the direct parent ID
         createdAt: serverTimestamp(),
       });
 
@@ -475,9 +492,13 @@ const PostDetail = () => {
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: user.photoURL,
-        parentId,
+        parentId, // Store the direct parent ID
         createdAt: new Date(),
       };
+
+      // Find the parent comment to get the author's ID for notification
+      const parentComment = comments.find((comment) => comment.id === parentId);
+      if (!parentComment) return;
 
       // Create notification for comment author if it's not their own reply
       if (parentComment.authorId !== user.uid) {
@@ -504,16 +525,8 @@ const PostDetail = () => {
         }
       }
 
-      setComments(
-        comments.map((comment) =>
-          comment.id === parentId
-            ? {
-                ...comment,
-                replies: [...(comment.replies || []), newReply],
-              }
-            : comment
-        )
-      );
+      // Add the new reply to the comments array
+      setComments([...comments, newReply]);
     } catch (error) {
       console.error("Error adding reply:", error);
     }
@@ -711,6 +724,9 @@ const PostDetail = () => {
                   darkMode={darkMode}
                   onReply={handleReply}
                   user={user}
+                  level={0}
+                  onThreadClick={scrollToComment}
+                  allComments={comments}
                 />
               ))}
             </div>
