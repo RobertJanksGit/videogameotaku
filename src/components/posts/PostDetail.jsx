@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../config/firebase";
@@ -18,6 +18,10 @@ import {
 import PropTypes from "prop-types";
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
+import {
+  createNotification,
+  getNotificationMessage,
+} from "../../utils/notifications";
 
 const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -42,9 +46,12 @@ const Comment = ({ comment, darkMode, onReply, user, level = 0 }) => {
       style={{ marginLeft: `${level * 2}rem` }}
     >
       <div
+        id={`comment-${comment.id}`}
         className={`p-4 rounded-lg ${
           darkMode ? "bg-gray-800" : "bg-white"
-        } border ${darkMode ? "border-gray-700" : "border-gray-200"}`}
+        } border ${
+          darkMode ? "border-gray-700" : "border-gray-200"
+        } transition-all duration-300 highlight-comment:bg-blue-100 dark:highlight-comment:bg-blue-900`}
       >
         <div className="flex items-center mb-2">
           <div
@@ -218,12 +225,57 @@ Comment.propTypes = {
 const PostDetail = () => {
   const { postId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { darkMode } = useTheme();
   const { user } = useAuth();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // Function to scroll to and highlight a comment
+  const scrollToComment = (commentId) => {
+    if (!commentId) return;
+
+    // First try to find the comment in top-level comments
+    let commentElement = document.getElementById(`comment-${commentId}`);
+
+    if (!commentElement) {
+      // If not found, it might be a reply. Find the parent comment and expand it
+      const parentComment = comments.find((comment) =>
+        comment.replies?.some((reply) => reply.id === commentId)
+      );
+
+      if (parentComment) {
+        // Find the comment in the DOM and update its state to show replies
+        const commentIndex = comments.findIndex(
+          (c) => c.id === parentComment.id
+        );
+        const newComments = [...comments];
+        newComments[commentIndex] = { ...parentComment, showReplies: true };
+        setComments(newComments);
+
+        // Wait for the DOM to update before scrolling
+        setTimeout(() => {
+          const replyElement = document.getElementById(`comment-${commentId}`);
+          if (replyElement) {
+            replyElement.scrollIntoView({ behavior: "smooth" });
+            replyElement.classList.add("highlight-comment");
+            setTimeout(() => {
+              replyElement.classList.remove("highlight-comment");
+            }, 3000);
+          }
+        }, 100);
+      }
+    } else {
+      // If it's a top-level comment, scroll to it directly
+      commentElement.scrollIntoView({ behavior: "smooth" });
+      commentElement.classList.add("highlight-comment");
+      setTimeout(() => {
+        commentElement.classList.remove("highlight-comment");
+      }, 3000);
+    }
+  };
 
   useEffect(() => {
     const fetchPost = async () => {
@@ -239,7 +291,7 @@ const PostDetail = () => {
         const commentsQuery = query(
           collection(db, "comments"),
           where("postId", "==", postId),
-          where("parentId", "==", null), // Only fetch top-level comments
+          where("parentId", "==", null),
           orderBy("createdAt", "desc")
         );
         const commentsSnapshot = await getDocs(commentsQuery);
@@ -264,16 +316,59 @@ const PostDetail = () => {
         );
 
         setComments(commentsWithReplies);
+        setLoading(false);
+
+        // After comments are loaded, scroll to target comment if specified
+        if (location.state?.targetCommentId) {
+          // Small delay to ensure DOM is updated
+          setTimeout(() => {
+            scrollToComment(location.state.targetCommentId);
+          }, 100);
+        }
       } catch (error) {
         console.error("Error fetching post:", error);
         navigate("/");
-      } finally {
-        setLoading(false);
       }
     };
 
     fetchPost();
-  }, [postId, navigate]);
+  }, [postId, navigate, location.state?.targetCommentId]);
+
+  useEffect(() => {
+    // Add styles for comment highlighting
+    const style = document.createElement("style");
+    style.textContent = `
+      .highlight-comment {
+        animation: highlight 3s ease-out;
+      }
+      
+      @keyframes highlight {
+        0% {
+          background-color: rgba(59, 130, 246, 0.2);
+        }
+        100% {
+          background-color: transparent;
+        }
+      }
+      
+      .dark .highlight-comment {
+        animation: highlight-dark 3s ease-out;
+      }
+      
+      @keyframes highlight-dark {
+        0% {
+          background-color: rgba(30, 58, 138, 0.3);
+        }
+        100% {
+          background-color: transparent;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
 
   const handleSubmitComment = async (e) => {
     e.preventDefault();
@@ -302,6 +397,30 @@ const PostDetail = () => {
         replies: [],
       };
 
+      // Create notification for post author if it's not their own comment
+      if (post.authorId !== user.uid) {
+        // Get user's notification preferences
+        const authorDoc = await getDoc(doc(db, "users", post.authorId));
+        const authorData = authorDoc.data();
+
+        if (authorData?.notificationPrefs?.postComments !== false) {
+          await createNotification({
+            recipientId: post.authorId,
+            senderId: user.uid,
+            senderName: user.displayName || user.email.split("@")[0],
+            message: getNotificationMessage({
+              type: "post_comment",
+              senderName: user.displayName || user.email.split("@")[0],
+              postTitle: post.title,
+            }),
+            type: "post_comment",
+            link: `/post/${postId}`,
+            postId,
+            commentId: commentRef.id,
+          });
+        }
+      }
+
       setComments([newCommentObj, ...comments]);
       setNewComment("");
     } catch (error) {
@@ -313,6 +432,10 @@ const PostDetail = () => {
     if (!user) return;
 
     try {
+      // Find the parent comment to get the author's ID
+      const parentComment = comments.find((comment) => comment.id === parentId);
+      if (!parentComment) return;
+
       const replyRef = await addDoc(collection(db, "comments"), {
         postId,
         content,
@@ -332,6 +455,31 @@ const PostDetail = () => {
         parentId,
         createdAt: new Date(),
       };
+
+      // Create notification for comment author if it's not their own reply
+      if (parentComment.authorId !== user.uid) {
+        // Get user's notification preferences
+        const authorDoc = await getDoc(
+          doc(db, "users", parentComment.authorId)
+        );
+        const authorData = authorDoc.data();
+
+        if (authorData?.notificationPrefs?.commentReplies !== false) {
+          await createNotification({
+            recipientId: parentComment.authorId,
+            senderId: user.uid,
+            senderName: user.displayName || user.email.split("@")[0],
+            message: getNotificationMessage({
+              type: "comment_reply",
+              senderName: user.displayName || user.email.split("@")[0],
+            }),
+            type: "comment_reply",
+            link: `/post/${postId}`,
+            postId,
+            commentId: replyRef.id,
+          });
+        }
+      }
 
       setComments(
         comments.map((comment) =>
@@ -469,7 +617,11 @@ const PostDetail = () => {
                 {post.content}
               </div>
               <div className="mt-6">
-                <VoteButtons post={post} onVoteChange={handleVoteChange} />
+                <VoteButtons
+                  post={post}
+                  onVoteChange={handleVoteChange}
+                  darkMode={darkMode}
+                />
               </div>
             </div>
           </div>

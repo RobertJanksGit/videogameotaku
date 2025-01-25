@@ -3,7 +3,18 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import PropTypes from "prop-types";
 import AuthModal from "../auth/AuthModal";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  doc,
+  deleteDoc,
+} from "firebase/firestore";
+import { db } from "../../config/firebase";
 
 const SunIcon = () => (
   <svg
@@ -86,13 +97,83 @@ const ChevronDownIcon = () => (
   </svg>
 );
 
+const BellIcon = ({ hasUnread }) => (
+  <div className="relative">
+    <svg
+      className="h-5 w-5 text-[#7D8590] hover:text-white transition-colors"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+      />
+    </svg>
+    {hasUnread && (
+      <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
+    )}
+  </div>
+);
+
+BellIcon.propTypes = {
+  hasUnread: PropTypes.bool.isRequired,
+};
+
 const Layout = ({ children }) => {
   const { darkMode, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const dropdownRef = useRef(null);
+  const notificationsRef = useRef(null);
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Subscribe to notifications
+    const q = query(
+      collection(db, "notifications"),
+      where("recipientId", "==", user.uid),
+      orderBy("createdAt", "desc"),
+      limit(10)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notificationData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setNotifications(notificationData);
+      setHasUnreadNotifications(notificationData.some((n) => !n.read));
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+      if (
+        notificationsRef.current &&
+        !notificationsRef.current.contains(event.target)
+      ) {
+        setShowNotifications(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleAuthClick = (mode) => {
     setAuthMode(mode);
@@ -107,22 +188,33 @@ const Layout = ({ children }) => {
   const handleLogout = async () => {
     try {
       await logout();
-      setShowDropdown(false);
+      navigate("/");
     } catch (error) {
-      console.error("Failed to log out:", error);
+      console.error("Failed to log out", error);
     }
   };
 
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setShowDropdown(false);
-      }
-    };
+  const handleNotificationClick = async (notification) => {
+    try {
+      const notificationRef = doc(db, "notifications", notification.id);
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+      // Delete the notification from Firestore
+      await deleteDoc(notificationRef);
+
+      // Remove notification from local state
+      setNotifications(notifications.filter((n) => n.id !== notification.id));
+
+      // Close notifications dropdown
+      setShowNotifications(false);
+
+      // Navigate to the relevant post/comment with the target comment ID
+      navigate(notification.link, {
+        state: { targetCommentId: notification.commentId },
+      });
+    } catch (error) {
+      console.error("Error handling notification click:", error);
+    }
+  };
 
   return (
     <div className={`w-full ${darkMode ? "dark" : ""}`}>
@@ -137,56 +229,111 @@ const Layout = ({ children }) => {
             </Link>
             <nav className="flex items-center space-x-4">
               {user ? (
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowDropdown(!showDropdown)}
-                    className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
-                  >
-                    <ProfileIcon photoURL={user.photoURL} />
-                    <span className="text-sm text-[#7D8590] group-hover:text-white transition-colors">
-                      {user.displayName || user.email}
-                    </span>
-                    <ChevronDownIcon />
-                  </button>
+                <>
+                  <div className="relative" ref={notificationsRef}>
+                    <button
+                      onClick={() => setShowNotifications(!showNotifications)}
+                      className="p-2 rounded-full hover:bg-[#444C56] transition-colors"
+                    >
+                      <BellIcon hasUnread={hasUnreadNotifications} />
+                    </button>
 
-                  {showDropdown && (
-                    <div className="absolute right-0 mt-2 w-48 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
-                      {user.role === "admin" && (
-                        <>
-                          <Link
-                            to="/admin"
-                            onClick={() => setShowDropdown(false)}
-                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                          >
-                            Admin Dashboard
-                          </Link>
-                          <div className="my-1 h-px bg-[#373E47]"></div>
-                        </>
-                      )}
-                      <Link
-                        to="/dashboard"
-                        onClick={() => setShowDropdown(false)}
-                        className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                      >
-                        My Dashboard
-                      </Link>
-                      <Link
-                        to="/settings"
-                        onClick={() => setShowDropdown(false)}
-                        className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                      >
-                        Settings
-                      </Link>
-                      <div className="my-1 h-px bg-[#373E47]"></div>
-                      <button
-                        onClick={handleLogout}
-                        className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
-                      >
-                        Logout
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    {showNotifications && (
+                      <div className="absolute right-0 mt-2 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
+                        <div className="px-4 py-2 border-b border-[#373E47]">
+                          <h3 className="text-sm font-medium text-[#ADBAC7]">
+                            Notifications
+                          </h3>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto">
+                          {notifications.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-[#768390]">
+                              No notifications
+                            </div>
+                          ) : (
+                            notifications.map((notification) => (
+                              <button
+                                key={notification.id}
+                                onClick={() =>
+                                  handleNotificationClick(notification)
+                                }
+                                className={`w-full text-left px-4 py-3 hover:bg-[#316DCA] group ${
+                                  !notification.read ? "bg-[#1C2128]" : ""
+                                }`}
+                              >
+                                <p
+                                  className={`text-sm ${
+                                    notification.read
+                                      ? "text-[#768390]"
+                                      : "text-[#ADBAC7]"
+                                  } group-hover:text-white`}
+                                >
+                                  {notification.message}
+                                </p>
+                                <p className="text-xs text-[#768390] group-hover:text-gray-200 mt-1">
+                                  {notification.createdAt
+                                    ?.toDate()
+                                    .toLocaleDateString()}
+                                </p>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative" ref={dropdownRef}>
+                    <button
+                      onClick={() => setShowDropdown(!showDropdown)}
+                      className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
+                    >
+                      <ProfileIcon photoURL={user.photoURL} />
+                      <span className="text-sm text-[#7D8590] group-hover:text-white transition-colors">
+                        {user.displayName || user.email}
+                      </span>
+                      <ChevronDownIcon />
+                    </button>
+
+                    {showDropdown && (
+                      <div className="absolute right-0 mt-2 w-48 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
+                        {user.role === "admin" && (
+                          <>
+                            <Link
+                              to="/admin"
+                              onClick={() => setShowDropdown(false)}
+                              className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                            >
+                              Admin Dashboard
+                            </Link>
+                            <div className="my-1 h-px bg-[#373E47]"></div>
+                          </>
+                        )}
+                        <Link
+                          to="/dashboard"
+                          onClick={() => setShowDropdown(false)}
+                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                        >
+                          My Dashboard
+                        </Link>
+                        <Link
+                          to="/settings"
+                          onClick={() => setShowDropdown(false)}
+                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                        >
+                          Settings
+                        </Link>
+                        <div className="my-1 h-px bg-[#373E47]"></div>
+                        <button
+                          onClick={handleLogout}
+                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
+                        >
+                          Logout
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <div className="flex items-center space-x-4">
                   <button

@@ -39,6 +39,13 @@ service cloud.firestore {
              data.status in ['pending', 'published', 'rejected'];
     }
 
+    // Helper function to validate notification data
+    function isValidNotificationData(data) {
+      return data.keys().hasAll(['recipientId', 'senderId', 'message', 'type', 'read']) &&
+             data.type in ['post_comment', 'comment_reply'] &&
+             data.read is bool;
+    }
+
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts
@@ -89,6 +96,23 @@ service cloud.firestore {
         voteId == request.resource.data.postId + '_' + request.auth.uid &&
         request.resource.data.userId == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Notifications collection rules
+    match /notifications/{notificationId} {
+      // Users can read their own notifications
+      allow read: if isSignedIn() && resource.data.recipientId == request.auth.uid;
+      // Users can create notifications for other users
+      allow create: if isSignedIn() && 
+                   request.resource.data.senderId == request.auth.uid &&
+                   request.resource.data.recipientId != request.auth.uid &&
+                   isValidNotificationData(request.resource.data);
+      // Users can update (mark as read) their own notifications
+      allow update: if isSignedIn() && 
+                   resource.data.recipientId == request.auth.uid &&
+                   request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      // Users can delete their own notifications
+      allow delete: if isSignedIn() && resource.data.recipientId == request.auth.uid;
     }
 
     // Default deny

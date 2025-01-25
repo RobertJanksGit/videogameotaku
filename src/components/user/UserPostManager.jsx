@@ -239,7 +239,6 @@ const UserPostManager = ({ darkMode }) => {
         }
 
         const result = await response.json();
-        console.log("Validation result:", result);
 
         // Parse the nested JSON from the message field
         let parsedResult;
@@ -251,7 +250,6 @@ const UserPostManager = ({ darkMode }) => {
             .trim(); // Remove any extra whitespace
 
           parsedResult = JSON.parse(cleanJson);
-          console.log("Parsed validation result:", parsedResult);
         } catch (error) {
           console.error("Error parsing validation result:", error);
           parsedResult = {
@@ -329,7 +327,6 @@ const UserPostManager = ({ darkMode }) => {
         }
 
         const result = await response.json();
-        console.log("Validation result:", result);
 
         // Parse the nested JSON from the message field
         let parsedResult;
@@ -341,7 +338,6 @@ const UserPostManager = ({ darkMode }) => {
             .trim(); // Remove any extra whitespace
 
           parsedResult = JSON.parse(cleanJson);
-          console.log("Parsed validation result:", parsedResult);
 
           if (!parsedResult.isValid) {
             setValidationError(parsedResult.message);

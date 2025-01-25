@@ -18,23 +18,31 @@ const Settings = () => {
   const [success, setSuccess] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [contributions, setContributions] = useState({});
+  const [notificationPrefs, setNotificationPrefs] = useState({
+    postComments: true,
+    commentReplies: true,
+  });
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
 
   useEffect(() => {
-    const fetchContributions = async () => {
+    const fetchUserData = async () => {
       if (!user) return;
 
       try {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         const userData = userDoc.data();
         setContributions(userData?.contributions || {});
+        setNotificationPrefs({
+          postComments: userData?.notificationPrefs?.postComments ?? true,
+          commentReplies: userData?.notificationPrefs?.commentReplies ?? true,
+        });
       } catch (error) {
-        console.error("Error fetching contributions:", error);
+        console.error("Error fetching user data:", error);
       }
     };
 
-    fetchContributions();
+    fetchUserData();
   }, [user]);
 
   const createImagePreview = (file) => {
@@ -165,6 +173,7 @@ const Settings = () => {
       await updateDoc(userRef, {
         name: displayName,
         photoURL,
+        notificationPrefs,
       });
 
       setSuccess("Profile updated successfully!");
@@ -221,6 +230,62 @@ const Settings = () => {
                 }`}
                 required
               />
+            </div>
+
+            <div className="space-y-4">
+              <h3
+                className={`text-sm font-medium ${
+                  darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                }`}
+              >
+                Notification Preferences
+              </h3>
+              <div className="space-y-2">
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={notificationPrefs.postComments}
+                    onChange={(e) =>
+                      setNotificationPrefs({
+                        ...notificationPrefs,
+                        postComments: e.target.checked,
+                      })
+                    }
+                    className={`rounded border-gray-300 text-[#316DCA] focus:ring-[#316DCA] ${
+                      darkMode ? "bg-[#1C2128] border-[#373E47]" : ""
+                    }`}
+                  />
+                  <span
+                    className={`ml-2 text-sm ${
+                      darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                    }`}
+                  >
+                    Notify me when someone comments on my posts
+                  </span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={notificationPrefs.commentReplies}
+                    onChange={(e) =>
+                      setNotificationPrefs({
+                        ...notificationPrefs,
+                        commentReplies: e.target.checked,
+                      })
+                    }
+                    className={`rounded border-gray-300 text-[#316DCA] focus:ring-[#316DCA] ${
+                      darkMode ? "bg-[#1C2128] border-[#373E47]" : ""
+                    }`}
+                  />
+                  <span
+                    className={`ml-2 text-sm ${
+                      darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                    }`}
+                  >
+                    Notify me when someone replies to my comments
+                  </span>
+                </label>
+              </div>
             </div>
 
             <div className="space-y-2">
