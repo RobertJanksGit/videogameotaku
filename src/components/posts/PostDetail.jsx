@@ -100,13 +100,15 @@ const Comment = ({
   onLoadReplies,
   isLoadingReplies,
   isInThread = false,
+  currentThreadId,
 }) => {
   const [showReplyForm, setShowReplyForm] = useState(false);
 
   // Find all replies to this comment from the loaded comments
   const replies = allComments.filter((c) => c.parentId === comment.id);
   const hasReplies = comment.replyCount > 0;
-  const isMainThreadComment = isInThread && !comment.parentId;
+  // A comment is the main thread comment if it's the one being viewed in the thread
+  const isMainThreadComment = isInThread && comment.id === currentThreadId;
 
   const handleCommentClick = async () => {
     // Only load replies if there are any and they haven't been loaded yet
@@ -282,6 +284,7 @@ Comment.propTypes = {
   onLoadReplies: PropTypes.func.isRequired,
   isLoadingReplies: PropTypes.bool.isRequired,
   isInThread: PropTypes.bool,
+  currentThreadId: PropTypes.string,
 };
 
 const PostDetail = () => {
@@ -296,6 +299,7 @@ const PostDetail = () => {
   const [loading, setLoading] = useState(true);
   const hasScrolledToComment = useRef(false);
   const [currentThreadId, setCurrentThreadId] = useState(null);
+  const [threadHistory, setThreadHistory] = useState([]);
   const [loadedCommentIds, setLoadedCommentIds] = useState(new Set());
 
   const scrollToComment = (commentId) => {
@@ -606,6 +610,10 @@ const PostDetail = () => {
   };
 
   const handleThreadClick = async (commentId) => {
+    // Add current thread to history before changing to new thread
+    if (currentThreadId) {
+      setThreadHistory((prev) => [...prev, currentThreadId]);
+    }
     setCurrentThreadId(commentId);
 
     // Set loading state for the clicked comment
@@ -625,6 +633,20 @@ const PostDetail = () => {
         c.id === commentId ? { ...c, isLoadingReplies: false } : c
       )
     );
+  };
+
+  const handleBackClick = () => {
+    if (threadHistory.length > 0) {
+      // Get the last thread from history
+      const previousThread = threadHistory[threadHistory.length - 1];
+      // Remove it from history
+      setThreadHistory((prev) => prev.slice(0, -1));
+      // Set it as current thread
+      setCurrentThreadId(previousThread);
+    } else {
+      // If no history, go back to all comments
+      setCurrentThreadId(null);
+    }
   };
 
   const loadReplies = async (commentId) => {
@@ -848,7 +870,7 @@ const PostDetail = () => {
               {currentThreadId ? (
                 <>
                   <button
-                    onClick={() => setCurrentThreadId(null)}
+                    onClick={handleBackClick}
                     className={`flex items-center space-x-2 mb-4 text-sm ${
                       darkMode
                         ? "text-blue-400 hover:text-blue-300"
@@ -868,21 +890,16 @@ const PostDetail = () => {
                         d="M10 19l-7-7m0 0l7-7m-7 7h18"
                       />
                     </svg>
-                    <span>Back to all comments</span>
+                    <span>
+                      {threadHistory.length > 0
+                        ? "Back to previous thread"
+                        : "Back to all comments"}
+                    </span>
                   </button>
-                  {Array.from(
-                    new Set(
-                      comments
-                        .filter(
-                          (comment) =>
-                            comment.id === currentThreadId ||
-                            comment.parentId === currentThreadId
-                        )
-                        .map((comment) => comment.id)
-                    )
-                  ).map((commentId) => {
-                    const comment = comments.find((c) => c.id === commentId);
-                    return (
+                  {/* First show the main comment */}
+                  {comments
+                    .filter((comment) => comment.id === currentThreadId)
+                    .map((comment) => (
                       <Comment
                         key={comment.id}
                         comment={comment}
@@ -894,9 +911,27 @@ const PostDetail = () => {
                         onLoadReplies={loadReplies}
                         isLoadingReplies={comment.isLoadingReplies}
                         isInThread={true}
+                        currentThreadId={currentThreadId}
                       />
-                    );
-                  })}
+                    ))}
+                  {/* Then show all replies */}
+                  {comments
+                    .filter((comment) => comment.parentId === currentThreadId)
+                    .map((comment) => (
+                      <Comment
+                        key={comment.id}
+                        comment={comment}
+                        darkMode={darkMode}
+                        onReply={handleReply}
+                        user={user}
+                        onThreadClick={handleThreadClick}
+                        allComments={comments}
+                        onLoadReplies={loadReplies}
+                        isLoadingReplies={comment.isLoadingReplies}
+                        isInThread={true}
+                        currentThreadId={currentThreadId}
+                      />
+                    ))}
                 </>
               ) : (
                 // Show top-level comments
@@ -914,6 +949,7 @@ const PostDetail = () => {
                       onLoadReplies={loadReplies}
                       isLoadingReplies={comment.isLoadingReplies}
                       isInThread={false}
+                      currentThreadId={currentThreadId}
                     />
                   ))
               )}
