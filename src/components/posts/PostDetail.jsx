@@ -203,7 +203,7 @@ const Comment = ({
                   Reply
                 </button>
               )}
-              {hasReplies && !isInThread && (
+              {hasReplies && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -216,7 +216,7 @@ const Comment = ({
                   }`}
                 >
                   <span>
-                    Show {comment.replyCount}{" "}
+                    {comment.replyCount}{" "}
                     {comment.replyCount === 1 ? "reply" : "replies"}
                   </span>
                 </button>
@@ -459,28 +459,30 @@ const PostDetail = () => {
     try {
       const commentRef = await addDoc(collection(db, "comments"), {
         postId,
-        content: newComment,
+        content: newComment.trim(),
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL,
+        authorPhotoURL: user.photoURL || "", // Use empty string as fallback
         parentId: null,
         createdAt: serverTimestamp(),
+        replyCount: 0, // Add replyCount field
       });
 
       const newCommentObj = {
         id: commentRef.id,
-        content: newComment,
+        postId,
+        content: newComment.trim(),
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL,
+        authorPhotoURL: user.photoURL || "",
         parentId: null,
         createdAt: new Date(),
-        replies: [],
+        replyCount: 0,
+        isLoadingReplies: false,
       };
 
       // Create notification for post author if it's not their own comment
       if (post.authorId !== user.uid) {
-        // Get user's notification preferences
         const authorDoc = await getDoc(doc(db, "users", post.authorId));
         const authorData = authorDoc.data();
 
@@ -517,8 +519,8 @@ const PostDetail = () => {
       const parentComment = comments.find((comment) => comment.id === parentId);
       if (!parentComment) return;
 
-      // Create the reply in Firestore
-      const replyRef = await addDoc(collection(db, "comments"), {
+      // Create the reply data object
+      const replyData = {
         postId,
         content,
         authorId: user.uid,
@@ -526,8 +528,11 @@ const PostDetail = () => {
         authorPhotoURL: user.photoURL,
         parentId,
         createdAt: serverTimestamp(),
-        replyCount: 0, // Initialize with 0 as this is a new reply
-      });
+        replyCount: 0,
+      };
+
+      // Create the reply in Firestore
+      const replyRef = await addDoc(collection(db, "comments"), replyData);
 
       // Update the parent comment's replyCount in Firestore
       const parentRef = doc(db, "comments", parentId);
@@ -544,7 +549,7 @@ const PostDetail = () => {
         parentId,
         createdAt: new Date(),
         replyCount: 0,
-        isLoadingReplies: false, // Add isLoadingReplies
+        isLoadingReplies: false,
       };
 
       // Create notification for comment author if it's not their own reply
@@ -651,6 +656,7 @@ const PostDetail = () => {
 
   const loadReplies = async (commentId) => {
     try {
+      // Load direct replies to this comment
       const repliesQuery = query(
         collection(db, "comments"),
         where("postId", "==", postId),
@@ -658,14 +664,33 @@ const PostDetail = () => {
         orderBy("createdAt", "desc")
       );
       const repliesSnapshot = await getDocs(repliesQuery);
-      const newReplies = repliesSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        replyCount: 0,
-        isLoadingReplies: false, // Add isLoadingReplies
-      }));
+      const newReplies = await Promise.all(
+        repliesSnapshot.docs.map(async (doc) => {
+          const reply = {
+            id: doc.id,
+            ...doc.data(),
+            isLoadingReplies: false,
+          };
 
-      // Add the new replies to the comments array if they're not already there
+          // Get the count of nested replies
+          const nestedRepliesQuery = query(
+            collection(db, "comments"),
+            where("postId", "==", postId),
+            where("parentId", "==", doc.id)
+          );
+          const nestedRepliesSnapshot = await getDocs(nestedRepliesQuery);
+          reply.replyCount = nestedRepliesSnapshot.size;
+
+          // If there are nested replies, load them recursively
+          if (reply.replyCount > 0) {
+            await loadReplies(doc.id);
+          }
+
+          return reply;
+        })
+      );
+
+      // Add all replies to the comments array if they're not already there
       setComments((prevComments) => {
         const newComments = [...prevComments];
         newReplies.forEach((reply) => {

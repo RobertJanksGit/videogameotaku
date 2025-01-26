@@ -46,6 +46,29 @@ service cloud.firestore {
              data.read is bool;
     }
 
+    // Helper function to validate comment data
+    function isValidCommentData(data) {
+      let requiredFields = ['postId', 'content', 'authorId', 'authorName', 'createdAt'];
+      let hasRequiredFields = data.keys().hasAll(requiredFields);
+      
+      return hasRequiredFields &&
+             data.content is string &&
+             data.content.size() > 0 &&
+             data.postId is string &&
+             data.authorId is string &&
+             data.authorName is string &&
+             data.createdAt is timestamp &&
+             (!('replyCount' in data) || data.replyCount is number) &&
+             (!('parentId' in data) || data.parentId == null || data.parentId is string) &&
+             (!('authorPhotoURL' in data) || data.authorPhotoURL is string || data.authorPhotoURL == null);
+    }
+
+    // Helper function to validate comment updates
+    function isValidCommentUpdate(existing, updated) {
+      let onlyReplyCountChanged = updated.diff(existing).affectedKeys().hasOnly(['replyCount']);
+      return onlyReplyCountChanged && updated.replyCount is number && updated.replyCount >= 0;
+    }
+
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts
@@ -68,10 +91,18 @@ service cloud.firestore {
     match /comments/{commentId} {
       // Anyone can read comments
       allow read: if true;
-      // Only signed-in users can create comments
-      allow create: if isSignedIn();
-      // Users can only edit/delete their own comments
-      allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // Only signed-in users can create comments and replies
+      allow create: if isSignedIn() && 
+                   isValidCommentData(request.resource.data) &&
+                   request.resource.data.authorId == request.auth.uid;
+      // Users can edit/delete their own comments, and anyone can update replyCount
+      allow update: if isSignedIn() && (
+                     (resource.data.authorId == request.auth.uid) || 
+                     isAdmin() ||
+                     isValidCommentUpdate(resource.data, request.resource.data)
+                   );
+      allow delete: if isSignedIn() && 
+                   (resource.data.authorId == request.auth.uid || isAdmin());
     }
 
     // Users collection rules
