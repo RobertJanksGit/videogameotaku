@@ -7,7 +7,11 @@ service firebase.storage {
   match /b/{bucket}/o {
     // Helper function to check if user is admin
     function isAdmin() {
-      return request.auth != null && request.auth.token.admin == true;
+      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+      return request.auth != null && 
+             user != null && 
+             user.data != null && 
+             user.data.role == "admin";
     }
 
     // Helper function to check if user is signed in
@@ -29,13 +33,15 @@ service firebase.storage {
       allow read: if true;
       // Any authenticated user can create post images
       allow create: if isSignedIn();
-      // Only admins can update or delete post images
-      allow update, delete: if isSignedIn() && (
+      // Allow users to delete their own post images or admins to delete any
+      allow delete: if isSignedIn() && (
         // Allow users to delete their own post images
         resource.metadata.userId == request.auth.uid ||
         // Or if they're an admin
         isAdmin()
       );
+      // Only admins can update post images
+      allow update: if isAdmin();
     }
 
     // Default deny

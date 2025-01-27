@@ -24,7 +24,6 @@ import PropTypes from "prop-types";
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
   const [posts, setPosts] = useState([]);
-  const [isEditing, setIsEditing] = useState(false);
   const [currentPost, setCurrentPost] = useState({
     title: "",
     content: "",
@@ -202,58 +201,6 @@ const UserPostManager = ({ darkMode }) => {
     }
   };
 
-  // Update post
-  const handleUpdatePost = async (e) => {
-    e.preventDefault();
-    setIsUploading(true);
-    setValidationError(null);
-
-    try {
-      let imageData = null;
-
-      if (imageFile) {
-        if (currentPost.imagePath) {
-          const oldImageRef = ref(storage, currentPost.imagePath);
-          try {
-            await deleteObject(oldImageRef);
-          } catch (error) {
-            console.error("Error deleting old image:", error);
-          }
-        }
-        imageData = await uploadImage(imageFile);
-      }
-
-      const postRef = doc(db, "posts", currentPost.id);
-      await updateDoc(postRef, {
-        title: currentPost.title,
-        content: currentPost.content,
-        category: currentPost.category,
-        platform: currentPost.platform,
-        ...(imageData && {
-          imageUrl: imageData.url,
-          imagePath: imageData.path,
-        }),
-        updatedAt: serverTimestamp(),
-        status: isAdmin ? "published" : "pending", // Reset to pending for revalidation
-      });
-
-      // Reset form
-      setCurrentPost({
-        title: "",
-        content: "",
-        category: "news",
-        platform: "Nintendo",
-      });
-      setImageFile(null);
-      setImagePreview(null);
-      setIsEditing(false);
-      setIsUploading(false);
-    } catch (error) {
-      console.error("Error updating post:", error);
-      setValidationError(error.message);
-    }
-  };
-
   // Delete post
   const handleDeletePost = async (postId) => {
     if (window.confirm("Are you sure you want to delete this post?")) {
@@ -288,15 +235,11 @@ const UserPostManager = ({ darkMode }) => {
   const handleEditPost = (post) => {
     setCurrentPost(post);
     setImagePreview(post.imageUrl);
-    setIsEditing(true);
   };
 
   return (
     <div className="space-y-6">
-      <form
-        onSubmit={isEditing ? handleUpdatePost : handleCreatePost}
-        className="space-y-4"
-      >
+      <form onSubmit={handleCreatePost} className="space-y-4">
         {validationError && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
             <div className="flex">
@@ -467,25 +410,6 @@ const UserPostManager = ({ darkMode }) => {
         </div>
 
         <div className="flex justify-end">
-          {isEditing && (
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentPost({
-                  title: "",
-                  content: "",
-                  category: "news",
-                  platform: "Nintendo",
-                });
-                setImageFile(null);
-                setImagePreview(null);
-                setIsEditing(false);
-              }}
-              className="mr-4 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-            >
-              Cancel
-            </button>
-          )}
           <button
             type="submit"
             disabled={isUploading}
@@ -495,11 +419,7 @@ const UserPostManager = ({ darkMode }) => {
                 : "bg-blue-600 hover:bg-blue-700 focus:ring-blue-500"
             } ${isUploading ? "opacity-50 cursor-not-allowed" : ""}`}
           >
-            {isUploading
-              ? "Uploading..."
-              : isEditing
-              ? "Update Post"
-              : "Create Post"}
+            {isUploading ? "Uploading..." : "Create Post"}
           </button>
         </div>
       </form>
@@ -637,14 +557,16 @@ const UserPostManager = ({ darkMode }) => {
                       : new Date(post.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <button
-                      onClick={() => handleEditPost(post)}
-                      className={`text-sm ${
-                        darkMode ? "text-blue-400" : "text-blue-600"
-                      } hover:underline mr-4`}
-                    >
-                      Edit
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleEditPost(post)}
+                        className={`text-sm ${
+                          darkMode ? "text-blue-400" : "text-blue-600"
+                        } hover:underline mr-4`}
+                      >
+                        Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeletePost(post.id)}
                       className="text-sm text-red-600 hover:underline"
