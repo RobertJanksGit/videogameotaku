@@ -69,6 +69,12 @@ service cloud.firestore {
       return onlyReplyCountChanged && updated.replyCount is number && updated.replyCount >= 0;
     }
 
+    // Rate limits collection rules
+    match /rateLimits/{limitId} {
+      allow read: if false; // No client-side access needed
+      allow write: if false; // Only Cloud Functions can write
+    }
+
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts

@@ -7,11 +7,11 @@ import {
   updateDoc,
   deleteDoc,
   doc,
-  getDocs,
   query,
   where,
   serverTimestamp,
   getDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import {
   ref,
@@ -88,56 +88,69 @@ const UserPostManager = ({ darkMode }) => {
 
   // Fetch user's posts with vote counts
   useEffect(() => {
-    const fetchPosts = async () => {
+    let unsubscribePosts = null;
+    let unsubscribeVotes = null;
+
+    const setupRealtimeListeners = () => {
       try {
         const postsCollection = collection(db, "posts");
         const userPostsQuery = query(
           postsCollection,
           where("authorId", "==", user.uid)
         );
-        const postsSnapshot = await getDocs(userPostsQuery);
-        const postsList = postsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          voteCount: 0,
-        }));
 
-        // Fetch all votes for user's posts
-        const votesQuery = query(collection(db, "votes"));
-        const votesSnapshot = await getDocs(votesQuery);
-        const postVoteCounts = {};
+        // Listen to posts changes
+        unsubscribePosts = onSnapshot(userPostsQuery, (postsSnapshot) => {
+          const postsList = postsSnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            voteCount: 0,
+          }));
 
-        votesSnapshot.docs.forEach((doc) => {
-          const vote = doc.data();
-          if (postsList.some((post) => post.id === vote.postId)) {
-            postVoteCounts[vote.postId] =
-              (postVoteCounts[vote.postId] || 0) +
-              (vote.type === "up" ? 1 : -1);
-          }
+          // Listen to votes changes
+          const votesCollection = collection(db, "votes");
+          unsubscribeVotes = onSnapshot(votesCollection, (votesSnapshot) => {
+            const postVoteCounts = {};
+
+            votesSnapshot.docs.forEach((doc) => {
+              const vote = doc.data();
+              if (postsList.some((post) => post.id === vote.postId)) {
+                postVoteCounts[vote.postId] =
+                  (postVoteCounts[vote.postId] || 0) +
+                  (vote.type === "up" ? 1 : -1);
+              }
+            });
+
+            // Update posts with vote counts
+            const postsWithVotes = postsList.map((post) => ({
+              ...post,
+              voteCount: postVoteCounts[post.id] || 0,
+            }));
+
+            // Sort by votes and date
+            const sortedPosts = [...postsWithVotes].sort((a, b) => {
+              const voteDiff = (b.voteCount || 0) - (a.voteCount || 0);
+              if (voteDiff !== 0) return voteDiff;
+              return b.createdAt?.toDate() - a.createdAt?.toDate();
+            });
+
+            setPosts(sortedPosts);
+          });
         });
-
-        // Update posts with vote counts
-        const postsWithVotes = postsList.map((post) => ({
-          ...post,
-          voteCount: postVoteCounts[post.id] || 0,
-        }));
-
-        // Sort by votes and date
-        const sortedPosts = [...postsWithVotes].sort((a, b) => {
-          const voteDiff = (b.voteCount || 0) - (a.voteCount || 0);
-          if (voteDiff !== 0) return voteDiff;
-          return b.createdAt?.toDate() - a.createdAt?.toDate();
-        });
-
-        setPosts(sortedPosts);
       } catch (error) {
-        console.error("Error fetching posts:", error);
+        console.error("Error setting up real-time listeners:", error);
       }
     };
 
     if (user) {
-      fetchPosts();
+      setupRealtimeListeners();
     }
+
+    // Cleanup function
+    return () => {
+      if (unsubscribePosts) unsubscribePosts();
+      if (unsubscribeVotes) unsubscribeVotes();
+    };
   }, [user]);
 
   // Create new post
@@ -171,17 +184,7 @@ const UserPostManager = ({ darkMode }) => {
         status: isAdmin ? "published" : "pending", // Set as pending for validation
       };
 
-      const docRef = await addDoc(postsCollection, newPost);
-      const newPostWithId = {
-        ...newPost,
-        id: docRef.id,
-        createdAt: {
-          toDate: () => new Date(),
-        },
-      };
-
-      // Immediately update the UI with the new post
-      setPosts((prevPosts) => [...prevPosts, newPostWithId]);
+      await addDoc(postsCollection, newPost);
 
       // Reset form
       setCurrentPost({
@@ -244,24 +247,10 @@ const UserPostManager = ({ darkMode }) => {
       setImageFile(null);
       setImagePreview(null);
       setIsEditing(false);
-
-      // Refresh posts
-      const postsCollection = collection(db, "posts");
-      const userPostsQuery = query(
-        postsCollection,
-        where("authorId", "==", user.uid)
-      );
-      const postsSnapshot = await getDocs(userPostsQuery);
-      const postsList = postsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setPosts(postsList);
+      setIsUploading(false);
     } catch (error) {
       console.error("Error updating post:", error);
       setValidationError(error.message);
-    } finally {
-      setIsUploading(false);
     }
   };
 
