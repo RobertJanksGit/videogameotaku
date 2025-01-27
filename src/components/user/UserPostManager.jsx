@@ -240,32 +240,13 @@ const UserPostManager = ({ darkMode }) => {
 
         const result = await response.json();
 
-        // Parse the nested JSON from the message field
-        let parsedResult;
-        try {
-          // Clean up the markdown code blocks and extract just the JSON
-          const cleanJson = result.message
-            .replace(/```json\n/, "") // Remove opening code block
-            .replace(/\n```$/, "") // Remove closing code block
-            .trim(); // Remove any extra whitespace
+        // The top-level isValid is what we should use
+        const validationStatus = result.isValid ? "published" : "rejected";
 
-          parsedResult = JSON.parse(cleanJson);
-        } catch (error) {
-          console.error("Error parsing validation result:", error);
-          parsedResult = {
-            isValid: false,
-            message: "Error parsing validation result",
-          };
-        }
-
-        // Update the post status based on parsed validation result
-        const validationStatus = parsedResult.isValid
-          ? "published"
-          : "rejected";
         await updateDoc(doc(db, "posts", docRef.id), {
           status: validationStatus,
-          moderationMessage: parsedResult.message || null,
-          moderationDetails: parsedResult.details || null,
+          moderationMessage: result.message || null,
+          moderationDetails: result.details || null,
         });
 
         // Update the local posts state with the validation result
@@ -275,8 +256,8 @@ const UserPostManager = ({ darkMode }) => {
               ? {
                   ...post,
                   status: validationStatus,
-                  moderationMessage: parsedResult.message || null,
-                  moderationDetails: parsedResult.details || null,
+                  moderationMessage: result.message || null,
+                  moderationDetails: result.details || null,
                 }
               : post
           )
@@ -328,81 +309,67 @@ const UserPostManager = ({ darkMode }) => {
 
         const result = await response.json();
 
-        // Parse the nested JSON from the message field
-        let parsedResult;
-        try {
-          // Clean up the markdown code blocks and extract just the JSON
-          const cleanJson = result.message
-            .replace(/```json\n/, "") // Remove opening code block
-            .replace(/\n```$/, "") // Remove closing code block
-            .trim(); // Remove any extra whitespace
+        // The top-level isValid is what we should use
+        const validationStatus = result.isValid ? "published" : "rejected";
 
-          parsedResult = JSON.parse(cleanJson);
+        await updateDoc(doc(db, "posts", currentPost.id), {
+          status: validationStatus,
+          moderationMessage: result.message || null,
+          moderationDetails: result.details || null,
+        });
 
-          if (!parsedResult.isValid) {
-            setValidationError(parsedResult.message);
-            setIsUploading(false);
-            return;
+        let imageData = null;
+
+        if (imageFile) {
+          if (currentPost.imagePath) {
+            const oldImageRef = ref(storage, currentPost.imagePath);
+            try {
+              await deleteObject(oldImageRef);
+            } catch (error) {
+              console.error("Error deleting old image:", error);
+            }
           }
-        } catch (error) {
-          console.error("Error parsing validation result:", error);
-          setValidationError("Error validating content. Please try again.");
-          setIsUploading(false);
-          return;
+          imageData = await uploadImage(imageFile);
         }
+
+        const postRef = doc(db, "posts", currentPost.id);
+        await updateDoc(postRef, {
+          title: currentPost.title,
+          content: currentPost.content,
+          category: currentPost.category,
+          platform: currentPost.platform,
+          ...(imageData && {
+            imageUrl: imageData.url,
+            imagePath: imageData.path,
+          }),
+          updatedAt: serverTimestamp(),
+          status: isAdmin ? "published" : "published", // Set as published after validation
+        });
+
+        // Reset form
+        setCurrentPost({
+          title: "",
+          content: "",
+          category: "news",
+          platform: "Nintendo",
+        });
+        setImageFile(null);
+        setImagePreview(null);
+        setIsEditing(false);
+
+        // Refresh posts
+        const postsCollection = collection(db, "posts");
+        const userPostsQuery = query(
+          postsCollection,
+          where("authorId", "==", user.uid)
+        );
+        const postsSnapshot = await getDocs(userPostsQuery);
+        const postsList = postsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setPosts(postsList);
       }
-
-      let imageData = null;
-
-      if (imageFile) {
-        if (currentPost.imagePath) {
-          const oldImageRef = ref(storage, currentPost.imagePath);
-          try {
-            await deleteObject(oldImageRef);
-          } catch (error) {
-            console.error("Error deleting old image:", error);
-          }
-        }
-        imageData = await uploadImage(imageFile);
-      }
-
-      const postRef = doc(db, "posts", currentPost.id);
-      await updateDoc(postRef, {
-        title: currentPost.title,
-        content: currentPost.content,
-        category: currentPost.category,
-        platform: currentPost.platform,
-        ...(imageData && {
-          imageUrl: imageData.url,
-          imagePath: imageData.path,
-        }),
-        updatedAt: serverTimestamp(),
-        status: isAdmin ? "published" : "published", // Set as published after validation
-      });
-
-      // Reset form
-      setCurrentPost({
-        title: "",
-        content: "",
-        category: "news",
-        platform: "Nintendo",
-      });
-      setImageFile(null);
-      setImagePreview(null);
-      setIsEditing(false);
-
-      // Refresh posts
-      const postsCollection = collection(db, "posts");
-      const userPostsQuery = query(
-        postsCollection,
-        where("authorId", "==", user.uid)
-      );
-      const postsSnapshot = await getDocs(userPostsQuery);
-      const postsList = postsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setPosts(postsList);
     } catch (error) {
       console.error("Error updating post:", error);
       setValidationError(error.message);
