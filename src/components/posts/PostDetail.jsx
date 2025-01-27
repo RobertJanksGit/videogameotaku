@@ -512,12 +512,30 @@ const PostDetail = () => {
   };
 
   const handleReply = async (parentId, content) => {
-    if (!user) return;
+    if (!user) {
+      console.log("No user found - authentication error");
+      return;
+    }
 
     try {
+      console.log("Attempting to create reply with data:", {
+        parentId,
+        content,
+        user: {
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+          photoURL: user.photoURL,
+        },
+      });
+
       // Get the parent comment first
       const parentComment = comments.find((comment) => comment.id === parentId);
-      if (!parentComment) return;
+      if (!parentComment) {
+        console.log("Parent comment not found:", parentId);
+        return;
+      }
+      console.log("Found parent comment:", parentComment);
 
       // Create the reply data object
       const replyData = {
@@ -530,9 +548,11 @@ const PostDetail = () => {
         createdAt: serverTimestamp(),
         replyCount: 0,
       };
+      console.log("Preparing to add reply with data:", replyData);
 
       // Create the reply in Firestore
       const replyRef = await addDoc(collection(db, "comments"), replyData);
+      console.log("Successfully created reply with ID:", replyRef.id);
 
       // Update the parent comment's replyCount in Firestore
       const parentRef = doc(db, "comments", parentId);
@@ -595,6 +615,11 @@ const PostDetail = () => {
       });
     } catch (error) {
       console.error("Error adding reply:", error);
+      console.log("Error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      });
     }
   };
 
@@ -683,7 +708,7 @@ const PostDetail = () => {
 
           // If there are nested replies, load them recursively
           if (reply.replyCount > 0) {
-            await loadReplies(doc.id);
+            const nestedReplies = await loadReplies(doc.id);
           }
 
           return reply;
