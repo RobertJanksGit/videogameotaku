@@ -1,0 +1,80 @@
+/**
+ * Import function triggers from their respective submodules:
+ *
+ * const {onCall} = require("firebase-functions/v2/https");
+ * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
+ *
+ * See a full list of supported triggers at https://firebase.google.com/docs/functions
+ */
+
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { defineString } = require("firebase-functions/params");
+const admin = require("firebase-admin");
+const fetch = require("node-fetch");
+
+admin.initializeApp();
+
+// Define environment parameter for the prompt
+const aiModerationPrompt = defineString("AI_MODERATION_PROMPT");
+
+exports.validatePost = onDocumentCreated("posts/{postId}", async (event) => {
+  console.log("Starting validation for post:", event.params.postId);
+
+  const post = event.data.data();
+  const postId = event.params.postId;
+
+  if (post.status === "published") {
+    console.log("Skipping already published post");
+    return null;
+  }
+
+  try {
+    const promptValue = aiModerationPrompt.value();
+    console.log("Validation prompt:", promptValue);
+
+    const response = await fetch(
+      "https://simple-calorie-c68468523a43.herokuapp.com/api/validate-content",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: promptValue,
+          title: post.title,
+          content: post.content,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Validation API error: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log("API response:", result);
+
+    await admin
+      .firestore()
+      .collection("posts")
+      .doc(postId)
+      .update({
+        status: result.isValid ? "published" : "rejected",
+        moderationMessage: result.message || null,
+        moderationDetails: result.details || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Validation error:", error);
+
+    await admin.firestore().collection("posts").doc(postId).update({
+      status: "rejected",
+      moderationMessage: "Error during content validation. Please try again.",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { error: error.message };
+  }
+});

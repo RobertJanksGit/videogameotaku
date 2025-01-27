@@ -140,19 +140,6 @@ const UserPostManager = ({ darkMode }) => {
     }
   }, [user]);
 
-  // Add this function before handleCreatePost
-  const convertImageToBase64 = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result.split(",")[1];
-        resolve(base64String);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   // Create new post
   const handleCreatePost = async (e) => {
     e.preventDefault();
@@ -181,7 +168,7 @@ const UserPostManager = ({ darkMode }) => {
         usersThatLiked: [],
         usersThatDisliked: [],
         totalVotes: 0,
-        status: isAdmin ? "published" : "pending", // Set as published immediately if admin
+        status: isAdmin ? "published" : "pending", // Set as pending for validation
       };
 
       const docRef = await addDoc(postsCollection, newPost);
@@ -196,7 +183,7 @@ const UserPostManager = ({ darkMode }) => {
       // Immediately update the UI with the new post
       setPosts((prevPosts) => [...prevPosts, newPostWithId]);
 
-      // Reset form immediately
+      // Reset form
       setCurrentPost({
         title: "",
         content: "",
@@ -206,63 +193,6 @@ const UserPostManager = ({ darkMode }) => {
       setImageFile(null);
       setImagePreview(null);
       setIsUploading(false);
-
-      // Skip validation for admin users
-      if (!isAdmin) {
-        // Prepare validation payload
-        const payload = {
-          prompt: import.meta.env.VITE_AI_MODERATION_PROMPT,
-          title: newPost.title,
-          content: newPost.content,
-        };
-
-        if (imageData) {
-          const base64Image = await convertImageToBase64(imageFile);
-          payload.image = base64Image;
-        }
-
-        // Validate content in the background
-        const response = await fetch(
-          "https://simple-calorie-c68468523a43.herokuapp.com/api/validate-content",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-          }
-        );
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || "Content validation failed");
-        }
-
-        const result = await response.json();
-
-        // The top-level isValid is what we should use
-        const validationStatus = result.isValid ? "published" : "rejected";
-
-        await updateDoc(doc(db, "posts", docRef.id), {
-          status: validationStatus,
-          moderationMessage: result.message || null,
-          moderationDetails: result.details || null,
-        });
-
-        // Update the local posts state with the validation result
-        setPosts((prevPosts) =>
-          prevPosts.map((post) =>
-            post.id === docRef.id
-              ? {
-                  ...post,
-                  status: validationStatus,
-                  moderationMessage: result.message || null,
-                  moderationDetails: result.details || null,
-                }
-              : post
-          )
-        );
-      }
     } catch (error) {
       console.error("Error creating post:", error);
       setValidationError(error.message);
@@ -276,100 +206,57 @@ const UserPostManager = ({ darkMode }) => {
     setValidationError(null);
 
     try {
-      // Skip validation for admin users
-      if (!isAdmin) {
-        // Prepare validation payload
-        const payload = {
-          prompt: import.meta.env.VITE_AI_MODERATION_PROMPT,
-          title: currentPost.title,
-          content: currentPost.content,
-        };
+      let imageData = null;
 
-        if (imageFile) {
-          const base64Image = await convertImageToBase64(imageFile);
-          payload.image = base64Image;
-        }
-
-        // Validate content
-        const response = await fetch(
-          "https://simple-calorie-c68468523a43.herokuapp.com/api/validate-content",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
+      if (imageFile) {
+        if (currentPost.imagePath) {
+          const oldImageRef = ref(storage, currentPost.imagePath);
+          try {
+            await deleteObject(oldImageRef);
+          } catch (error) {
+            console.error("Error deleting old image:", error);
           }
-        );
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || "Content validation failed");
         }
-
-        const result = await response.json();
-
-        // The top-level isValid is what we should use
-        const validationStatus = result.isValid ? "published" : "rejected";
-
-        await updateDoc(doc(db, "posts", currentPost.id), {
-          status: validationStatus,
-          moderationMessage: result.message || null,
-          moderationDetails: result.details || null,
-        });
-
-        let imageData = null;
-
-        if (imageFile) {
-          if (currentPost.imagePath) {
-            const oldImageRef = ref(storage, currentPost.imagePath);
-            try {
-              await deleteObject(oldImageRef);
-            } catch (error) {
-              console.error("Error deleting old image:", error);
-            }
-          }
-          imageData = await uploadImage(imageFile);
-        }
-
-        const postRef = doc(db, "posts", currentPost.id);
-        await updateDoc(postRef, {
-          title: currentPost.title,
-          content: currentPost.content,
-          category: currentPost.category,
-          platform: currentPost.platform,
-          ...(imageData && {
-            imageUrl: imageData.url,
-            imagePath: imageData.path,
-          }),
-          updatedAt: serverTimestamp(),
-          status: isAdmin ? "published" : "published", // Set as published after validation
-        });
-
-        // Reset form
-        setCurrentPost({
-          title: "",
-          content: "",
-          category: "news",
-          platform: "Nintendo",
-        });
-        setImageFile(null);
-        setImagePreview(null);
-        setIsEditing(false);
-
-        // Refresh posts
-        const postsCollection = collection(db, "posts");
-        const userPostsQuery = query(
-          postsCollection,
-          where("authorId", "==", user.uid)
-        );
-        const postsSnapshot = await getDocs(userPostsQuery);
-        const postsList = postsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setPosts(postsList);
+        imageData = await uploadImage(imageFile);
       }
+
+      const postRef = doc(db, "posts", currentPost.id);
+      await updateDoc(postRef, {
+        title: currentPost.title,
+        content: currentPost.content,
+        category: currentPost.category,
+        platform: currentPost.platform,
+        ...(imageData && {
+          imageUrl: imageData.url,
+          imagePath: imageData.path,
+        }),
+        updatedAt: serverTimestamp(),
+        status: isAdmin ? "published" : "pending", // Reset to pending for revalidation
+      });
+
+      // Reset form
+      setCurrentPost({
+        title: "",
+        content: "",
+        category: "news",
+        platform: "Nintendo",
+      });
+      setImageFile(null);
+      setImagePreview(null);
+      setIsEditing(false);
+
+      // Refresh posts
+      const postsCollection = collection(db, "posts");
+      const userPostsQuery = query(
+        postsCollection,
+        where("authorId", "==", user.uid)
+      );
+      const postsSnapshot = await getDocs(userPostsQuery);
+      const postsList = postsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setPosts(postsList);
     } catch (error) {
       console.error("Error updating post:", error);
       setValidationError(error.message);
