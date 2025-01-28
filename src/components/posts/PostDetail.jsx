@@ -302,34 +302,66 @@ const PostDetail = () => {
   const [threadHistory, setThreadHistory] = useState([]);
   const [loadedCommentIds, setLoadedCommentIds] = useState(new Set());
 
-  const scrollToComment = (commentId) => {
+  const scrollToComment = async (commentId) => {
     if (!commentId) return;
 
     const maxAttempts = 10;
     let attempts = 0;
 
-    const attemptScroll = () => {
+    const attemptScroll = async () => {
       let commentElement = document.getElementById(`comment-${commentId}`);
 
       if (!commentElement) {
-        // Find the root comment that contains this reply
-        const rootComment = comments.find((comment) =>
-          comment.replies?.some((reply) => reply.id === commentId)
+        // Find the comment in our loaded comments
+        const targetComment = comments.find(
+          (comment) => comment.id === commentId
         );
 
-        if (rootComment) {
-          // Update all comments, setting showReplies to true only for the root comment
-          const updatedComments = comments.map((comment) => ({
-            ...comment,
-            showReplies:
-              comment.id === rootComment.id ? true : comment.showReplies,
-          }));
-          setComments(updatedComments);
+        if (!targetComment) {
+          try {
+            // Fetch the target comment directly from Firestore
+            const commentDoc = await getDoc(doc(db, "comments", commentId));
 
-          if (attempts < maxAttempts) {
-            attempts++;
-            setTimeout(attemptScroll, 200);
+            if (commentDoc.exists()) {
+              const commentData = { id: commentDoc.id, ...commentDoc.data() };
+
+              if (commentData.parentId) {
+                // Set the parent as current thread
+                setCurrentThreadId(commentData.parentId);
+                // Load the parent's replies
+                await loadReplies(commentData.parentId);
+
+                // Add this comment to our state if it's not there
+                setComments((prevComments) => {
+                  if (!prevComments.some((c) => c.id === commentData.id)) {
+                    return [...prevComments, commentData];
+                  }
+                  return prevComments;
+                });
+
+                setLoadedCommentIds((prev) => {
+                  const newSet = new Set(prev);
+                  newSet.add(commentData.id);
+                  return newSet;
+                });
+              }
+            }
+          } catch (error) {
+            console.error("Error fetching comment:", error);
           }
+        } else {
+          if (targetComment.parentId) {
+            setCurrentThreadId(targetComment.parentId);
+            if (!loadedCommentIds.has(commentId)) {
+              await loadReplies(targetComment.parentId);
+            }
+          }
+        }
+
+        if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(attemptScroll, 200);
+          return;
         }
       } else {
         commentElement.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -675,6 +707,7 @@ const PostDetail = () => {
         orderBy("createdAt", "desc")
       );
       const repliesSnapshot = await getDocs(repliesQuery);
+
       const newReplies = await Promise.all(
         repliesSnapshot.docs.map(async (doc) => {
           const reply = {
@@ -694,7 +727,7 @@ const PostDetail = () => {
 
           // If there are nested replies, load them recursively
           if (reply.replyCount > 0) {
-            const nestedReplies = await loadReplies(doc.id);
+            await loadReplies(doc.id);
           }
 
           return reply;
