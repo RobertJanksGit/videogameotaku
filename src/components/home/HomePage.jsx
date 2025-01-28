@@ -22,6 +22,7 @@ const HomePage = () => {
   const navigate = useNavigate();
   const [featuredPosts, setFeaturedPosts] = useState([]);
   const [latestPosts, setLatestPosts] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
 
   // Migrate old voting system to new array-based system
   const migratePost = async (post) => {
@@ -65,14 +66,26 @@ const HomePage = () => {
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        // Fetch only published posts ordered by date
-        const allPostsQuery = query(
+        // Create base query for published posts
+        let postsQuery = query(
           collection(db, "posts"),
-          where("status", "==", "published"), // Only get published posts
+          where("status", "==", "published"),
           orderBy("createdAt", "desc"),
           limit(20)
         );
-        const postsSnapshot = await getDocs(allPostsQuery);
+
+        // Add category filter if a specific category is selected
+        if (selectedCategory !== "all") {
+          postsQuery = query(
+            collection(db, "posts"),
+            where("status", "==", "published"),
+            where("category", "==", selectedCategory),
+            orderBy("createdAt", "desc"),
+            limit(20)
+          );
+        }
+
+        const postsSnapshot = await getDocs(postsQuery);
         const allPosts = await Promise.all(
           postsSnapshot.docs.map(async (doc) => {
             const post = { id: doc.id, ...doc.data() };
@@ -106,7 +119,7 @@ const HomePage = () => {
     };
 
     fetchPosts();
-  }, [user]);
+  }, [user, selectedCategory]);
 
   const handleVoteChange = (updatedPost) => {
     // Update latest posts without re-sorting
@@ -294,9 +307,26 @@ const HomePage = () => {
 
       {/* Latest Posts Section */}
       <section className="w-full">
-        <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
-          Latest Posts
-        </h2>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+            Latest Posts
+          </h2>
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+              darkMode
+                ? "bg-[#1C2128] border-gray-700 text-white"
+                : "border-gray-300"
+            }`}
+          >
+            <option value="all">All Categories</option>
+            <option value="news">News</option>
+            <option value="review">Review</option>
+            <option value="guide">Guide</option>
+            <option value="opinion">Opinion</option>
+          </select>
+        </div>
         <div className="space-y-8">
           {latestPosts.map((post) => (
             <article

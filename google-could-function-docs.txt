@@ -1,0 +1,408 @@
+Below is the documentation for the Firebase Cloud Functions. Make sure to read it carefully. 
+
+Often you'll need additional configuration for your functions, such as third-party API keys or tuneable settings. The Firebase SDK for Cloud Functions offers built-in environment configuration to make it easy to store and retrieve this type of data for your project.
+
+You can choose between these options:
+
+Parameterized configuration (recommended for most scenarios). This provides strongly-typed environment configuration with parameters that are validated at deploy time, which prevents errors and simplifies debugging.
+File-based configuration of environment variables. With this approach, you manually create a dotenv file for loading environment variables.
+For most use cases, parameterized configuration is recommended. This approach makes configuration values available both at runtime and deploy time, and deployment is blocked unless all parameters have a valid value. Conversely, configuration with environment variables is not available at deploy time.
+
+Note: Environment configuration with functions.config was deprecated in version 6.0.0, and will no longer be supported in the next major release. If you are using functions.config, you are strongly recommended to migrate to environment variables.
+Parameterized configuration
+Cloud Functions for Firebase provides an interface for defining configuration parameters declaratively inside your codebase. The value of these parameters is available both during function deployment, when setting deployment and runtime options, and during execution. This means that the CLI will block deployment unless all parameters have a valid value.
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+const { defineInt, defineString } = require('firebase-functions/params');
+
+// Define some parameters
+const minInstancesConfig = defineInt('HELLO_WORLD_MININSTANCES');
+const welcomeMessage = defineString('WELCOME_MESSAGE');
+
+// To use configured parameters inside the config for a function, provide them
+// directly. To use them at runtime, call .value() on them.
+export const helloWorld = onRequest(
+  { minInstances: minInstancesConfig },
+(req, res) => {
+    res.send(`${welcomeMessage.value()}! I am a function.`);
+  }
+);
+When deploying a function with parameterized configuration variables, the Firebase CLI first attempts to load their values from local .env files. If they are not present in those files and no default is set, the CLI will prompt for the values during deployment, and then automatically save their values to a .env file named .env.<project_ID> in your functions/ directory:
+
+
+$ firebase deploy
+i  functions: preparing codebase default for deployment
+? Enter a string value for ENVIRONMENT: prod
+i  functions: Writing new parameter values to disk: .env.projectId
+…
+$ firebase deploy
+i  functions: Loaded environment variables from .env.projectId
+Depending on your development workflow, it may be useful to add the generated .env.<project_ID> file to version control.
+
+Using parameters in global scope
+During deployment, your functions code is loaded and inspected before your parameters have actual values. This means that fetching parameter values during global scope results in deployment failure. For cases where you want to use a parameter to initialize a global value, use the initialization callback onInit(). This callback runs before any functions run in production but is not be called during deploy time, so it is a safe place to access a parameter's value.
+
+Node.js
+Python
+
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { defineSecret } = require('firebase-functions/params');
+const { onInit } = require('firebase-functions/v2/core');
+
+const apiKey = defineSecret('GOOGLE_API_KEY');
+
+let genAI;
+onInit(() => {
+  genAI = new GoogleGenerativeAI(apiKey.value());
+})
+If you use parameters of the type Secret, note that they are available only in the process of functions that have bound the secret. If a secret is bound only in some functions, check whether secret.value() is falsy before using it.
+
+Configure CLI behavior
+Parameters can be configured with an Options object that controls how the CLI will prompt for values. The following example sets options to validate the format of a phone number, to provide a simple selection option, and to populate a selection option automatically from the Firebase project:
+
+Node.js
+Python
+
+const { defineString } = require('firebase-functions/params');
+
+const welcomeMessage = defineString('WELCOME_MESSAGE', {default: 'Hello World',
+description: 'The greeting that is returned to the caller of this function'});
+
+const onlyPhoneNumbers = defineString('PHONE_NUMBER', {
+  input: {
+    text: {
+      validationRegex: /\d{3}-\d{3}-\d{4}/,
+      validationErrorMessage: "Please enter
+a phone number in the format XXX-YYY-ZZZZ"
+    },
+  },
+});
+
+const selectedOption = defineString('PARITY', {input: params.select(["odd", "even"])});
+
+const memory = defineInt("MEMORY", {
+  description: "How much memory do you need?",
+  input: params.select({ "micro": 256, "chonky": 2048 }),
+});
+
+const extensions = defineList("EXTENSIONS", {
+  description: "Which file types should be processed?",
+  input: params.multiSelect(["jpg", "tiff", "png", "webp"]),
+});
+
+const storageBucket = defineString('BUCKET', {
+  description: "This will automatically
+populate the selector field with the deploying Cloud Project’s
+storage buckets",
+  input: params.PICK_STORAGE_BUCKET,
+});
+Parameter types
+Parameterized configuration provides strong typing for parameter values, and also support secrets from Cloud Secret Manager. Supported types are:
+
+Secret
+String
+Boolean
+Integer
+Float
+List (Node.js)
+Parameter values and expressions
+Firebase evaluates your parameters both at deploy time and while your function is executing. Due to these dual environments, some extra care must be taken when comparing parameter values, and when using them to set runtime options for your functions.
+
+To pass a parameter to your function as a runtime option, pass it directly:
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+const { defineInt } = require('firebase-functions/params');
+const minInstancesConfig = defineInt('HELLO\_WORLD\_MININSTANCES');
+
+export const helloWorld = onRequest(
+  { minInstances: minInstancesConfig },
+  (req, res) => {
+    //…
+Additionally, if you need to compare against a parameter in order to know what option to pick, you'll need to use built-in comparators instead of checking the value:
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+const environment = params.defineString(‘ENVIRONMENT’, {default: 'dev'});
+
+// use built-in comparators
+const minInstancesConfig = environment.equals('PRODUCTION').thenElse(10, 1);
+export const helloWorld = onRequest(
+  { minInstances: minInstancesConfig },
+  (req, res) => {
+    //…
+Parameters and parameter expressions that are only used at runtime can be accessed with their value function:
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+const { defineString } = require('firebase-functions/params');
+const welcomeMessage = defineString('WELCOME_MESSAGE');
+
+// To use configured parameters inside the config for a function, provide them
+// directly. To use them at runtime, call .value() on them.
+export const helloWorld = onRequest(
+(req, res) => {
+    res.send(`${welcomeMessage.value()}! I am a function.`);
+  }
+);
+Built-in parameters
+The Cloud Functions SDK offers three pre-defined parameters, available from the firebase-functions/params subpackage:
+
+Node.js
+Python
+projectID — the Cloud project in which the function is running.
+databaseURL — the URL of the Realtime Database instance associated with the function (if enabled on the Firebase project).
+storageBucket — the Cloud Storage bucket associated with the function (if enabled on the Firebase project).
+These function like user-defined string parameters in all respects, except that, since their values are always known to the Firebase CLI, their values will never be prompted for on deployment nor saved to .env files.
+
+Secret parameters
+Parameters of type Secret, defined using defineSecret(), represent string parameters which have a value stored in Cloud Secret Manager. Instead of checking against a local .env file and writing a new value to the file if missing, secret parameters check against existence in Cloud Secret Manager, and interactively prompt for the value of a new secret during deployment.
+
+Secret parameters defined in this way must be bound to individual functions that should have access to them:
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
+const discordApiKey = defineSecret('DISCORD_API_KEY');
+
+export const postToDiscord = onRequest(
+  { secrets: [discordApiKey] },
+  (req, res) => {
+  const apiKey = discordApiKey.value();
+    //…
+Because the values of secrets are hidden until execution of the function, you cannot use them while configuring your function.
+
+Environment variables
+Cloud Functions for Firebase supports the dotenv file format for loading environment variables specified in a .env file to your application runtime. Once deployed, the environment variables can be read via the process.env interface (in Node.js-based projects) or os.environ (in Python-based projects).
+
+To configure your environment this way, create a .env file in your project, add the desired variables, and deploy:
+
+Create a .env file in your functions/ directory:
+
+
+# Directory layout:
+#   my-project/
+#     firebase.json
+#     functions/
+#       .env
+#       package.json
+#       index.js
+Open the .env file for edit, and add the desired keys. For example:
+
+
+PLANET=Earth
+AUDIENCE=Humans
+Deploy functions and verify that environment variables were loaded:
+
+
+firebase deploy --only functions
+# ...
+# i functions: Loaded environment variables from .env.
+# ...
+Once your your custom environment variables are deployed, your function code can access them:
+
+Node.js
+Python
+
+// Responds with "Hello Earth and Humans"
+exports.hello = onRequest((request, response) => {
+  response.send(`Hello ${process.env.PLANET} and ${process.env.AUDIENCE}`);
+});
+Deploying multiple sets of environment variables
+If you need an alternative set of environment variables for your Firebase projects (such as staging vs production), create a .env.<project or alias> file and write your project-specific environment variables there. The environment variables from .env and project-specific .env files (if they exist) will be included in all deployed functions.
+
+For example, a project could include these three files containing slightly different values for development and production:
+
+.env	.env.dev	.env.prod
+PLANET=Earth
+AUDIENCE=Humans
+
+AUDIENCE=Dev Humans	AUDIENCE=Prod Humans
+Given the values in those separate files, the set of environment variables deployed with your functions will vary depending on your target project:
+
+
+$ firebase use dev
+$ firebase deploy --only functions
+i functions: Loaded environment variables from .env, .env.dev.
+# Deploys functions with following user-defined environment variables:
+#   PLANET=Earth
+#   AUDIENCE=Dev Humans
+
+$ firebase use prod
+$ firebase deploy --only functions
+i functions: Loaded environment variables from .env, .env.prod.
+# Deploys functions with following user-defined environment variables:
+#   PLANET=Earth
+#   AUDIENCE=Prod Humans
+Reserved environment variables
+Some environment variable keys are reserved for internal use. Do not use any of these keys in your .env files:
+
+All keys starting with X_GOOGLE_
+All keys starting EXT_
+All keys starting with FIREBASE_
+Any key from the following list:
+CLOUD_RUNTIME_CONFIG
+ENTRY_POINT
+GCP_PROJECT
+GCLOUD_PROJECT
+GOOGLE_CLOUD_PROJECT
+FUNCTION_TRIGGER_TYPE
+FUNCTION_NAME
+FUNCTION_MEMORY_MB
+FUNCTION_TIMEOUT_SEC
+FUNCTION_IDENTITY
+FUNCTION_REGION
+FUNCTION_TARGET
+FUNCTION_SIGNATURE_TYPE
+K_SERVICE
+K_REVISION
+PORT
+K_CONFIGURATION
+Store and access sensitive configuration information
+Environment variables stored in .env files can be used for function configuration, but you should not consider them a secure way to store sensitive information such as database credentials or API keys. This is especially important if you check your .env files into source control.
+
+To help you store sensitive configuration information, Cloud Functions for Firebase integrates with Google Cloud Secret Manager. This encrypted service stores configuration values securely, while still allowing easy access from your functions when needed.
+
+Note: Secret Manager is a paid service, with a free tier. See How secrets are billed for more information.
+Create and use a secret
+To create a secret, use the Firebase CLI.
+
+Note: Make sure not to use any reserved environment variable names for your secrets.
+To create and use a secret:
+
+From the root of your local project directory, run the following command:
+
+
+firebase functions:secrets:set SECRET_NAME
+Enter a value for SECRET_NAME.
+
+The CLI echoes a success message and warns that you must deploy functions for the change to take effect.
+
+Before deploying, make sure your functions code allows the function to access the secret using the runWith parameter:
+
+Node.js
+Python
+
+const { onRequest } = require('firebase-functions/v2/https');
+
+exports.processPayment = onRequest(
+  { secrets: ["SECRET_NAME"] },
+  (req, res) => {
+    const myBillingService = initializeBillingService(
+      // reference the secret value
+      process.env.SECRET_NAME
+    );
+    // Process the payment
+  }
+);
+Deploy Cloud Functions:
+
+
+firebase deploy --only functions
+Now you'll be able to access it like any other environment variable. Conversely, if another function that does not specify the secret in runWith tries to access the secret, it receives an undefined value:
+
+Node.js
+Python
+
+exports.anotherEndpoint = onRequest((request, response) => {
+  response.send(`The secret API key is ${process.env.SECRET_NAME}`);
+  // responds with "The secret API key is undefined" because the `runWith` parameter is missing
+});
+Once your function is deployed, it will have access to the secret value. Only functions that specifically include a secret in their runWith parameter will have access to that secret as an environment variable. This helps you make sure that secret values are only available where they're needed, reducing the risk of accidentally leaking a secret.
+
+Managing secrets
+Use the Firebase CLI to manage your secrets. While managing secrets this way, keep in mind that some CLI changes require you to modify and/or redeploy associated functions. Specifically:
+
+Whenever you set a new value for a secret, you must redeploy all functions that reference that secret for them to pick up the latest value.
+If you delete a secret, make sure that none of your deployed functions references that secret. Functions that use a secret value that has been deleted will fail silently.
+Here's a summary of the Firebase CLI commands for secret management:
+
+
+# Change the value of an existing secret
+firebase functions:secrets:set SECRET_NAME
+
+# View the value of a secret
+functions:secrets:access SECRET_NAME
+
+# Destroy a secret
+functions:secrets:destroy SECRET_NAME
+
+# View all secret versions and their state
+functions:secrets:get SECRET_NAME
+
+# Automatically clean up all secrets that aren't referenced by any of your functions
+functions:secrets:prune
+For the access and destroy commands, you can provide the optional version parameter to manage a particular version. For example:
+
+
+functions:secrets:access SECRET_NAME[@VERSION]
+For more information about these operations, pass -h with the command to view CLI help.
+
+How secrets are billed
+Secret Manager allows 6 active secret versions at no cost. This means that you can have 6 secrets per month in a Firebase project at no cost.
+
+By default, the Firebase CLI attempts to automatically destroy unused secret versions where appropriate, such as when you deploy functions with a new version of the secret. Also, you can actively clean up unused secrets using functions:secrets:destroy and functions:secrets:prune.
+
+Secret Manager allows 10,000 unbilled monthly access operations on a secret. Function instances read only the secrets specified in their runWith parameter every time they cold start. If you have a lot of function instances reading a lot of secrets, your project may exceed this allowance, at which point you'll be charged $0.03 per 10,000 access operations.
+
+For more information, see Secret Manager Pricing.
+
+Emulator support
+Environment configuration with dotenv is designed to interoperate with a local Cloud Functions emulator.
+
+When using a local Cloud Functions emulator, you can override environment variables for your project by setting up a .env.local file. Contents of .env.local take precedence over .env and the project-specific .env file.
+
+For example, a project could include these three files containing slightly different values for development and local testing:
+
+.env	.env.dev	.env.local
+PLANET=Earth
+AUDIENCE=Humans
+
+AUDIENCE=Dev Humans	AUDIENCE=Local Humans
+When started in the local context, the emulator loads the environment variables as shown:
+
+
+  $ firebase emulators:start
+  i  emulators: Starting emulators: functions
+  # Starts emulator with following environment variables:
+  #  PLANET=Earth
+  #  AUDIENCE=Local Humans
+Secrets and credentials in the Cloud Functions emulator
+The Cloud Functions emulator supports the use of secrets to store and access sensitive configuration information. By default, the emulator will try to access your production secrets using application default credentials. In certain situations like CI environments, the emulator may fail to access secret values due to permission restrictions.
+
+Similar to Cloud Functions emulator support for environment variables, you can override secrets values by setting up a .secret.local file. This makes it easy for you to test your functions locally, especially if you don't have access to the secret value.
+
+Migrating from environment configuration
+If you have been using environment configuration with functions.config, you can migrate your existing configuration as environment variables (in dotenv format). The Firebase CLI provides an export command that outputs the configuration of each alias or project listed in your directory's .firebaserc file (in the example below, local, dev, and prod) as .env files.
+
+To migrate, export your existing environment configurations using the firebase functions:config:export command:
+
+
+firebase functions:config:export
+i  Importing configs from projects: [project-0, project-1]
+⚠  The following configs keys could not be exported as environment variables:
+
+⚠  project-0 (dev):
+    1foo.a => 1FOO\_A (Key 1FOO\_A must start with an uppercase ASCII letter or underscore, and then consist of uppercase ASCII letters, digits, and underscores.)
+
+Enter a PREFIX to rename invalid environment variable keys: CONFIG\_
+✔  Wrote functions/.env.prod
+✔  Wrote functions/.env.dev
+✔  Wrote functions/.env.local
+✔  Wrote functions/.env
+Note that, in some cases, you will be prompted to enter a prefix to rename exported environment variable keys. This is because not all configurations can be automatically transformed since they may be invalid or may be a reserved environment variable key.
+
+We recommend that you carefully review the contents of the generated .env files before you deploy your functions or check the .env files into source control. If any values are sensitive and should not be leaked, remove them from your .env files and store them securely in Secret Manager instead.
+
+You'll also need to update your functions code. Any functions that use functions.config will now need to use process.env instead, as shown in Environment variables.

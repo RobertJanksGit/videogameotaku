@@ -33,3 +33,5 @@ dist-ssr
 functions/.env.*
 .firebase/
 firebase-debug.log
+
+google-cloud-docs.txt
