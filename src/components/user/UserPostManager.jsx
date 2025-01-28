@@ -40,6 +40,7 @@ const UserPostManager = ({ darkMode }) => {
   const [isRateLimited, setIsRateLimited] = useState(false);
   const [rateLimitMessage, setRateLimitMessage] = useState("");
   const [cooldownEnd, setCooldownEnd] = useState(null);
+  const [recentRejections, setRecentRejections] = useState(0);
 
   // Add admin check
   useEffect(() => {
@@ -93,7 +94,7 @@ const UserPostManager = ({ darkMode }) => {
     return () => clearInterval(timer);
   }, [cooldownEnd]);
 
-  // Add rate limit listener
+  // Add rate limit listener and track rejections
   useEffect(() => {
     if (!user) return;
 
@@ -101,6 +102,9 @@ const UserPostManager = ({ darkMode }) => {
       if (doc.exists()) {
         const data = doc.data();
         const now = Date.now();
+
+        // Track recent rejections
+        setRecentRejections(data.recentRejections || 0);
 
         // Check if user is banned
         if (data.bannedUntil && now < data.bannedUntil) {
@@ -258,6 +262,20 @@ const UserPostManager = ({ darkMode }) => {
 
     if (isRateLimited) {
       setValidationError(rateLimitMessage);
+      return;
+    }
+
+    // Add character count validation
+    if (currentPost.title.length < 3 || currentPost.title.length > 100) {
+      setValidationError("Title must be between 3 and 100 characters");
+      return;
+    }
+
+    if (
+      currentPost.content.length < 200 ||
+      currentPost.content.length > 10000
+    ) {
+      setValidationError("Content must be between 200 and 10,000 characters");
       return;
     }
 
@@ -419,6 +437,32 @@ const UserPostManager = ({ darkMode }) => {
           </div>
         )}
 
+        {recentRejections > 0 && (
+          <div
+            className={`p-4 rounded-md ${
+              darkMode
+                ? "bg-yellow-900/20 border border-yellow-800"
+                : "bg-yellow-50 border border-yellow-200"
+            }`}
+          >
+            <p
+              className={`text-sm ${
+                darkMode ? "text-yellow-200" : "text-yellow-800"
+              }`}
+            >
+              {recentRejections === 1
+                ? "Warning: Your last post was rejected. Multiple rejected posts may result in a 24-hour posting ban."
+                : recentRejections === 2
+                ? "Warning: You have had 2 posts rejected. A 24-hour posting ban will occur after 5 rejected posts."
+                : recentRejections === 3
+                ? "Warning: You have had 3 posts rejected. Two more rejections will result in a 24-hour posting ban."
+                : recentRejections === 4
+                ? "Warning: You have had 4 posts rejected. One more rejection will result in a 24-hour posting ban."
+                : "Warning: Due to multiple rejected posts, your next rejection will result in a 24-hour posting ban."}
+            </p>
+          </div>
+        )}
+
         <div>
           <label
             htmlFor="title"
@@ -442,6 +486,13 @@ const UserPostManager = ({ darkMode }) => {
                 : "border-gray-300"
             }`}
           />
+          <p
+            className={`mt-1 text-sm ${
+              darkMode ? "text-gray-400" : "text-gray-500"
+            }`}
+          >
+            {currentPost.title.length}/100 characters (minimum 3)
+          </p>
         </div>
 
         <div>
@@ -557,6 +608,18 @@ const UserPostManager = ({ darkMode }) => {
             }`}
             required
           />
+          <p
+            className={`mt-1 text-sm ${
+              darkMode ? "text-gray-400" : "text-gray-500"
+            } ${
+              currentPost.content.length < 200 ||
+              currentPost.content.length > 10000
+                ? "text-red-500 dark:text-red-400"
+                : ""
+            }`}
+          >
+            {currentPost.content.length}/10,000 characters (minimum 200)
+          </p>
         </div>
 
         <div className="flex justify-end">
@@ -652,9 +715,15 @@ const UserPostManager = ({ darkMode }) => {
                   >
                     {post.title}
                     {post.status === "rejected" && post.moderationMessage && (
-                      <div className="text-xs text-red-500 mt-1">
-                        {post.moderationMessage}
-                      </div>
+                      <>
+                        <div className="text-xs text-red-500 mt-1">
+                          {post.moderationMessage}
+                        </div>
+                        <div className="text-xs text-yellow-500 mt-1">
+                          Warning: Multiple rejected posts may result in a
+                          24-hour posting ban.
+                        </div>
+                      </>
                     )}
                   </td>
                   <td
