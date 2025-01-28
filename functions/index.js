@@ -13,6 +13,7 @@ const {
   onDocumentCreated,
   onDocumentUpdated,
 } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const {
   defineString,
   defineInt,
@@ -31,6 +32,20 @@ const maxCallsPerMinute = defineInt("MAX_CALLS_PER_MINUTE", { default: 50 });
 const maxTitleLength = defineInt("MAX_TITLE_LENGTH", { default: 200 });
 const maxContentLength = defineInt("MAX_CONTENT_LENGTH", { default: 10000 });
 const minContentLength = defineInt("MIN_CONTENT_LENGTH", { default: 10 });
+
+// Define rejection-related parameters
+const maxRejections = defineInt("MAX_REJECTIONS", {
+  default: 5,
+  description: "Number of rejections before a user is banned",
+});
+const rejectionResetHours = defineInt("REJECTION_RESET_HOURS", {
+  default: 6,
+  description: "Number of hours after which rejection count resets",
+});
+const banDurationHours = defineInt("BAN_DURATION_HOURS", {
+  default: 24,
+  description: "Duration of ban in hours after max rejections",
+});
 
 // Helper function to validate content
 function validateContent(title, content) {
@@ -214,6 +229,7 @@ exports.onPostStatusChange = onDocumentUpdated(
             lastPostTime: now,
             lastPostStatus: newData.status,
             recentRejections: newData.status === "rejected" ? 1 : 0,
+            lastRejectionTime: newData.status === "rejected" ? now : null,
           });
           return;
         }
@@ -221,17 +237,29 @@ exports.onPostStatusChange = onDocumentUpdated(
         const data = rateLimitDoc.data();
 
         if (newData.status === "rejected") {
-          const recentRejections = (data.recentRejections || 0) + 1;
+          // Check if it's been configured hours since last rejection
+          const resetTimeInMs = rejectionResetHours.value() * 60 * 60 * 1000;
+          const lastRejectionTime = data.lastRejectionTime?.toMillis() || 0;
+          const timeSinceLastRejection = now.toMillis() - lastRejectionTime;
+
+          // Reset rejection count if it's been more than configured hours
+          const recentRejections =
+            timeSinceLastRejection >= resetTimeInMs
+              ? 1
+              : (data.recentRejections || 0) + 1;
+
           const updates = {
             lastPostTime: now,
             lastPostStatus: "rejected",
             recentRejections: recentRejections,
+            lastRejectionTime: now,
           };
 
-          // If user has had 5 or more rejections, ban them for 24 hours
-          if (recentRejections >= 5) {
+          // If user has reached max rejections, ban them for configured duration
+          if (recentRejections >= maxRejections.value()) {
+            const banDurationMs = banDurationHours.value() * 60 * 60 * 1000;
             updates.bannedUntil = admin.firestore.Timestamp.fromMillis(
-              now.toMillis() + 24 * 60 * 60 * 1000 // 24 hours
+              now.toMillis() + banDurationMs
             );
           }
 
@@ -242,12 +270,51 @@ exports.onPostStatusChange = onDocumentUpdated(
             lastPostTime: now,
             lastPostStatus: "published",
             recentRejections: 0,
+            lastRejectionTime: null,
             bannedUntil: null,
           });
         }
       });
     } catch (error) {
       console.error("Error updating rate limits:", error);
+    }
+  }
+);
+
+// Add scheduled function to check and reset rejection counts
+exports.checkRejectionResets = onSchedule(
+  {
+    schedule: "every 1 hours",
+    maxInstances: 1,
+  },
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    const resetTimeInMs = rejectionResetHours.value() * 60 * 60 * 1000;
+    const resetThreshold = admin.firestore.Timestamp.fromMillis(
+      now.toMillis() - resetTimeInMs
+    );
+
+    try {
+      // Query for rate limits that have rejections and haven't been updated in configured hours
+      const rateLimitsRef = admin.firestore().collection("rateLimits");
+      const snapshot = await rateLimitsRef
+        .where("recentRejections", ">", 0)
+        .where("lastRejectionTime", "<=", resetThreshold)
+        .get();
+
+      // Batch update the documents
+      const batch = admin.firestore().batch();
+      snapshot.docs.forEach((doc) => {
+        batch.update(doc.ref, {
+          recentRejections: 0,
+          lastRejectionTime: null,
+        });
+      });
+
+      await batch.commit();
+      console.log(`Reset rejection counts for ${snapshot.size} users`);
+    } catch (error) {
+      console.error("Error in checkRejectionResets:", error);
     }
   }
 );

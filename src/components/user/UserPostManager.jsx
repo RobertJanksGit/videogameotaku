@@ -98,60 +98,80 @@ const UserPostManager = ({ darkMode }) => {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = onSnapshot(doc(db, "rateLimits", user.uid), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        const now = Date.now();
+    const unsubscribe = onSnapshot(
+      doc(db, "rateLimits", user.uid),
+      async (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          const now = Date.now();
 
-        // Track recent rejections
-        setRecentRejections(data.recentRejections || 0);
+          // Check if it's been 6 hours since last rejection and reset if needed
+          if (data.lastRejectionTime && data.recentRejections > 0) {
+            const sixHoursInMs = 6 * 60 * 60 * 1000;
+            const timeSinceLastRejection =
+              now - data.lastRejectionTime.toMillis();
 
-        // Check if user is banned
-        if (data.bannedUntil && now < data.bannedUntil) {
-          const hoursLeft = Math.ceil(
-            (data.bannedUntil - now) / (1000 * 60 * 60)
-          );
-          setRateLimitMessage(
-            `You are temporarily banned from posting for ${hoursLeft} hours due to multiple rejected posts.`
-          );
-          setIsRateLimited(true);
-          setCooldownEnd(data.bannedUntil);
-          return;
-        }
+            if (timeSinceLastRejection >= sixHoursInMs) {
+              // Reset rejection count
+              await updateDoc(doc.ref, {
+                recentRejections: 0,
+                lastRejectionTime: null,
+              });
+              setRecentRejections(0);
+              return;
+            }
+          }
 
-        // Check cooldown periods
-        if (data.lastPostTime) {
-          const cooldownMinutes = data.lastPostStatus === "rejected" ? 3 : 10;
-          const cooldownEndTime =
-            data.lastPostTime.toMillis() + cooldownMinutes * 60 * 1000;
+          // Track recent rejections
+          setRecentRejections(data.recentRejections || 0);
 
-          if (now < cooldownEndTime) {
-            setCooldownEnd(cooldownEndTime);
+          // Check if user is banned
+          if (data.bannedUntil && now < data.bannedUntil) {
+            const hoursLeft = Math.ceil(
+              (data.bannedUntil - now) / (1000 * 60 * 60)
+            );
+            setRateLimitMessage(
+              `You are temporarily banned from posting for ${hoursLeft} hours due to multiple rejected posts.`
+            );
+            setIsRateLimited(true);
+            setCooldownEnd(data.bannedUntil);
+            return;
+          }
+
+          // Check cooldown periods
+          if (data.lastPostTime) {
+            const cooldownMinutes = data.lastPostStatus === "rejected" ? 3 : 10;
+            const cooldownEndTime =
+              data.lastPostTime.toMillis() + cooldownMinutes * 60 * 1000;
+
+            if (now < cooldownEndTime) {
+              setCooldownEnd(cooldownEndTime);
+              setIsRateLimited(true);
+              // Initial message will be set by the countdown timer
+              return;
+            }
+          }
+
+          // Check rate limits
+          if (data.count >= 50 && data.resetTime > now) {
+            setCooldownEnd(data.resetTime);
             setIsRateLimited(true);
             // Initial message will be set by the countdown timer
             return;
           }
-        }
 
-        // Check rate limits
-        if (data.count >= 50 && data.resetTime > now) {
-          setCooldownEnd(data.resetTime);
-          setIsRateLimited(true);
-          // Initial message will be set by the countdown timer
-          return;
+          // If we get here, user is not rate limited
+          setIsRateLimited(false);
+          setRateLimitMessage("");
+          setCooldownEnd(null);
+        } else {
+          // No rate limit document exists yet
+          setIsRateLimited(false);
+          setRateLimitMessage("");
+          setCooldownEnd(null);
         }
-
-        // If we get here, user is not rate limited
-        setIsRateLimited(false);
-        setRateLimitMessage("");
-        setCooldownEnd(null);
-      } else {
-        // No rate limit document exists yet
-        setIsRateLimited(false);
-        setRateLimitMessage("");
-        setCooldownEnd(null);
       }
-    });
+    );
 
     return () => unsubscribe();
   }, [user]);
