@@ -70,11 +70,20 @@ const HomePage = () => {
   // Separate function to fetch featured posts
   const fetchFeaturedPosts = async () => {
     try {
+      // Calculate start of current day in user's timezone
+      const now = new Date();
+      const startOfDay = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate()
+      );
+
       const featuredQuery = query(
         collection(db, "posts"),
         where("status", "==", "published"),
-        orderBy("totalVotes", "desc"),
+        where("createdAt", ">=", startOfDay),
         orderBy("createdAt", "desc"),
+        orderBy("totalVotes", "desc"),
         limit(4)
       );
 
@@ -93,7 +102,39 @@ const HomePage = () => {
         })
       );
 
-      setFeaturedPosts(featuredPosts);
+      // If we don't have enough posts from today, fetch from the last 7 days
+      if (featuredPosts.length < 4) {
+        const sevenDaysAgo = new Date(now);
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const extendedQuery = query(
+          collection(db, "posts"),
+          where("status", "==", "published"),
+          where("createdAt", ">=", sevenDaysAgo),
+          orderBy("createdAt", "desc"),
+          orderBy("totalVotes", "desc"),
+          limit(4)
+        );
+
+        const extendedSnapshot = await getDocs(extendedQuery);
+        const extendedPosts = await Promise.all(
+          extendedSnapshot.docs.map(async (doc) => {
+            const post = { id: doc.id, ...doc.data() };
+            const commentsQuery = query(
+              collection(db, "comments"),
+              where("postId", "==", doc.id)
+            );
+            const commentsSnapshot = await getDocs(commentsQuery);
+            const commentCount = commentsSnapshot.size;
+
+            return { ...(await migratePost(post)), commentCount };
+          })
+        );
+
+        setFeaturedPosts(extendedPosts);
+      } else {
+        setFeaturedPosts(featuredPosts);
+      }
     } catch (error) {
       console.error("Error fetching featured posts:", error);
     }
