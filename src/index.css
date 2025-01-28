@@ -13,10 +13,22 @@
     @apply antialiased m-0;
   }
 
-  /* Smooth theme transitions */
-  * {
-    transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out,
-      color 0.3s ease-in-out;
+  /* Theme transitions only for specific properties and elements */
+  .theme-transition-bg {
+    transition: background-color 0.2s ease-in-out;
+  }
+
+  .theme-transition-border {
+    transition: border-color 0.2s ease-in-out;
+  }
+
+  .theme-transition-colors {
+    transition: color 0.2s ease-in-out;
+  }
+
+  /* Remove transition for text color changes */
+  .no-transition {
+    transition: none !important;
   }
 }
 
