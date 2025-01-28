@@ -12,6 +12,7 @@ import {
   serverTimestamp,
   getDoc,
   onSnapshot,
+  setDoc,
 } from "firebase/firestore";
 import {
   ref,
@@ -19,6 +20,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
+import { increment } from "firebase/firestore";
 import PropTypes from "prop-types";
 
 const UserPostManager = ({ darkMode }) => {
@@ -35,6 +37,9 @@ const UserPostManager = ({ darkMode }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [validationError, setValidationError] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [rateLimitMessage, setRateLimitMessage] = useState("");
+  const [cooldownEnd, setCooldownEnd] = useState(null);
 
   // Add admin check
   useEffect(() => {
@@ -50,6 +55,101 @@ const UserPostManager = ({ darkMode }) => {
       }
     };
     checkAdminStatus();
+  }, [user]);
+
+  // Add countdown timer effect
+  useEffect(() => {
+    if (!cooldownEnd) return;
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      if (now >= cooldownEnd) {
+        setIsRateLimited(false);
+        setRateLimitMessage("");
+        setCooldownEnd(null);
+        return;
+      }
+
+      const timeLeft = cooldownEnd - now;
+      const minutesLeft = Math.floor(timeLeft / (60 * 1000));
+      const secondsLeft = Math.floor((timeLeft % (60 * 1000)) / 1000);
+
+      let message;
+      if (minutesLeft > 0) {
+        message = `Please wait ${minutesLeft} minute${
+          minutesLeft !== 1 ? "s" : ""
+        } and ${secondsLeft} second${
+          secondsLeft !== 1 ? "s" : ""
+        } before creating another post.`;
+      } else {
+        message = `Please wait ${secondsLeft} second${
+          secondsLeft !== 1 ? "s" : ""
+        } before creating another post.`;
+      }
+
+      setRateLimitMessage(message);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldownEnd]);
+
+  // Add rate limit listener
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = onSnapshot(doc(db, "rateLimits", user.uid), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        const now = Date.now();
+
+        // Check if user is banned
+        if (data.bannedUntil && now < data.bannedUntil) {
+          const hoursLeft = Math.ceil(
+            (data.bannedUntil - now) / (1000 * 60 * 60)
+          );
+          setRateLimitMessage(
+            `You are temporarily banned from posting for ${hoursLeft} hours due to multiple rejected posts.`
+          );
+          setIsRateLimited(true);
+          setCooldownEnd(data.bannedUntil);
+          return;
+        }
+
+        // Check cooldown periods
+        if (data.lastPostTime) {
+          const cooldownMinutes = data.lastPostStatus === "rejected" ? 3 : 10;
+          const cooldownEndTime =
+            data.lastPostTime.toMillis() + cooldownMinutes * 60 * 1000;
+
+          if (now < cooldownEndTime) {
+            setCooldownEnd(cooldownEndTime);
+            setIsRateLimited(true);
+            // Initial message will be set by the countdown timer
+            return;
+          }
+        }
+
+        // Check rate limits
+        if (data.count >= 50 && data.resetTime > now) {
+          setCooldownEnd(data.resetTime);
+          setIsRateLimited(true);
+          // Initial message will be set by the countdown timer
+          return;
+        }
+
+        // If we get here, user is not rate limited
+        setIsRateLimited(false);
+        setRateLimitMessage("");
+        setCooldownEnd(null);
+      } else {
+        // No rate limit document exists yet
+        setIsRateLimited(false);
+        setRateLimitMessage("");
+        setCooldownEnd(null);
+      }
+    });
+
+    return () => unsubscribe();
   }, [user]);
 
   // Handle image selection
@@ -155,17 +255,40 @@ const UserPostManager = ({ darkMode }) => {
   // Create new post
   const handleCreatePost = async (e) => {
     e.preventDefault();
+
+    if (isRateLimited) {
+      setValidationError(rateLimitMessage);
+      return;
+    }
+
     setIsUploading(true);
     setValidationError(null);
 
     try {
+      // Check rate limits first
+      const now = Date.now();
+      const rateLimitRef = doc(db, "rateLimits", user.uid);
+      const rateLimitDoc = await getDoc(rateLimitRef);
+
+      // Initialize rate limit document if it doesn't exist
+      if (!rateLimitDoc.exists()) {
+        await setDoc(rateLimitRef, {
+          count: 0,
+          resetTime: now + 60000, // 1 minute
+          lastPostTime: null,
+          lastPostStatus: null,
+          recentRejections: 0,
+          bannedUntil: null,
+        });
+      }
+
       // First upload the image if exists
       let imageData = null;
       if (imageFile) {
         imageData = await uploadImage(imageFile);
       }
 
-      // Create the post document with pending status (or published if admin)
+      // Create the post document
       const postsCollection = collection(db, "posts");
       const newPost = {
         ...currentPost,
@@ -180,10 +303,18 @@ const UserPostManager = ({ darkMode }) => {
         usersThatLiked: [],
         usersThatDisliked: [],
         totalVotes: 0,
-        status: isAdmin ? "published" : "pending", // Set as pending for validation
+        status: isAdmin ? "published" : "pending",
       };
 
+      // Create the post
       await addDoc(postsCollection, newPost);
+
+      // Update rate limit after successful post creation
+      await updateDoc(rateLimitRef, {
+        count: increment(1),
+        lastPostTime: serverTimestamp(),
+        lastPostStatus: "pending",
+      });
 
       // Reset form
       setCurrentPost({
@@ -198,6 +329,7 @@ const UserPostManager = ({ darkMode }) => {
     } catch (error) {
       console.error("Error creating post:", error);
       setValidationError(error.message);
+      setIsUploading(false);
     }
   };
 
@@ -239,6 +371,24 @@ const UserPostManager = ({ darkMode }) => {
 
   return (
     <div className="space-y-6">
+      {rateLimitMessage && (
+        <div
+          className={`p-4 rounded-md ${
+            darkMode
+              ? "bg-yellow-900/20 border border-yellow-800"
+              : "bg-yellow-50 border border-yellow-200"
+          }`}
+        >
+          <p
+            className={`text-sm ${
+              darkMode ? "text-yellow-200" : "text-yellow-800"
+            }`}
+          >
+            {rateLimitMessage}
+          </p>
+        </div>
+      )}
+
       <form onSubmit={handleCreatePost} className="space-y-4">
         {validationError && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
@@ -412,12 +562,16 @@ const UserPostManager = ({ darkMode }) => {
         <div className="flex justify-end">
           <button
             type="submit"
-            disabled={isUploading}
+            disabled={isUploading || isRateLimited}
             className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               darkMode
                 ? "bg-[#316DCA] hover:bg-[#2760AA] focus:ring-[#316DCA]"
                 : "bg-blue-600 hover:bg-blue-700 focus:ring-blue-500"
-            } ${isUploading ? "opacity-50 cursor-not-allowed" : ""}`}
+            } ${
+              isUploading || isRateLimited
+                ? "opacity-50 cursor-not-allowed"
+                : ""
+            }`}
           >
             {isUploading ? "Uploading..." : "Create Post"}
           </button>

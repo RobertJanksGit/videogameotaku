@@ -69,21 +69,42 @@ service cloud.firestore {
       return onlyReplyCountChanged && updated.replyCount is number && updated.replyCount >= 0;
     }
 
+    // Rate limiting functions
+    function isWithinRateLimit() {
+      let rateLimit = get(/databases/$(database)/documents/rateLimits/$(request.auth.uid)).data;
+      let now = request.time.toMillis();
+      let cooldownTime = rateLimit.lastPostStatus == "rejected" ? 3 * 60 * 1000 : 10 * 60 * 1000;
+      
+      return rateLimit == null || 
+             (
+               // Not banned
+               (rateLimit.bannedUntil == null || now >= rateLimit.bannedUntil) &&
+               // Not in cooldown
+               (rateLimit.lastPostTime == null || 
+                now >= (rateLimit.lastPostTime.toMillis() + cooldownTime)) &&
+               // Not rate limited
+               (rateLimit.resetTime <= now || rateLimit.count < 50)
+             );
+    }
+
     // Rate limits collection rules
-    match /rateLimits/{limitId} {
-      allow read: if false; // No client-side access needed
-      allow write: if false; // Only Cloud Functions can write
+    match /rateLimits/{userId} {
+      allow read: if request.auth.uid == userId;
+      allow create: if request.auth.uid == userId;
+      allow update: if request.auth.uid == userId || isAdmin();
+      allow delete: if false; // No one should delete rate limit documents
     }
 
     // Posts collection rules
     match /posts/{postId} {
       // Anyone can read posts
       allow read: if true;
-      // Allow authenticated users to create posts with valid data
+      // Allow authenticated users to create posts with valid data and rate limit
       allow create: if isSignedIn() && 
                    isValidPostData(request.resource.data) && 
                    request.resource.data.authorId == request.auth.uid &&
-                   request.resource.data.status == 'pending';
+                   request.resource.data.status == 'pending' &&
+                   isWithinRateLimit();
       // Only allow admins to update posts, or users to update vote counts
       allow update: if isAdmin() || 
                    (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
