@@ -9,50 +9,49 @@
 
 "use strict";
 
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { defineSecret } = require("firebase-functions/params");
+const {
+  onDocumentCreated,
+  onDocumentUpdated,
+} = require("firebase-functions/v2/firestore");
+const {
+  defineString,
+  defineInt,
+  defineSecret,
+} = require("firebase-functions/params");
+const { onInit } = require("firebase-functions/v2/core");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 
 admin.initializeApp();
 
-// Define both values as secrets for better security
+// Define configuration parameters
 const validationApiUrl = defineSecret("VALIDATION_API_URL");
 const validationPrompt = defineSecret("VALIDATION_PROMPT");
-
-// Rate limiting configuration
-const rateLimits = {
-  maxCalls: 50,
-  periodSeconds: 60,
-};
-
-// Content validation limits
-const contentLimits = {
-  maxTitleLength: 200,
-  maxContentLength: 10000,
-  minContentLength: 10,
-};
+const maxCallsPerMinute = defineInt("MAX_CALLS_PER_MINUTE", { default: 50 });
+const maxTitleLength = defineInt("MAX_TITLE_LENGTH", { default: 200 });
+const maxContentLength = defineInt("MAX_CONTENT_LENGTH", { default: 10000 });
+const minContentLength = defineInt("MIN_CONTENT_LENGTH", { default: 10 });
 
 // Helper function to validate content
 function validateContent(title, content) {
   if (
     !title ||
     typeof title !== "string" ||
-    title.length > contentLimits.maxTitleLength
+    title.length > maxTitleLength.value()
   ) {
     throw new Error(
-      `Title must be between 1 and ${contentLimits.maxTitleLength} characters`
+      `Title must be between 1 and ${maxTitleLength.value()} characters`
     );
   }
 
   if (
     !content ||
     typeof content !== "string" ||
-    content.length > contentLimits.maxContentLength ||
-    content.length < contentLimits.minContentLength
+    content.length > maxContentLength.value() ||
+    content.length < minContentLength.value()
   ) {
     throw new Error(
-      `Content must be between ${contentLimits.minContentLength} and ${contentLimits.maxContentLength} characters`
+      `Content must be between ${minContentLength.value()} and ${maxContentLength.value()} characters`
     );
   }
 }
@@ -69,63 +68,47 @@ async function checkRateLimit(userId) {
       .runTransaction(async (transaction) => {
         const doc = await transaction.get(rateLimitRef);
 
-        // If document doesn't exist, create it with initial count
         if (!doc.exists) {
           transaction.set(rateLimitRef, {
             count: 1,
-            resetTime: now + rateLimits.periodSeconds * 1000,
+            resetTime: now + 60000, // 1 minute
           });
           return true;
         }
 
         const data = doc.data();
-
-        // Reset count if period has expired
         if (now > data.resetTime) {
           transaction.set(rateLimitRef, {
             count: 1,
-            resetTime: now + rateLimits.periodSeconds * 1000,
+            resetTime: now + 60000,
           });
           return true;
         }
 
-        // Check if limit exceeded
-        if (data.count >= rateLimits.maxCalls) {
-          console.log(
-            `Rate limit exceeded for user ${userId}. Count: ${
-              data.count
-            }, Reset time: ${new Date(data.resetTime)}`
-          );
+        if (data.count >= maxCallsPerMinute.value()) {
           return false;
         }
 
-        // Increment count
         transaction.update(rateLimitRef, {
           count: admin.firestore.FieldValue.increment(1),
         });
 
-        console.log(
-          `Rate limit check passed for user ${userId}. Current count: ${
-            data.count + 1
-          }`
-        );
         return true;
       });
 
     return result;
   } catch (error) {
     console.error("Rate limit check failed:", error);
-    // On error, allow the request to proceed
     return true;
   }
 }
 
-// Export the function directly with secret access
+// Post validation function
 exports.validatePost = onDocumentCreated(
   {
     document: "posts/{postId}",
-    secrets: [validationApiUrl, validationPrompt], // Explicitly grant access to both secrets
-    maxInstances: 10, // Limit concurrent executions
+    secrets: [validationApiUrl, validationPrompt],
+    maxInstances: 10,
   },
   async (event) => {
     console.log("Starting validation for post:", event.params.postId);
@@ -135,35 +118,22 @@ exports.validatePost = onDocumentCreated(
     const userId = post.authorId;
 
     try {
-      // Validate content length and format
       validateContent(post.title, post.content);
 
-      // Check rate limits
       const withinLimits = await checkRateLimit(userId);
       if (!withinLimits) {
         throw new Error("Rate limit exceeded. Please try again later.");
       }
 
-      console.log("Post content to validate:", {
-        title: post.title,
-        content: post.content,
-      });
-
-      // Skip if already published
       if (post.status === "published") {
         console.log("Skipping already published post");
         return null;
       }
 
-      // Get the API URL from the secret
       const apiUrl = validationApiUrl.value();
-      console.log("Using validation API URL:", apiUrl);
-
       if (!apiUrl || !apiUrl.startsWith("http")) {
         throw new Error("Invalid API URL configuration");
       }
-
-      console.log("Sending request to validation API...");
 
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -181,35 +151,11 @@ exports.validatePost = onDocumentCreated(
       });
 
       if (!response.ok) {
-        console.error(
-          "API response not OK:",
-          response.status,
-          response.statusText
-        );
         throw new Error(`Validation API error: ${response.statusText}`);
       }
 
       const result = await response.json();
-      console.log("Raw API response:", result);
-
-      // Parse the nested JSON response
-      let validationResult;
-      try {
-        validationResult = JSON.parse(result.message);
-        console.log("Parsed validation result:", validationResult);
-      } catch (parseError) {
-        console.error("Error parsing validation result:", parseError);
-        validationResult = {
-          isValid: false,
-          message: "Invalid response format",
-        };
-      }
-
-      // Update the post with validation results
-      console.log(
-        "Updating post status to:",
-        validationResult.isValid ? "published" : "rejected"
-      );
+      let validationResult = JSON.parse(result.message);
 
       await admin
         .firestore()
@@ -222,13 +168,9 @@ exports.validatePost = onDocumentCreated(
           validatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-      console.log("Post update complete");
       return { success: true };
     } catch (error) {
       console.error("Error validating post:", error);
-
-      // Mark as rejected on error
-      console.log("Marking post as rejected due to error");
 
       await admin
         .firestore()
@@ -243,6 +185,69 @@ exports.validatePost = onDocumentCreated(
         });
 
       return { error: error.message };
+    }
+  }
+);
+
+// Handle post status changes for rate limiting
+exports.onPostStatusChange = onDocumentUpdated(
+  {
+    document: "posts/{postId}",
+  },
+  async (event) => {
+    const newData = event.data.after.data();
+    const previousData = event.data.before.data();
+
+    // Only proceed if status has changed
+    if (newData.status === previousData.status) return;
+
+    const userId = newData.authorId;
+    const rateLimitRef = admin.firestore().collection("rateLimits").doc(userId);
+
+    try {
+      await admin.firestore().runTransaction(async (transaction) => {
+        const rateLimitDoc = await transaction.get(rateLimitRef);
+        const now = admin.firestore.Timestamp.now();
+
+        if (!rateLimitDoc.exists) {
+          transaction.set(rateLimitRef, {
+            lastPostTime: now,
+            lastPostStatus: newData.status,
+            recentRejections: newData.status === "rejected" ? 1 : 0,
+          });
+          return;
+        }
+
+        const data = rateLimitDoc.data();
+
+        if (newData.status === "rejected") {
+          const recentRejections = (data.recentRejections || 0) + 1;
+          const updates = {
+            lastPostTime: now,
+            lastPostStatus: "rejected",
+            recentRejections: recentRejections,
+          };
+
+          // If user has had 5 or more rejections, ban them for 24 hours
+          if (recentRejections >= 5) {
+            updates.bannedUntil = admin.firestore.Timestamp.fromMillis(
+              now.toMillis() + 24 * 60 * 60 * 1000 // 24 hours
+            );
+          }
+
+          transaction.update(rateLimitRef, updates);
+        } else if (newData.status === "published") {
+          // Reset rejection count on successful publish
+          transaction.update(rateLimitRef, {
+            lastPostTime: now,
+            lastPostStatus: "published",
+            recentRejections: 0,
+            bannedUntil: null,
+          });
+        }
+      });
+    } catch (error) {
+      console.error("Error updating rate limits:", error);
     }
   }
 );

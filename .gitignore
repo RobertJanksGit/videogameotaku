@@ -28,3 +28,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Firebase
+functions/.env.*
+.firebase/
+firebase-debug.log
