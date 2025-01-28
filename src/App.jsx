@@ -12,6 +12,7 @@ import AdminPage from "./components/admin/AdminPage";
 import UserDashboard from "./components/user/UserDashboard";
 import HomePage from "./components/home/HomePage";
 import PostDetail from "./components/posts/PostDetail";
+import ContentGuidelines from "./components/guidelines/ContentGuidelines";
 import PropTypes from "prop-types";
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/post/:postId" element={<PostDetail />} />
+              <Route path="/guidelines" element={<ContentGuidelines />} />
               <Route
                 path="/settings"
                 element={
