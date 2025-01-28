@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { useAuth } from "../../contexts/AuthContext";
 import Modal from "../common/Modal";
+import { Link } from "react-router-dom";
 
 const EyeIcon = () => (
   <svg
@@ -245,7 +246,14 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
                     htmlFor="guidelines"
                     className="text-gray-700 dark:text-gray-300"
                   >
-                    I have read and agree to the content guidelines
+                    I have read and agree to the{" "}
+                    <Link
+                      to="/guidelines"
+                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      onClick={() => onClose()}
+                    >
+                      content guidelines
+                    </Link>
                   </label>
                 </div>
               </div>
