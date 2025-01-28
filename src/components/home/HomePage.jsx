@@ -11,6 +11,7 @@ import {
   doc,
   updateDoc,
   where,
+  startAfter,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
@@ -23,6 +24,9 @@ const HomePage = () => {
   const [featuredPosts, setFeaturedPosts] = useState([]);
   const [latestPosts, setLatestPosts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [lastVisible, setLastVisible] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   // Migrate old voting system to new array-based system
   const migratePost = async (post) => {
@@ -63,63 +67,136 @@ const HomePage = () => {
     };
   };
 
-  useEffect(() => {
-    const fetchPosts = async () => {
-      try {
-        // Create base query for published posts
-        let postsQuery = query(
-          collection(db, "posts"),
-          where("status", "==", "published"),
-          orderBy("createdAt", "desc"),
-          limit(20)
-        );
+  // Separate function to fetch featured posts
+  const fetchFeaturedPosts = async () => {
+    try {
+      const featuredQuery = query(
+        collection(db, "posts"),
+        where("status", "==", "published"),
+        orderBy("totalVotes", "desc"),
+        orderBy("createdAt", "desc"),
+        limit(4)
+      );
 
-        // Add category filter if a specific category is selected
-        if (selectedCategory !== "all") {
-          postsQuery = query(
-            collection(db, "posts"),
-            where("status", "==", "published"),
-            where("category", "==", selectedCategory),
-            orderBy("createdAt", "desc"),
-            limit(20)
+      const featuredSnapshot = await getDocs(featuredQuery);
+      const featuredPosts = await Promise.all(
+        featuredSnapshot.docs.map(async (doc) => {
+          const post = { id: doc.id, ...doc.data() };
+          const commentsQuery = query(
+            collection(db, "comments"),
+            where("postId", "==", doc.id)
           );
-        }
+          const commentsSnapshot = await getDocs(commentsQuery);
+          const commentCount = commentsSnapshot.size;
 
-        const postsSnapshot = await getDocs(postsQuery);
-        const allPosts = await Promise.all(
-          postsSnapshot.docs.map(async (doc) => {
-            const post = { id: doc.id, ...doc.data() };
+          return { ...(await migratePost(post)), commentCount };
+        })
+      );
 
-            // Fetch comment count for each post
-            const commentsQuery = query(
-              collection(db, "comments"),
-              where("postId", "==", doc.id)
-            );
-            const commentsSnapshot = await getDocs(commentsQuery);
-            const commentCount = commentsSnapshot.size;
+      setFeaturedPosts(featuredPosts);
+    } catch (error) {
+      console.error("Error fetching featured posts:", error);
+    }
+  };
 
-            return { ...(await migratePost(post)), commentCount };
-          })
-        );
+  // Function to fetch latest posts
+  const fetchLatestPosts = async (isLoadingMore = false) => {
+    try {
+      setIsLoading(true);
 
-        // Set latest posts directly from the date-ordered query
-        setLatestPosts(allPosts);
+      // Create base query conditions
+      let queryConditions = [
+        where("status", "==", "published"),
+        orderBy("createdAt", "desc"),
+        limit(10),
+      ];
 
-        // Sort a copy for featured posts by votes
-        const sortedByVotes = [...allPosts].sort((a, b) => {
-          const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
-          if (voteDiff !== 0) return voteDiff;
-          return b.createdAt?.toMillis() - a.createdAt?.toMillis();
-        });
-
-        setFeaturedPosts(sortedByVotes.slice(0, 4));
-      } catch (error) {
-        console.error("Error fetching posts:", error);
+      // Add category filter if a specific category is selected
+      if (selectedCategory !== "all") {
+        queryConditions.unshift(where("category", "==", selectedCategory));
       }
+
+      // Add startAfter if loading more
+      if (isLoadingMore && lastVisible) {
+        queryConditions.push(startAfter(lastVisible));
+      }
+
+      // Create the query with all conditions
+      const postsQuery = query(collection(db, "posts"), ...queryConditions);
+
+      const postsSnapshot = await getDocs(postsQuery);
+
+      // Update lastVisible
+      if (postsSnapshot.docs.length > 0) {
+        setLastVisible(postsSnapshot.docs[postsSnapshot.docs.length - 1]);
+        setHasMore(postsSnapshot.docs.length === 10);
+      } else {
+        setHasMore(false);
+      }
+
+      const newPosts = await Promise.all(
+        postsSnapshot.docs.map(async (doc) => {
+          const post = { id: doc.id, ...doc.data() };
+          const commentsQuery = query(
+            collection(db, "comments"),
+            where("postId", "==", doc.id)
+          );
+          const commentsSnapshot = await getDocs(commentsQuery);
+          const commentCount = commentsSnapshot.size;
+
+          return { ...(await migratePost(post)), commentCount };
+        })
+      );
+
+      // Update posts list
+      setLatestPosts((prev) =>
+        isLoadingMore ? [...prev, ...newPosts] : newPosts
+      );
+    } catch (error) {
+      console.error("Error fetching latest posts:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Effect for initial load and category changes
+  useEffect(() => {
+    setLastVisible(null);
+    setHasMore(true);
+    fetchLatestPosts();
+  }, [selectedCategory]);
+
+  // Separate effect for featured posts
+  useEffect(() => {
+    fetchFeaturedPosts();
+  }, [user]);
+
+  // Infinite scroll handler
+  const handleScroll = () => {
+    const scrollPosition = window.innerHeight + window.pageYOffset;
+    const threshold = document.documentElement.scrollHeight - 100; // 100px before bottom
+
+    if (scrollPosition >= threshold) {
+      if (hasMore && !isLoading) {
+        fetchLatestPosts(true);
+      }
+    }
+  };
+
+  // Add scroll event listener with debounce
+  useEffect(() => {
+    let timeoutId;
+    const debouncedScroll = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleScroll, 100);
     };
 
-    fetchPosts();
-  }, [user, selectedCategory]);
+    window.addEventListener("scroll", debouncedScroll);
+    return () => {
+      window.removeEventListener("scroll", debouncedScroll);
+      clearTimeout(timeoutId);
+    };
+  }, [lastVisible, hasMore, isLoading, selectedCategory]);
 
   const handleVoteChange = (updatedPost) => {
     // Update latest posts without re-sorting
@@ -456,6 +533,39 @@ const HomePage = () => {
               </div>
             </article>
           ))}
+
+          <div className="flex flex-col items-center py-4 space-y-4">
+            {isLoading && (
+              <div
+                className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
+                  darkMode ? "border-white" : "border-gray-900"
+                }`}
+              ></div>
+            )}
+
+            {!isLoading && hasMore && (
+              <button
+                onClick={() => fetchLatestPosts(true)}
+                className={`px-6 py-2 text-sm rounded-md ${
+                  darkMode
+                    ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
+                    : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+                }`}
+              >
+                Load More
+              </button>
+            )}
+
+            {!hasMore && latestPosts.length > 0 && (
+              <div
+                className={`text-center ${
+                  darkMode ? "text-gray-400" : "text-gray-600"
+                }`}
+              >
+                No more posts to load
+              </div>
+            )}
+          </div>
         </div>
       </section>
     </div>
