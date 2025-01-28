@@ -89,19 +89,20 @@ PasswordInput.propTypes = {
 const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
   const [mode, setMode] = useState(initialMode);
 
-  // Reset mode when initialMode changes or modal closes
-  useEffect(() => {
-    setMode(initialMode);
-  }, [initialMode, isOpen]);
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [agreedToGuidelines, setAgreedToGuidelines] = useState(false);
 
   const { login, signup } = useAuth();
+
+  // Reset mode when initialMode changes or modal closes
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode, isOpen]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -121,6 +122,13 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
       if (!/^[a-zA-Z0-9_-]+$/.test(displayName)) {
         setError(
           "Username can only contain letters, numbers, underscores, and hyphens"
+        );
+        return;
+      }
+
+      if (!agreedToGuidelines) {
+        setError(
+          "You must agree to the content guidelines to create an account"
         );
         return;
       }
@@ -155,6 +163,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
     setPassword("");
     setConfirmPassword("");
     setDisplayName("");
+    setAgreedToGuidelines(false);
   };
 
   return (
@@ -212,12 +221,36 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
         />
 
         {mode === "register" && (
-          <PasswordInput
-            id="confirmPassword"
-            label="Confirm password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
+          <>
+            <PasswordInput
+              id="confirmPassword"
+              label="Confirm password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+
+            <div className="space-y-2">
+              <div className="flex items-start">
+                <div className="flex items-center h-5">
+                  <input
+                    id="guidelines"
+                    type="checkbox"
+                    checked={agreedToGuidelines}
+                    onChange={(e) => setAgreedToGuidelines(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                </div>
+                <div className="ml-3 text-sm">
+                  <label
+                    htmlFor="guidelines"
+                    className="text-gray-700 dark:text-gray-300"
+                  >
+                    I have read and agree to the content guidelines
+                  </label>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         <div className="pt-2">
