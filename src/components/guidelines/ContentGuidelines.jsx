@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { useTheme } from "../../contexts/ThemeContext";
 
 const ContentGuidelines = () => {
@@ -201,10 +200,6 @@ const ContentGuidelines = () => {
       </div>
     </div>
   );
-};
-
-ContentGuidelines.propTypes = {
-  darkMode: PropTypes.bool.isRequired,
 };
 
 export default ContentGuidelines;

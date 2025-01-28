@@ -236,59 +236,6 @@ const Layout = ({ children }) => {
             <nav className="flex items-center space-x-4">
               {user ? (
                 <>
-                  <div className="relative" ref={notificationsRef}>
-                    <button
-                      onClick={() => setShowNotifications(!showNotifications)}
-                      className="p-2 rounded-full hover:bg-[#444C56] transition-colors"
-                    >
-                      <BellIcon hasUnread={hasUnreadNotifications} />
-                    </button>
-
-                    {showNotifications && (
-                      <div className="absolute right-0 mt-2 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
-                        <div className="px-4 py-2 border-b border-[#373E47]">
-                          <h3 className="text-sm font-medium text-[#ADBAC7]">
-                            Notifications
-                          </h3>
-                        </div>
-                        <div className="max-h-96 overflow-y-auto">
-                          {notifications.length === 0 ? (
-                            <div className="px-4 py-3 text-sm text-[#768390]">
-                              No notifications
-                            </div>
-                          ) : (
-                            notifications.map((notification) => (
-                              <button
-                                key={notification.id}
-                                onClick={() =>
-                                  handleNotificationClick(notification)
-                                }
-                                className={`w-full text-left px-4 py-3 hover:bg-[#316DCA] group ${
-                                  !notification.read ? "bg-[#1C2128]" : ""
-                                }`}
-                              >
-                                <p
-                                  className={`text-sm ${
-                                    notification.read
-                                      ? "text-[#768390]"
-                                      : "text-[#ADBAC7]"
-                                  } group-hover:text-white`}
-                                >
-                                  {notification.message}
-                                </p>
-                                <p className="text-xs text-[#768390] group-hover:text-gray-200 mt-1">
-                                  {notification.createdAt
-                                    ?.toDate()
-                                    .toLocaleDateString()}
-                                </p>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   <div className="relative" ref={dropdownRef}>
                     <button
                       onClick={() => setShowDropdown(!showDropdown)}
@@ -299,6 +246,9 @@ const Layout = ({ children }) => {
                         {user.displayName || user.email}
                       </span>
                       <ChevronDownIcon />
+                      {hasUnreadNotifications && (
+                        <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
+                      )}
                     </button>
 
                     {showDropdown && (
@@ -320,6 +270,18 @@ const Layout = ({ children }) => {
                             My Dashboard
                           </Link>
                         )}
+                        <button
+                          onClick={() => {
+                            setShowDropdown(false);
+                            setShowNotifications(!showNotifications);
+                          }}
+                          className="relative block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                        >
+                          Notifications
+                          {hasUnreadNotifications && (
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-red-500"></span>
+                          )}
+                        </button>
                         <Link
                           to="/settings"
                           onClick={() => setShowDropdown(false)}
@@ -364,20 +326,51 @@ const Layout = ({ children }) => {
             </nav>
           </div>
         </header>
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-gray-900 dark:text-white">
+
+        {showNotifications && (
+          <div
+            ref={notificationsRef}
+            className="fixed right-4 top-16 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg z-50"
+          >
+            <div className="px-4 py-2 border-b border-[#373E47]">
+              <h3 className="text-sm font-medium text-[#ADBAC7]">
+                Notifications
+              </h3>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {notifications.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-[#7D8590]">
+                  No notifications
+                </div>
+              ) : (
+                notifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    onClick={() => handleNotificationClick(notification)}
+                    className={`w-full block px-4 py-3 text-left text-sm hover:bg-[#316DCA] ${
+                      notification.read
+                        ? "text-[#7D8590] hover:text-white"
+                        : "text-[#ADBAC7] font-medium"
+                    }`}
+                  >
+                    {notification.message}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {children}
         </main>
-        <footer className="w-full border-t border-gray-200 dark:border-gray-700">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-gray-600 dark:text-gray-400">
-            © {new Date().getFullYear()} Video Game Otaku. All rights reserved.
-          </div>
-        </footer>
+
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={handleModalClose}
+          mode={authMode}
+        />
       </div>
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={handleModalClose}
-        initialMode={authMode}
-      />
     </div>
   );
 };
