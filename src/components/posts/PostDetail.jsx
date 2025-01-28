@@ -49,7 +49,7 @@ const ReplyForm = ({ onSubmit, darkMode, isMainThreadComment }) => {
         onKeyDown={handleKeyDown}
         className={`w-full p-2 text-sm rounded-md ${
           darkMode
-            ? "bg-gray-700 text-gray-200 border-gray-600"
+            ? "bg-gray-700 text-white border-gray-600"
             : "bg-white text-gray-900 border-gray-300"
         } border`}
         rows="2"
@@ -154,7 +154,7 @@ const Comment = ({
             ) : (
               <span
                 className={`text-sm font-medium ${
-                  darkMode ? "text-gray-300" : "text-gray-600"
+                  darkMode ? "text-gray-100" : "text-gray-600"
                 }`}
               >
                 {comment.authorName?.[0]?.toUpperCase() || "A"}
@@ -165,7 +165,7 @@ const Comment = ({
             <div className="flex items-center space-x-2">
               <span
                 className={`font-medium ${
-                  darkMode ? "text-gray-200" : "text-gray-900"
+                  darkMode ? "text-white" : "text-gray-900"
                 }`}
               >
                 {comment.authorName}
@@ -182,7 +182,7 @@ const Comment = ({
             </div>
             <p
               className={`text-sm mt-1 ${
-                darkMode ? "text-gray-300" : "text-gray-600"
+                darkMode ? "text-white" : "text-gray-600"
               }`}
             >
               {comment.content}
@@ -866,7 +866,9 @@ const PostDetail = () => {
                 {post.title}
               </h1>
               <div
-                className={`prose max-w-none ${darkMode ? "prose-invert" : ""}`}
+                className={`prose max-w-none ${
+                  darkMode ? "prose-invert text-white" : ""
+                }`}
               >
                 {post.content}
               </div>
@@ -900,7 +902,7 @@ const PostDetail = () => {
                   placeholder="Write a comment... (Press Enter to submit, Shift+Enter for new line)"
                   className={`w-full p-4 rounded-lg ${
                     darkMode
-                      ? "bg-gray-800 text-gray-200 border-gray-700"
+                      ? "bg-gray-800 text-white border-gray-700"
                       : "bg-white text-gray-900 border-gray-200"
                   } border`}
                   rows="3"
