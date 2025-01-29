@@ -83,8 +83,8 @@ const HomePage = () => {
         collection(db, "posts"),
         where("status", "==", "published"),
         where("createdAt", ">=", startOfDay),
-        orderBy("createdAt", "desc"),
         orderBy("totalVotes", "desc"),
+        orderBy("createdAt", "desc"),
         limit(4)
       );
 
@@ -112,8 +112,8 @@ const HomePage = () => {
           collection(db, "posts"),
           where("status", "==", "published"),
           where("createdAt", ">=", sevenDaysAgo),
-          orderBy("createdAt", "desc"),
           orderBy("totalVotes", "desc"),
+          orderBy("createdAt", "desc"),
           limit(4)
         );
 

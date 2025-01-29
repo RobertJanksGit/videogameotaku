@@ -54,15 +54,28 @@ const RichContent = ({ content, darkMode }) => {
                   </h3>
                 ),
                 // Style paragraphs
-                p: ({ children }) => (
-                  <p
-                    className={`mb-4 ${
-                      darkMode ? "text-gray-300" : "text-gray-700"
-                    }`}
-                  >
-                    {children}
-                  </p>
-                ),
+                p: ({ children, node }) => {
+                  // Check if this paragraph only contains a code block
+                  const hasOnlyCodeBlock =
+                    node.children.length === 1 &&
+                    node.children[0].type === "element" &&
+                    node.children[0].tagName === "code" &&
+                    !node.children[0].properties?.inline;
+
+                  if (hasOnlyCodeBlock) {
+                    return children;
+                  }
+
+                  return (
+                    <p
+                      className={`mb-4 ${
+                        darkMode ? "text-gray-300" : "text-gray-700"
+                      }`}
+                    >
+                      {children}
+                    </p>
+                  );
+                },
                 // Style lists
                 ul: ({ children }) => (
                   <ul className="list-disc list-inside mb-4 space-y-1">
@@ -92,28 +105,44 @@ const RichContent = ({ content, darkMode }) => {
                   </blockquote>
                 ),
                 // Style code blocks
-                code: ({ inline, children }) =>
-                  inline ? (
-                    <code
-                      className={`px-1 py-0.5 rounded ${
-                        darkMode
-                          ? "bg-gray-800 text-gray-200"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {children}
-                    </code>
-                  ) : (
-                    <pre
-                      className={`p-4 rounded-lg my-4 overflow-auto ${
-                        darkMode
-                          ? "bg-gray-800 text-gray-200"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      <code>{children}</code>
-                    </pre>
-                  ),
+                code: ({ node, inline, className, children }) => {
+                  // If it's an inline code block
+                  if (inline) {
+                    return (
+                      <code
+                        className={`px-1 py-0.5 rounded ${
+                          darkMode
+                            ? "bg-gray-800 text-gray-200"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {children}
+                      </code>
+                    );
+                  }
+
+                  // For block code, check if we're already inside a pre tag
+                  const isInsidePre =
+                    node.position?.start.line === node.position?.end.line;
+                  if (isInsidePre) {
+                    return <code>{children}</code>;
+                  }
+
+                  // Otherwise, wrap in a pre tag
+                  return (
+                    <div className="my-4">
+                      <pre
+                        className={`p-4 rounded-lg overflow-auto ${
+                          darkMode
+                            ? "bg-gray-800 text-gray-200"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        <code>{children}</code>
+                      </pre>
+                    </div>
+                  );
+                },
               }}
             >
               {part}

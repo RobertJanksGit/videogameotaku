@@ -275,12 +275,14 @@ const Layout = ({ children }) => {
                             setShowDropdown(false);
                             setShowNotifications(!showNotifications);
                           }}
-                          className="relative block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
                         >
-                          Notifications
-                          {hasUnreadNotifications && (
-                            <span className="absolute right-4 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-red-500"></span>
-                          )}
+                          <div className="flex items-center justify-between">
+                            <span>Notifications</span>
+                            {hasUnreadNotifications && (
+                              <span className="h-2 w-2 rounded-full bg-red-500"></span>
+                            )}
+                          </div>
                         </button>
                         <Link
                           to="/settings"
