@@ -28,7 +28,17 @@ export default {
           900: "#0c4a6e",
         },
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            color: null,
+            p: {
+              color: "inherit",
+            },
+          },
+        },
+      },
     },
   },
-  plugins: [require("@tailwindcss/forms")],
+  plugins: [require("@tailwindcss/forms"), require("@tailwindcss/typography")],
 };

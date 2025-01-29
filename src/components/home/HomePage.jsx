@@ -16,6 +16,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
 import ShareButtons from "../common/ShareButtons";
+import RichContent from "../posts/RichContent";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -272,6 +273,17 @@ const HomePage = () => {
     navigate(`/post/${postId}`);
   };
 
+  const getPreviewContent = (content) => {
+    // Remove image tags
+    const cleanContent = content.replace(/\[img:[^\]]+\]/g, "");
+
+    // Limit to ~200 characters
+    if (cleanContent.length > 200) {
+      return cleanContent.substring(0, 200) + "...";
+    }
+    return cleanContent;
+  };
+
   return (
     <div className="w-full space-y-8">
       {/* Featured Posts Section */}
@@ -330,15 +342,23 @@ const HomePage = () => {
                     >
                       {post.category}
                     </span>
-                    <span
-                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                        darkMode
-                          ? "bg-gray-700 text-gray-300"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {post.platform || "N/A"}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {(Array.isArray(post.platforms)
+                        ? post.platforms
+                        : [post.platform]
+                      ).map((platform) => (
+                        <span
+                          key={platform}
+                          className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                            darkMode
+                              ? "bg-gray-700 text-gray-300"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {platform}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                   {renderVoteButtons(post)}
                 </div>
@@ -354,7 +374,7 @@ const HomePage = () => {
                     darkMode ? "text-gray-300" : "text-gray-600"
                   }`}
                 >
-                  {post.content}
+                  {getPreviewContent(post.content)}
                 </p>
                 <div className="flex items-center justify-between">
                   <span
@@ -478,15 +498,23 @@ const HomePage = () => {
                       >
                         {post.category}
                       </span>
-                      <span
-                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                          darkMode
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {post.platform || "N/A"}
-                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {(Array.isArray(post.platforms)
+                          ? post.platforms
+                          : [post.platform]
+                        ).map((platform) => (
+                          <span
+                            key={platform}
+                            className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                              darkMode
+                                ? "bg-gray-700 text-gray-300"
+                                : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
+                            {platform}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     {renderVoteButtons(post)}
                   </div>
@@ -508,7 +536,7 @@ const HomePage = () => {
                     darkMode ? "text-gray-300" : "text-gray-600"
                   }`}
                 >
-                  {post.content}
+                  {getPreviewContent(post.content)}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">

@@ -33,10 +33,26 @@ service cloud.firestore {
 
     // Helper function to validate post data
     function isValidPostData(data) {
-      return data.usersThatLiked is list && 
-             data.usersThatDisliked is list &&
-             data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked', 'status']) &&
-             data.status in ['pending', 'published', 'rejected'];
+      let hasRequiredFields = data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked', 'status']);
+      let hasValidArrays = data.usersThatLiked is list && data.usersThatDisliked is list;
+      let hasValidStatus = data.status in ['pending', 'published', 'rejected'];
+      
+      // Validate content format including inline images
+      let contentStr = data.content;
+      let imageMatches = contentStr.matches('\\[img:https://firebasestorage\\.googleapis\\.com/[^\\]|]+\\|[^\\]]+\\]');
+      let cleanContent = contentStr.replace('\\[img:[^\\]]+\\]', ''); // Remove image tags for length check
+      let validContentLength = cleanContent.size() >= 10 && cleanContent.size() <= 10000;
+      
+      // Validate title
+      let validTitle = data.title is string && 
+                      data.title.size() >= 3 && 
+                      data.title.size() <= 100;
+
+      return hasRequiredFields && 
+             hasValidArrays && 
+             hasValidStatus && 
+             validContentLength && 
+             validTitle;
     }
 
     // Helper function to validate notification data

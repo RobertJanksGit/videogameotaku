@@ -59,15 +59,27 @@ function validateContent(title, content) {
     );
   }
 
+  // Extract actual text content without image tags for length validation
+  const textContent = content.replace(/\[img:.*?\|.*?\]/g, "");
+
   if (
-    !content ||
-    typeof content !== "string" ||
-    content.length > maxContentLength.value() ||
-    content.length < minContentLength.value()
+    !textContent ||
+    typeof textContent !== "string" ||
+    textContent.length > maxContentLength.value() ||
+    textContent.length < minContentLength.value()
   ) {
     throw new Error(
-      `Content must be between ${minContentLength.value()} and ${maxContentLength.value()} characters`
+      `Content must be between ${minContentLength.value()} and ${maxContentLength.value()} characters (excluding images)`
     );
+  }
+
+  // Validate image URLs in content
+  const imageMatches = content.match(/\[img:(.*?)\|/g) || [];
+  for (const match of imageMatches) {
+    const url = match.slice(5, -1); // Remove [img: and |
+    if (!url.startsWith("https://firebasestorage.googleapis.com/")) {
+      throw new Error("Invalid image URL detected in content");
+    }
   }
 }
 
@@ -150,6 +162,9 @@ exports.validatePost = onDocumentCreated(
         throw new Error("Invalid API URL configuration");
       }
 
+      // Clean content for API validation by temporarily removing image tags
+      const cleanContent = post.content.replace(/\[img:.*?\|.*?\]/g, "[image]");
+
       const response = await fetch(apiUrl, {
         method: "POST",
         headers: {
@@ -161,7 +176,7 @@ exports.validatePost = onDocumentCreated(
         body: JSON.stringify({
           prompt: validationPrompt.value(),
           title: post.title,
-          content: post.content,
+          content: cleanContent,
         }),
       });
 

@@ -22,6 +22,7 @@ import {
   createNotification,
   getNotificationMessage,
 } from "../../utils/notifications";
+import RichContent from "./RichContent";
 
 const ReplyForm = ({ onSubmit, darkMode, isMainThreadComment }) => {
   const [replyContent, setReplyContent] = useState("");
@@ -842,14 +843,22 @@ const PostDetail = () => {
                       </p>
                     </div>
                   </div>
-                  <div
-                    className={`px-3 py-1 rounded-full text-sm ${
-                      darkMode
-                        ? "bg-gray-700 text-gray-300"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    {post.platform}
+                  <div className="flex items-center space-x-2">
+                    {(Array.isArray(post.platforms)
+                      ? post.platforms
+                      : [post.platform]
+                    ).map((platform) => (
+                      <div
+                        key={platform}
+                        className={`px-3 py-1 rounded-full text-sm ${
+                          darkMode
+                            ? "bg-gray-700 text-gray-300"
+                            : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
+                        {platform}
+                      </div>
+                    ))}
                   </div>
                 </div>
                 <ShareButtons
@@ -865,12 +874,8 @@ const PostDetail = () => {
               >
                 {post.title}
               </h1>
-              <div
-                className={`prose max-w-none ${
-                  darkMode ? "prose-invert text-white" : ""
-                }`}
-              >
-                {post.content}
+              <div className="mb-6">
+                <RichContent content={post.content} darkMode={darkMode} />
               </div>
               <div className="mt-6">
                 <VoteButtons
