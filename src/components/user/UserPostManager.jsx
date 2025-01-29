@@ -27,6 +27,7 @@ import MarkdownToolbar from "../posts/MarkdownToolbar";
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
   const [posts, setPosts] = useState([]);
+  const [postsLimit, setPostsLimit] = useState(10);
   const [currentPost, setCurrentPost] = useState({
     title: "",
     content: "",
@@ -444,7 +445,7 @@ const UserPostManager = ({ darkMode }) => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`p-4 ${darkMode ? "text-gray-200" : "text-gray-900"}`}>
       {rateLimitMessage && (
         <div
           className={`p-4 rounded-md ${
@@ -772,167 +773,204 @@ const UserPostManager = ({ darkMode }) => {
         </div>
       </form>
 
-      <div className="overflow-x-auto">
-        <div
-          className={`rounded-md border ${
-            darkMode ? "border-gray-700" : "border-gray-200"
+      <div className="mt-8 mb-4 flex items-center justify-between">
+        <h2
+          className={`text-xl font-semibold ${
+            darkMode ? "text-gray-200" : "text-gray-900"
           }`}
         >
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className={darkMode ? "bg-[#1C2128]" : "bg-gray-50"}>
-              <tr>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Title
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Category
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Status
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Votes
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Image
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Created At
-                </th>
-                <th
-                  className={`px-6 py-3 text-left text-xs font-medium ${
-                    darkMode ? "text-gray-200" : "text-gray-500"
-                  } uppercase tracking-wider`}
-                >
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody
-              className={`divide-y ${
-                darkMode ? "divide-gray-700" : "divide-gray-200"
+          Your Posts
+        </h2>
+        <div className="flex items-center space-x-3">
+          <label
+            htmlFor="postsLimit"
+            className={`text-sm ${
+              darkMode ? "text-gray-300" : "text-gray-600"
+            }`}
+          >
+            Show posts:
+          </label>
+          <select
+            id="postsLimit"
+            value={postsLimit}
+            onChange={(e) => setPostsLimit(Number(e.target.value))}
+            className={`w-20 rounded-md border px-2 py-1 text-sm ${
+              darkMode
+                ? "bg-gray-700 border-gray-600 text-gray-200"
+                : "bg-white border-gray-300 text-gray-900"
+            }`}
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {posts.slice(0, postsLimit).map((post) => (
+          <div key={post.id} className="overflow-x-auto">
+            <div
+              className={`rounded-md border ${
+                darkMode ? "border-gray-700" : "border-gray-200"
               }`}
             >
-              {posts.map((post) => (
-                <tr key={post.id}>
-                  <td
-                    className={`px-6 py-4 text-sm max-w-xs truncate ${
-                      darkMode ? "text-gray-200" : "text-gray-900"
-                    }`}
-                  >
-                    {post.title}
-                    {post.status === "rejected" && post.moderationMessage && (
-                      <>
-                        <div className="text-xs text-red-500 mt-1">
-                          {post.moderationMessage}
-                        </div>
-                        <div className="text-xs text-yellow-500 mt-1">
-                          Warning: Multiple rejected posts may result in a
-                          24-hour posting ban.
-                        </div>
-                      </>
-                    )}
-                  </td>
-                  <td
-                    className={`px-6 py-4 whitespace-nowrap text-sm ${
-                      darkMode ? "text-gray-200" : "text-gray-900"
-                    }`}
-                  >
-                    {post.category}
-                  </td>
-                  <td className={`px-6 py-4 whitespace-nowrap text-sm`}>
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        (post.status || "pending") === "published"
-                          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                          : (post.status || "pending") === "rejected"
-                          ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-                          : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead className={darkMode ? "bg-[#1C2128]" : "bg-gray-50"}>
+                  <tr>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Title
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Category
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Status
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Votes
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Image
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Created At
+                    </th>
+                    <th
+                      className={`px-6 py-3 text-left text-xs font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-500"
+                      } uppercase tracking-wider`}
+                    >
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody
+                  className={`divide-y ${
+                    darkMode ? "divide-gray-700" : "divide-gray-200"
+                  }`}
+                >
+                  <tr>
+                    <td
+                      className={`px-6 py-4 text-sm max-w-xs truncate ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
                       }`}
                     >
-                      {(post.status || "pending").charAt(0).toUpperCase() +
-                        (post.status || "pending").slice(1)}
-                    </span>
-                  </td>
-                  <td
-                    className={`px-6 py-4 whitespace-nowrap text-sm ${
-                      darkMode ? "text-gray-200" : "text-gray-900"
-                    }`}
-                  >
-                    {post.voteCount || 0}
-                  </td>
-                  <td
-                    className={`px-6 py-4 whitespace-nowrap text-sm ${
-                      darkMode ? "text-gray-200" : "text-gray-900"
-                    }`}
-                  >
-                    {post.imageUrl ? (
-                      <img
-                        src={post.imageUrl}
-                        alt={post.title}
-                        className="h-10 w-10 object-cover rounded"
-                      />
-                    ) : (
-                      "No image"
-                    )}
-                  </td>
-                  <td
-                    className={`px-6 py-4 whitespace-nowrap text-sm ${
-                      darkMode ? "text-gray-200" : "text-gray-900"
-                    }`}
-                  >
-                    {post.createdAt &&
-                    typeof post.createdAt.toDate === "function"
-                      ? post.createdAt.toDate().toLocaleDateString()
-                      : new Date(post.createdAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {isAdmin && (
-                      <button
-                        onClick={() => handleEditPost(post)}
-                        className={`text-sm ${
-                          darkMode ? "text-blue-400" : "text-blue-600"
-                        } hover:underline mr-4`}
-                      >
-                        Edit
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeletePost(post.id)}
-                      className="text-sm text-red-600 hover:underline"
+                      {post.title}
+                      {post.status === "rejected" && post.moderationMessage && (
+                        <>
+                          <div className="text-xs text-red-500 mt-1">
+                            {post.moderationMessage}
+                          </div>
+                          <div className="text-xs text-yellow-500 mt-1">
+                            Warning: Multiple rejected posts may result in a
+                            24-hour posting ban.
+                          </div>
+                        </>
+                      )}
+                    </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap text-sm ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
                     >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      {post.category}
+                    </td>
+                    <td className={`px-6 py-4 whitespace-nowrap text-sm`}>
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          (post.status || "pending") === "published"
+                            ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                            : (post.status || "pending") === "rejected"
+                            ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+                        }`}
+                      >
+                        {(post.status || "pending").charAt(0).toUpperCase() +
+                          (post.status || "pending").slice(1)}
+                      </span>
+                    </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap text-sm ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
+                    >
+                      {post.voteCount || 0}
+                    </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap text-sm ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
+                    >
+                      {post.imageUrl ? (
+                        <img
+                          src={post.imageUrl}
+                          alt={post.title}
+                          className="h-10 w-10 object-cover rounded"
+                        />
+                      ) : (
+                        "No image"
+                      )}
+                    </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap text-sm ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
+                    >
+                      {post.createdAt &&
+                      typeof post.createdAt.toDate === "function"
+                        ? post.createdAt.toDate().toLocaleDateString()
+                        : new Date(post.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleEditPost(post)}
+                          className={`text-sm ${
+                            darkMode ? "text-blue-400" : "text-blue-600"
+                          } hover:underline mr-4`}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDeletePost(post.id)}
+                        className="text-sm text-red-600 hover:underline"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

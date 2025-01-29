@@ -168,6 +168,13 @@ PasswordInput.propTypes = {
 const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
   const [mode, setMode] = useState(initialMode);
 
+  // Update mode when modal opens with initialMode
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+    }
+  }, [isOpen, initialMode]);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -179,10 +186,18 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
 
   const { login, signup } = useAuth();
 
-  // Reset mode when initialMode changes or modal closes
+  // Reset form when modal closes
   useEffect(() => {
-    setMode(initialMode);
-  }, [initialMode, isOpen]);
+    if (!isOpen) {
+      setEmail("");
+      setPassword("");
+      setConfirmPassword("");
+      setDisplayName("");
+      setError("");
+      setAgreedToGuidelines(false);
+      setAgreedToTerms(false);
+    }
+  }, [isOpen]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

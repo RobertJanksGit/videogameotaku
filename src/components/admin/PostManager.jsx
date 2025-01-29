@@ -26,6 +26,7 @@ const PostManager = ({ darkMode }) => {
   const [posts, setPosts] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [postsLimit, setPostsLimit] = useState(10);
   const [currentPost, setCurrentPost] = useState({
     title: "",
     content: "",
@@ -316,7 +317,7 @@ const PostManager = ({ darkMode }) => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`p-4 ${darkMode ? "text-gray-200" : "text-gray-900"}`}>
       <form
         onSubmit={isEditing ? handleUpdatePost : handleCreatePost}
         className="space-y-4"
@@ -574,6 +575,41 @@ const PostManager = ({ darkMode }) => {
         </div>
       </form>
 
+      <div className="mt-8 mb-4 flex items-center justify-between">
+        <h2
+          className={`text-xl font-semibold ${
+            darkMode ? "text-gray-200" : "text-gray-900"
+          }`}
+        >
+          Posts List
+        </h2>
+        <div className="flex items-center space-x-3">
+          <label
+            htmlFor="postsLimit"
+            className={`text-sm ${
+              darkMode ? "text-gray-300" : "text-gray-600"
+            }`}
+          >
+            Show posts:
+          </label>
+          <select
+            id="postsLimit"
+            value={postsLimit}
+            onChange={(e) => setPostsLimit(Number(e.target.value))}
+            className={`w-20 rounded-md border px-2 py-1 text-sm ${
+              darkMode
+                ? "bg-gray-700 border-gray-600 text-gray-200"
+                : "bg-white border-gray-300 text-gray-900"
+            }`}
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <div
           className={`rounded-md border ${
@@ -639,7 +675,7 @@ const PostManager = ({ darkMode }) => {
                 darkMode ? "divide-gray-700" : "divide-gray-200"
               }`}
             >
-              {posts.map((post) => (
+              {posts.slice(0, postsLimit).map((post) => (
                 <tr key={post.id}>
                   <td
                     className={`px-6 py-4 text-sm max-w-xs truncate ${
