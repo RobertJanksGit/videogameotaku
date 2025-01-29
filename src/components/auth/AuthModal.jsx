@@ -43,8 +43,33 @@ const EyeSlashIcon = () => (
   </svg>
 );
 
-const PasswordInput = ({ id, label, value, onChange, required = true }) => {
+const PasswordInput = ({
+  id,
+  label,
+  value,
+  onChange,
+  required = true,
+  mode,
+}) => {
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState(0);
+  const isRegistrationPassword = mode === "register" && id === "password";
+
+  const checkPasswordStrength = (password) => {
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (/[a-z]/.test(password)) strength++;
+    if (/[A-Z]/.test(password)) strength++;
+    if (/[0-9]/.test(password)) strength++;
+    if (/[^a-zA-Z0-9]/.test(password)) strength++;
+    return strength;
+  };
+
+  useEffect(() => {
+    if (isRegistrationPassword) {
+      setPasswordStrength(checkPasswordStrength(value));
+    }
+  }, [value, isRegistrationPassword]);
 
   return (
     <div className="space-y-2">
@@ -62,6 +87,21 @@ const PasswordInput = ({ id, label, value, onChange, required = true }) => {
           onChange={onChange}
           className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors pr-8"
           required={required}
+          placeholder={
+            isRegistrationPassword
+              ? "Min. 8 characters with letters, numbers & symbols"
+              : "Enter your password"
+          }
+          pattern={
+            isRegistrationPassword
+              ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
+              : undefined
+          }
+          title={
+            isRegistrationPassword
+              ? "Must contain at least 8 characters, including uppercase, lowercase, number and special character"
+              : undefined
+          }
         />
         <button
           type="button"
@@ -75,6 +115,43 @@ const PasswordInput = ({ id, label, value, onChange, required = true }) => {
           </div>
         </button>
       </div>
+      {isRegistrationPassword && (
+        <div className="space-y-1">
+          <div className="flex gap-1">
+            {[...Array(5)].map((_, index) => (
+              <div
+                key={index}
+                className={`h-1 flex-1 rounded-full transition-colors ${
+                  index < passwordStrength
+                    ? passwordStrength <= 2
+                      ? "bg-red-500"
+                      : passwordStrength <= 3
+                      ? "bg-yellow-500"
+                      : "bg-green-500"
+                    : "bg-gray-200 dark:bg-gray-700"
+                }`}
+              />
+            ))}
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+            <div className={value.length >= 8 ? "text-green-500" : ""}>
+              • Minimum 8 characters
+            </div>
+            <div className={/[a-z]/.test(value) ? "text-green-500" : ""}>
+              • One lowercase letter
+            </div>
+            <div className={/[A-Z]/.test(value) ? "text-green-500" : ""}>
+              • One uppercase letter
+            </div>
+            <div className={/[0-9]/.test(value) ? "text-green-500" : ""}>
+              • One number
+            </div>
+            <div className={/[^a-zA-Z0-9]/.test(value) ? "text-green-500" : ""}>
+              • One special character
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -85,6 +162,7 @@ PasswordInput.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
   required: PropTypes.bool,
+  mode: PropTypes.oneOf(["login", "register"]).isRequired,
 };
 
 const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
@@ -97,6 +175,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [agreedToGuidelines, setAgreedToGuidelines] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const { login, signup } = useAuth();
 
@@ -127,9 +206,34 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
         return;
       }
 
-      if (!agreedToGuidelines) {
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters long");
+        return;
+      }
+
+      if (!/[a-z]/.test(password)) {
+        setError("Password must contain at least one lowercase letter");
+        return;
+      }
+
+      if (!/[A-Z]/.test(password)) {
+        setError("Password must contain at least one uppercase letter");
+        return;
+      }
+
+      if (!/[0-9]/.test(password)) {
+        setError("Password must contain at least one number");
+        return;
+      }
+
+      if (!/[^a-zA-Z0-9]/.test(password)) {
+        setError("Password must contain at least one special character");
+        return;
+      }
+
+      if (!agreedToGuidelines || !agreedToTerms) {
         setError(
-          "You must agree to the content guidelines to create an account"
+          "You must agree to both the Terms of Use and Content Guidelines to create an account"
         );
         return;
       }
@@ -165,6 +269,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
     setConfirmPassword("");
     setDisplayName("");
     setAgreedToGuidelines(false);
+    setAgreedToTerms(false);
   };
 
   return (
@@ -193,6 +298,10 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
               onChange={(e) => setDisplayName(e.target.value)}
               className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
               required
+              placeholder="e.g., game_master123"
+              pattern="^[a-zA-Z0-9_-]+$"
+              title="Username can only contain letters, numbers, underscores, and hyphens"
+              minLength={3}
             />
           </div>
         )}
@@ -211,6 +320,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
             required
+            placeholder="your.email@example.com"
           />
         </div>
 
@@ -219,6 +329,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
           label="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          mode={mode}
         />
 
         {mode === "register" && (
@@ -228,9 +339,37 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
               label="Confirm password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
+              mode={mode}
             />
 
-            <div className="space-y-2">
+            <div className="space-y-3">
+              <div className="flex items-start">
+                <div className="flex items-center h-5">
+                  <input
+                    id="terms"
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                </div>
+                <div className="ml-3 text-sm">
+                  <label
+                    htmlFor="terms"
+                    className="text-gray-700 dark:text-gray-300"
+                  >
+                    I have read and agree to the{" "}
+                    <Link
+                      to="/terms"
+                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      onClick={() => onClose()}
+                    >
+                      Terms of Use
+                    </Link>
+                  </label>
+                </div>
+              </div>
+
               <div className="flex items-start">
                 <div className="flex items-center h-5">
                   <input
@@ -252,7 +391,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
                       className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                       onClick={() => onClose()}
                     >
-                      content guidelines
+                      Content Guidelines
                     </Link>
                   </label>
                 </div>
