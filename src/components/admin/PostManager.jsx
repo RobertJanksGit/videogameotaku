@@ -10,6 +10,7 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  getDoc,
 } from "firebase/firestore";
 import {
   ref,
@@ -18,11 +19,13 @@ import {
   deleteObject,
 } from "firebase/storage";
 import PropTypes from "prop-types";
+import MarkdownToolbar from "../posts/MarkdownToolbar";
 
 const PostManager = ({ darkMode }) => {
   const { user } = useAuth();
   const [posts, setPosts] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [currentPost, setCurrentPost] = useState({
     title: "",
     content: "",
@@ -33,6 +36,24 @@ const PostManager = ({ darkMode }) => {
   const [imagePreview, setImagePreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const contentTextareaRef = useRef(null);
+
+  // Add admin check
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          const isUserAdmin =
+            userDoc.exists() && userDoc.data().role === "admin";
+          setIsAdmin(isUserAdmin);
+        } catch (error) {
+          console.error("Error checking admin status:", error);
+          setIsAdmin(false);
+        }
+      }
+    };
+    checkAdminStatus();
+  }, [user]);
 
   // Handle featured image selection
   const handleImageChange = (e) => {
@@ -149,8 +170,7 @@ const PostManager = ({ darkMode }) => {
         imageData = await uploadImage(imageFile);
       }
 
-      const postsCollection = collection(db, "posts");
-      await addDoc(postsCollection, {
+      const postData = {
         ...currentPost,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
@@ -160,11 +180,14 @@ const PostManager = ({ darkMode }) => {
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        usersThatLiked: [], // Initialize empty likes array
-        usersThatDisliked: [], // Initialize empty dislikes array
-        totalVotes: 0, // Initialize totalVotes field
-        status: "published", // Set status as published for admin posts
-      });
+        usersThatLiked: [],
+        usersThatDisliked: [],
+        totalVotes: 0,
+        status: isAdmin ? "published" : "pending",
+      };
+
+      const postsCollection = collection(db, "posts");
+      await addDoc(postsCollection, postData);
 
       // Reset form and refresh posts
       setCurrentPost({
@@ -492,6 +515,10 @@ const PostManager = ({ darkMode }) => {
               </span>
             )}
           </div>
+          <MarkdownToolbar
+            textareaRef={contentTextareaRef}
+            darkMode={darkMode}
+          />
           <textarea
             id="content"
             ref={contentTextareaRef}

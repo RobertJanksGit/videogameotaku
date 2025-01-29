@@ -274,8 +274,20 @@ const HomePage = () => {
   };
 
   const getPreviewContent = (content) => {
-    // Remove image tags
-    const cleanContent = content.replace(/\[img:[^\]]+\]/g, "");
+    // Remove image tags first
+    let cleanContent = content.replace(/\[img:[^\]]+\]/g, "");
+
+    // Remove Markdown syntax
+    cleanContent = cleanContent
+      .replace(/#{1,6}\s/g, "") // Remove headers
+      .replace(/(\*\*|__)(.*?)\1/g, "$2") // Remove bold
+      .replace(/(\*|_)(.*?)\1/g, "$2") // Remove italic
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // Remove links
+      .replace(/`{1,3}[^`]*`{1,3}/g, "") // Remove code blocks
+      .replace(/^\s*[-*+]\s+/gm, "") // Remove list markers
+      .replace(/^\s*\d+\.\s+/gm, "") // Remove numbered lists
+      .replace(/^\s*>\s+/gm, "") // Remove blockquotes
+      .trim();
 
     // Limit to ~200 characters
     if (cleanContent.length > 200) {

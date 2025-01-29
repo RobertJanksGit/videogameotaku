@@ -22,6 +22,7 @@ import {
 } from "firebase/storage";
 import { increment } from "firebase/firestore";
 import PropTypes from "prop-types";
+import MarkdownToolbar from "../posts/MarkdownToolbar";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -719,6 +720,10 @@ const UserPostManager = ({ darkMode }) => {
               </span>
             )}
           </div>
+          <MarkdownToolbar
+            textareaRef={contentTextareaRef}
+            darkMode={darkMode}
+          />
           <textarea
             id="content"
             ref={contentTextareaRef}

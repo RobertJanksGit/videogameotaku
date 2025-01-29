@@ -1,43 +1,126 @@
-import React from "react";
+import ReactMarkdown from "react-markdown";
 import PropTypes from "prop-types";
 
 const RichContent = ({ content, darkMode }) => {
-  const renderContent = () => {
-    if (!content) return null;
-
-    // Split content by image tags
-    const parts = content.split(/(\[img:[^\]]+\])/);
-
-    return parts.map((part, index) => {
-      // Check if this part is an image tag
-      const imgMatch = part.match(/\[img:([^|]+)\|([^\]]+)\]/);
-      if (imgMatch) {
-        const [, url, alt] = imgMatch;
-        return (
-          <img
-            key={index}
-            src={url}
-            alt={alt}
-            className="max-w-full h-auto rounded-lg my-4"
-          />
-        );
-      }
-
-      // Regular text content
-      return (
-        <span
-          key={index}
-          className={darkMode ? "text-gray-300" : "text-gray-600"}
-        >
-          {part}
-        </span>
-      );
-    });
-  };
+  // Split content by image tags
+  const parts = content.split(/(\[img:[^\]]+\])/);
 
   return (
-    <div className="rich-content space-y-4 whitespace-pre-wrap">
-      {renderContent()}
+    <div className={`prose ${darkMode ? "dark:prose-invert" : ""} max-w-none`}>
+      {parts.map((part, index) => {
+        if (part.startsWith("[img:")) {
+          // Handle image tags
+          const [url, alt] = part.slice(5, -1).split("|");
+          return (
+            <img
+              key={index}
+              src={url}
+              alt={alt || ""}
+              className="my-4 rounded-lg max-h-[500px] w-auto mx-auto"
+            />
+          );
+        } else {
+          // Render markdown content
+          return (
+            <ReactMarkdown
+              key={index}
+              components={{
+                // Style headers
+                h1: ({ children }) => (
+                  <h1
+                    className={`text-3xl font-bold mb-4 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2
+                    className={`text-2xl font-bold mb-3 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3
+                    className={`text-xl font-bold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h3>
+                ),
+                // Style paragraphs
+                p: ({ children }) => (
+                  <p
+                    className={`mb-4 ${
+                      darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}
+                  >
+                    {children}
+                  </p>
+                ),
+                // Style lists
+                ul: ({ children }) => (
+                  <ul className="list-disc list-inside mb-4 space-y-1">
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="list-decimal list-inside mb-4 space-y-1">
+                    {children}
+                  </ol>
+                ),
+                li: ({ children }) => (
+                  <li className={darkMode ? "text-gray-300" : "text-gray-700"}>
+                    {children}
+                  </li>
+                ),
+                // Style blockquotes
+                blockquote: ({ children }) => (
+                  <blockquote
+                    className={`border-l-4 pl-4 my-4 ${
+                      darkMode
+                        ? "border-gray-700 text-gray-400"
+                        : "border-gray-300 text-gray-600"
+                    }`}
+                  >
+                    {children}
+                  </blockquote>
+                ),
+                // Style code blocks
+                code: ({ inline, children }) =>
+                  inline ? (
+                    <code
+                      className={`px-1 py-0.5 rounded ${
+                        darkMode
+                          ? "bg-gray-800 text-gray-200"
+                          : "bg-gray-100 text-gray-800"
+                      }`}
+                    >
+                      {children}
+                    </code>
+                  ) : (
+                    <pre
+                      className={`p-4 rounded-lg my-4 overflow-auto ${
+                        darkMode
+                          ? "bg-gray-800 text-gray-200"
+                          : "bg-gray-100 text-gray-800"
+                      }`}
+                    >
+                      <code>{children}</code>
+                    </pre>
+                  ),
+              }}
+            >
+              {part}
+            </ReactMarkdown>
+          );
+        }
+      })}
     </div>
   );
 };

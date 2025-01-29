@@ -33,15 +33,27 @@ service cloud.firestore {
 
     // Helper function to validate post data
     function isValidPostData(data) {
-      let hasRequiredFields = data.keys().hasAll(['title', 'content', 'authorId', 'usersThatLiked', 'usersThatDisliked', 'status']);
-      let hasValidArrays = data.usersThatLiked is list && data.usersThatDisliked is list;
-      let hasValidStatus = data.status in ['pending', 'published', 'rejected'];
+      let hasRequiredFields = data.keys().hasAll([
+        'title', 
+        'content', 
+        'authorId', 
+        'usersThatLiked', 
+        'usersThatDisliked', 
+        'status',
+        'platforms',
+        'category'
+      ]);
       
-      // Validate content format including inline images
-      let contentStr = data.content;
-      let imageMatches = contentStr.matches('\\[img:https://firebasestorage\\.googleapis\\.com/[^\\]|]+\\|[^\\]]+\\]');
-      let cleanContent = contentStr.replace('\\[img:[^\\]]+\\]', ''); // Remove image tags for length check
-      let validContentLength = cleanContent.size() >= 10 && cleanContent.size() <= 10000;
+      let hasValidArrays = data.usersThatLiked is list && 
+                          data.usersThatDisliked is list &&
+                          data.platforms is list;
+                          
+      let hasValidStatus = data.status in ['pending', 'published', 'rejected'];
+      let hasValidCategory = data.category in ['news', 'review', 'guide', 'opinion'];
+      
+      // Validate content length
+      let validContentLength = data.content.size() >= 10 && 
+                             data.content.size() <= 10000;
       
       // Validate title
       let validTitle = data.title is string && 
@@ -51,6 +63,7 @@ service cloud.firestore {
       return hasRequiredFields && 
              hasValidArrays && 
              hasValidStatus && 
+             hasValidCategory &&
              validContentLength && 
              validTitle;
     }
