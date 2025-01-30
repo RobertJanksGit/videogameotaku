@@ -3,13 +3,30 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { storage, db, auth } from "../../config/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { doc, updateDoc, getDoc } from "firebase/firestore";
-import { updateProfile } from "firebase/auth";
+import {
+  doc,
+  updateDoc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  orderBy,
+  limit,
+} from "firebase/firestore";
+import {
+  updateProfile,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+} from "firebase/auth";
 import ContributionGraph from "../activity/ContributionGraph";
+import { useNavigate } from "react-router-dom";
 
 const Settings = () => {
   const { user, isUsernameTaken } = useAuth();
   const { darkMode } = useTheme();
+  const navigate = useNavigate();
   const [displayName, setDisplayName] = useState(user?.displayName || "");
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -22,8 +39,17 @@ const Settings = () => {
     postComments: true,
     commentReplies: true,
   });
+  const [featuredPosts, setFeaturedPosts] = useState([]);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
+
+  // Password change state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -37,6 +63,32 @@ const Settings = () => {
           postComments: userData?.notificationPrefs?.postComments ?? true,
           commentReplies: userData?.notificationPrefs?.commentReplies ?? true,
         });
+
+        // Fetch user's featured posts
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const postsQuery = query(
+          collection(db, "posts"),
+          where("authorId", "==", user.uid),
+          where("status", "==", "published"),
+          where("createdAt", ">=", sevenDaysAgo),
+          orderBy("createdAt", "desc"),
+          orderBy("totalVotes", "desc"),
+          limit(10)
+        );
+
+        const postsSnapshot = await getDocs(postsQuery);
+        const userPosts = postsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+
+        // Filter posts with high votes (featured threshold)
+        const featuredUserPosts = userPosts.filter(
+          (post) => post.totalVotes >= 5
+        ); // Assuming 5 votes is the threshold
+        setFeaturedPosts(featuredUserPosts);
       } catch (error) {
         console.error("Error fetching user data:", error);
       }
@@ -184,6 +236,90 @@ const Settings = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordSuccess("");
+    setPasswordLoading(true);
+
+    // Validate password requirements
+    if (newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters long");
+      setPasswordLoading(false);
+      return;
+    }
+
+    if (!/[a-z]/.test(newPassword)) {
+      setPasswordError(
+        "New password must contain at least one lowercase letter"
+      );
+      setPasswordLoading(false);
+      return;
+    }
+
+    if (!/[A-Z]/.test(newPassword)) {
+      setPasswordError(
+        "New password must contain at least one uppercase letter"
+      );
+      setPasswordLoading(false);
+      return;
+    }
+
+    if (!/[0-9]/.test(newPassword)) {
+      setPasswordError("New password must contain at least one number");
+      setPasswordLoading(false);
+      return;
+    }
+
+    if (!/[^a-zA-Z0-9]/.test(newPassword)) {
+      setPasswordError(
+        "New password must contain at least one special character"
+      );
+      setPasswordLoading(false);
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("New passwords do not match");
+      setPasswordLoading(false);
+      return;
+    }
+
+    try {
+      const currentUser = auth.currentUser;
+      const credential = EmailAuthProvider.credential(
+        currentUser.email,
+        currentPassword
+      );
+
+      // Reauthenticate user before changing password
+      await reauthenticateWithCredential(currentUser, credential);
+
+      // Update password
+      await updatePassword(currentUser, newPassword);
+
+      setPasswordSuccess("Password updated successfully!");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+    } catch (err) {
+      if (err.code === "auth/wrong-password") {
+        setPasswordError("Current password is incorrect");
+      } else {
+        setPasswordError(
+          err.message || "Failed to update password. Please try again."
+        );
+      }
+      console.error("Error updating password:", err);
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const handlePostClick = (postId) => {
+    navigate(`/post/${postId}`);
   };
 
   return (
@@ -443,9 +579,189 @@ const Settings = () => {
               darkMode ? "text-[#ADBAC7]" : "text-gray-900"
             }`}
           >
+            Change Password
+          </h2>
+          <form onSubmit={handlePasswordChange} className="space-y-4">
+            {passwordError && (
+              <div className="text-red-500 text-sm">{passwordError}</div>
+            )}
+            {passwordSuccess && (
+              <div className="text-green-500 text-sm">{passwordSuccess}</div>
+            )}
+
+            <div className="space-y-2">
+              <label
+                htmlFor="currentPassword"
+                className={`block text-sm font-medium ${
+                  darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                }`}
+              >
+                Current Password
+              </label>
+              <input
+                type="password"
+                id="currentPassword"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-md focus:ring-2 focus:ring-[#316DCA] focus:border-transparent ${
+                  darkMode
+                    ? "bg-[#1C2128] border-[#373E47] text-[#ADBAC7]"
+                    : "bg-white border-gray-300 text-gray-900"
+                }`}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="newPassword"
+                className={`block text-sm font-medium ${
+                  darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                }`}
+              >
+                New Password
+              </label>
+              <input
+                type="password"
+                id="newPassword"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-md focus:ring-2 focus:ring-[#316DCA] focus:border-transparent ${
+                  darkMode
+                    ? "bg-[#1C2128] border-[#373E47] text-[#ADBAC7]"
+                    : "bg-white border-gray-300 text-gray-900"
+                }`}
+                required
+                placeholder="Min. 8 characters with letters, numbers & symbols"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="confirmNewPassword"
+                className={`block text-sm font-medium ${
+                  darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                }`}
+              >
+                Confirm New Password
+              </label>
+              <input
+                type="password"
+                id="confirmNewPassword"
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-md focus:ring-2 focus:ring-[#316DCA] focus:border-transparent ${
+                  darkMode
+                    ? "bg-[#1C2128] border-[#373E47] text-[#ADBAC7]"
+                    : "bg-white border-gray-300 text-gray-900"
+                }`}
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={passwordLoading}
+              className={`w-full py-2 px-4 text-sm text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                darkMode
+                  ? "bg-[#316DCA] hover:bg-[#2760AA] focus:ring-[#316DCA]"
+                  : "bg-blue-600 hover:bg-blue-700 focus:ring-blue-500"
+              }`}
+            >
+              {passwordLoading ? "Updating..." : "Update Password"}
+            </button>
+          </form>
+        </div>
+
+        <div
+          className={`rounded-lg shadow p-6 ${
+            darkMode ? "bg-[#2D333B]" : "bg-white border border-gray-200"
+          }`}
+        >
+          <h2
+            className={`text-lg font-semibold mb-4 ${
+              darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+            }`}
+          >
             Activity
           </h2>
           <ContributionGraph contributions={contributions} />
+        </div>
+
+        {/* Featured Posts Section */}
+        <div
+          className={`rounded-lg shadow p-6 ${
+            darkMode ? "bg-[#2D333B]" : "bg-white border border-gray-200"
+          }`}
+        >
+          <h2
+            className={`text-lg font-semibold mb-4 ${
+              darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+            }`}
+          >
+            Featured Posts
+          </h2>
+          {featuredPosts.length > 0 ? (
+            <div className="space-y-4">
+              {featuredPosts.map((post) => (
+                <div
+                  key={post.id}
+                  onClick={() => handlePostClick(post.id)}
+                  className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                    darkMode
+                      ? "bg-[#1C2128] hover:bg-[#2D333B]"
+                      : "bg-gray-50 hover:bg-gray-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h3
+                      className={`text-lg font-medium ${
+                        darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+                      }`}
+                    >
+                      {post.title}
+                    </h3>
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className={`px-2 py-1 text-xs rounded-full ${
+                          darkMode
+                            ? "bg-[#316DCA] text-white"
+                            : "bg-blue-100 text-blue-800"
+                        }`}
+                      >
+                        {post.totalVotes} votes
+                      </span>
+                      <span
+                        className={`px-2 py-1 text-xs rounded-full ${
+                          darkMode
+                            ? "bg-gray-700 text-gray-300"
+                            : "bg-gray-200 text-gray-700"
+                        }`}
+                      >
+                        {post.category}
+                      </span>
+                    </div>
+                  </div>
+                  <p
+                    className={`text-sm ${
+                      darkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Featured on: {post.createdAt?.toDate().toLocaleDateString()}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p
+              className={`text-sm ${
+                darkMode ? "text-gray-400" : "text-gray-600"
+              }`}
+            >
+              None of your posts have been featured yet. Keep creating great
+              content to get featured!
+            </p>
+          )}
         </div>
       </div>
     </div>

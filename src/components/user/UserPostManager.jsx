@@ -781,7 +781,7 @@ const UserPostManager = ({ darkMode }) => {
         >
           Your Posts
         </h2>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center gap-2">
           <label
             htmlFor="postsLimit"
             className={`text-sm ${
@@ -794,7 +794,7 @@ const UserPostManager = ({ darkMode }) => {
             id="postsLimit"
             value={postsLimit}
             onChange={(e) => setPostsLimit(Number(e.target.value))}
-            className={`w-20 rounded-md border px-2 py-1 text-sm ${
+            className={`rounded-md border px-2 py-1 text-sm ${
               darkMode
                 ? "bg-gray-700 border-gray-600 text-gray-200"
                 : "bg-white border-gray-300 text-gray-900"
