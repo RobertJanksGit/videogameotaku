@@ -6,6 +6,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+firebase-debug.*.log*
+ui-debug.log*
 
 # Dependencies
 node_modules
@@ -33,12 +35,18 @@ dist-ssr
 .firebase/
 firebase-debug.log
 firebase-debug.*.log
-.runtimeconfig.json
-**/firebase-config.js
-**/serviceAccountKey.json
-functions/.env.*
 .firebaserc
 ui-debug.log
 *-debug.log
+.runtimeconfig.json
+
+# Firebase config
+src/config/firebase.js
+!src/config/firebase.template.js
+
+# Build files
+build/
+dist/
+coverage/
 
 google-cloud-docs.txt
