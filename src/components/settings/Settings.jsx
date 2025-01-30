@@ -3,17 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { storage, db, auth } from "../../config/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import {
-  doc,
-  updateDoc,
-  getDoc,
-  collection,
-  query,
-  where,
-  getDocs,
-  orderBy,
-  limit,
-} from "firebase/firestore";
+import { doc, updateDoc, getDoc } from "firebase/firestore";
 import {
   updateProfile,
   updatePassword,
@@ -21,12 +11,10 @@ import {
   reauthenticateWithCredential,
 } from "firebase/auth";
 import ContributionGraph from "../activity/ContributionGraph";
-import { useNavigate } from "react-router-dom";
 
 const Settings = () => {
   const { user, isUsernameTaken } = useAuth();
   const { darkMode } = useTheme();
-  const navigate = useNavigate();
   const [displayName, setDisplayName] = useState(user?.displayName || "");
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -39,7 +27,6 @@ const Settings = () => {
     postComments: true,
     commentReplies: true,
   });
-  const [featuredPosts, setFeaturedPosts] = useState([]);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
 
@@ -63,32 +50,6 @@ const Settings = () => {
           postComments: userData?.notificationPrefs?.postComments ?? true,
           commentReplies: userData?.notificationPrefs?.commentReplies ?? true,
         });
-
-        // Fetch user's featured posts
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        const postsQuery = query(
-          collection(db, "posts"),
-          where("authorId", "==", user.uid),
-          where("status", "==", "published"),
-          where("createdAt", ">=", sevenDaysAgo),
-          orderBy("createdAt", "desc"),
-          orderBy("totalVotes", "desc"),
-          limit(10)
-        );
-
-        const postsSnapshot = await getDocs(postsQuery);
-        const userPosts = postsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        // Filter posts with high votes (featured threshold)
-        const featuredUserPosts = userPosts.filter(
-          (post) => post.totalVotes >= 5
-        ); // Assuming 5 votes is the threshold
-        setFeaturedPosts(featuredUserPosts);
       } catch (error) {
         console.error("Error fetching user data:", error);
       }
@@ -316,10 +277,6 @@ const Settings = () => {
     } finally {
       setPasswordLoading(false);
     }
-  };
-
-  const handlePostClick = (postId) => {
-    navigate(`/post/${postId}`);
   };
 
   return (
@@ -686,82 +643,6 @@ const Settings = () => {
             Activity
           </h2>
           <ContributionGraph contributions={contributions} />
-        </div>
-
-        {/* Featured Posts Section */}
-        <div
-          className={`rounded-lg shadow p-6 ${
-            darkMode ? "bg-[#2D333B]" : "bg-white border border-gray-200"
-          }`}
-        >
-          <h2
-            className={`text-lg font-semibold mb-4 ${
-              darkMode ? "text-[#ADBAC7]" : "text-gray-900"
-            }`}
-          >
-            Featured Posts
-          </h2>
-          {featuredPosts.length > 0 ? (
-            <div className="space-y-4">
-              {featuredPosts.map((post) => (
-                <div
-                  key={post.id}
-                  onClick={() => handlePostClick(post.id)}
-                  className={`p-4 rounded-lg cursor-pointer transition-colors ${
-                    darkMode
-                      ? "bg-[#1C2128] hover:bg-[#2D333B]"
-                      : "bg-gray-50 hover:bg-gray-100"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h3
-                      className={`text-lg font-medium ${
-                        darkMode ? "text-[#ADBAC7]" : "text-gray-900"
-                      }`}
-                    >
-                      {post.title}
-                    </h3>
-                    <div className="flex items-center space-x-2">
-                      <span
-                        className={`px-2 py-1 text-xs rounded-full ${
-                          darkMode
-                            ? "bg-[#316DCA] text-white"
-                            : "bg-blue-100 text-blue-800"
-                        }`}
-                      >
-                        {post.totalVotes} votes
-                      </span>
-                      <span
-                        className={`px-2 py-1 text-xs rounded-full ${
-                          darkMode
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-gray-200 text-gray-700"
-                        }`}
-                      >
-                        {post.category}
-                      </span>
-                    </div>
-                  </div>
-                  <p
-                    className={`text-sm ${
-                      darkMode ? "text-gray-400" : "text-gray-600"
-                    }`}
-                  >
-                    Featured on: {post.createdAt?.toDate().toLocaleDateString()}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p
-              className={`text-sm ${
-                darkMode ? "text-gray-400" : "text-gray-600"
-              }`}
-            >
-              None of your posts have been featured yet. Keep creating great
-              content to get featured!
-            </p>
-          )}
         </div>
       </div>
     </div>
