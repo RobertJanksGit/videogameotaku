@@ -30,8 +30,15 @@ dist-ssr
 !.env.example
 
 # Firebase
-functions/.env.*
 .firebase/
 firebase-debug.log
+firebase-debug.*.log
+.runtimeconfig.json
+**/firebase-config.js
+**/serviceAccountKey.json
+functions/.env.*
+.firebaserc
+ui-debug.log
+*-debug.log
 
 google-cloud-docs.txt
