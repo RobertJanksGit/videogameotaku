@@ -16,7 +16,6 @@ import {
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
 import ShareButtons from "../common/ShareButtons";
-import RichContent from "../posts/RichContent";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -25,6 +24,7 @@ const HomePage = () => {
   const [featuredPosts, setFeaturedPosts] = useState([]);
   const [latestPosts, setLatestPosts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedPlatform, setSelectedPlatform] = useState("all");
   const [lastVisible, setLastVisible] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -158,6 +158,13 @@ const HomePage = () => {
         queryConditions.unshift(where("category", "==", selectedCategory));
       }
 
+      // Add platform filter if a specific platform is selected
+      if (selectedPlatform !== "all") {
+        queryConditions.unshift(
+          where("platforms", "array-contains", selectedPlatform)
+        );
+      }
+
       // Add startAfter if loading more
       if (isLoadingMore && lastVisible) {
         queryConditions.push(startAfter(lastVisible));
@@ -201,12 +208,12 @@ const HomePage = () => {
     }
   };
 
-  // Effect for initial load and category changes
+  // Effect for initial load and category/platform changes
   useEffect(() => {
     setLastVisible(null);
     setHasMore(true);
     fetchLatestPosts();
-  }, [selectedCategory]);
+  }, [selectedCategory, selectedPlatform]);
 
   // Separate effect for featured posts
   useEffect(() => {
@@ -238,7 +245,7 @@ const HomePage = () => {
       window.removeEventListener("scroll", debouncedScroll);
       clearTimeout(timeoutId);
     };
-  }, [lastVisible, hasMore, isLoading, selectedCategory]);
+  }, [lastVisible, hasMore, isLoading, selectedCategory, selectedPlatform]);
 
   const handleVoteChange = (updatedPost) => {
     // Update latest posts without re-sorting
@@ -343,37 +350,39 @@ const HomePage = () => {
                 </div>
               )}
               <div className="p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-2">
+                {/* Platforms Section */}
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {(Array.isArray(post.platforms)
+                    ? post.platforms
+                    : [post.platform]
+                  ).map((platform) => (
                     <span
+                      key={platform}
                       className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
                         darkMode
                           ? "bg-gray-700 text-gray-300"
                           : "bg-gray-100 text-gray-600"
                       }`}
                     >
-                      {post.category}
+                      {platform}
                     </span>
-                    <div className="flex flex-wrap gap-1">
-                      {(Array.isArray(post.platforms)
-                        ? post.platforms
-                        : [post.platform]
-                      ).map((platform) => (
-                        <span
-                          key={platform}
-                          className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                            darkMode
-                              ? "bg-gray-700 text-gray-300"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {platform}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  ))}
+                </div>
+
+                {/* Category and Vote Section */}
+                <div className="flex items-center justify-between mb-2">
+                  <span
+                    className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                      darkMode
+                        ? "bg-gray-700 text-gray-300"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {post.category}
+                  </span>
                   {renderVoteButtons(post)}
                 </div>
+
                 <h3
                   className={`text-xl font-semibold mb-2 ${
                     darkMode ? "text-white" : "text-gray-900"
@@ -461,21 +470,38 @@ const HomePage = () => {
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
             Latest Posts
           </h2>
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
-              darkMode
-                ? "bg-[#1C2128] border-gray-700 text-white"
-                : "border-gray-300"
-            }`}
-          >
-            <option value="all">All Categories</option>
-            <option value="news">News</option>
-            <option value="review">Review</option>
-            <option value="guide">Guide</option>
-            <option value="opinion">Opinion</option>
-          </select>
+          <div className="flex space-x-4">
+            <select
+              value={selectedPlatform}
+              onChange={(e) => setSelectedPlatform(e.target.value)}
+              className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+                darkMode
+                  ? "bg-[#1C2128] border-gray-700 text-white"
+                  : "border-gray-300"
+              }`}
+            >
+              <option value="all">All Platforms</option>
+              <option value="Nintendo">Nintendo</option>
+              <option value="Sony">Sony</option>
+              <option value="Microsoft">Microsoft</option>
+              <option value="PC">PC</option>
+            </select>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+                darkMode
+                  ? "bg-[#1C2128] border-gray-700 text-white"
+                  : "border-gray-300"
+              }`}
+            >
+              <option value="all">All Categories</option>
+              <option value="news">News</option>
+              <option value="review">Review</option>
+              <option value="guide">Guide</option>
+              <option value="opinion">Opinion</option>
+            </select>
+          </div>
         </div>
         <div className="space-y-8">
           {latestPosts.map((post) => (

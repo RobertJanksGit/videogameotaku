@@ -37,7 +37,7 @@ const TermsOfUse = () => {
               1. Agreement to Terms
             </h2>
             <p className={darkMode ? "text-gray-300" : "text-gray-600"}>
-              By accessing and using Video Game Otaku (&quot;we,&quot;
+              By accessing and using Videogame Otaku (&quot;we,&quot;
               &quot;our,&quot; or &quot;us&quot;), you agree to be bound by
               these Terms of Use. If you do not agree to these terms, please do
               not use our service.
@@ -88,7 +88,7 @@ const TermsOfUse = () => {
               }`}
             >
               <p>
-                By posting content on Video Game Otaku, you grant us a
+                By posting content on Videogame Otaku, you grant us a
                 non-exclusive, worldwide, royalty-free license to use, copy,
                 modify, and display that content. You are solely responsible for
                 your content and must comply with our Content Guidelines.
@@ -150,7 +150,7 @@ const TermsOfUse = () => {
               7. Privacy
             </h2>
             <p className={darkMode ? "text-gray-300" : "text-gray-600"}>
-              Your use of Video Game Otaku is also governed by our Privacy
+              Your use of Videogame Otaku is also governed by our Privacy
               Policy. By using our service, you consent to our collection and
               use of data as outlined in the Privacy Policy.
             </p>
