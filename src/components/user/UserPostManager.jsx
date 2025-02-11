@@ -97,7 +97,24 @@ const UserPostManager = ({ darkMode }) => {
     return () => clearInterval(timer);
   }, [cooldownEnd]);
 
-  // Add rate limit listener and track rejections
+  // Add this function after the uploadImage function
+  const clearExpiredBan = async (docRef) => {
+    try {
+      await updateDoc(docRef, {
+        bannedUntil: null,
+        recentRejections: 0,
+        lastRejectionTime: null,
+        count: 0,
+        resetTime: null,
+        lastPostTime: null,
+        lastPostStatus: null,
+      });
+    } catch (error) {
+      console.error("Error clearing expired ban:", error);
+    }
+  };
+
+  // Update the rate limit listener
   useEffect(() => {
     if (!user) return;
 
@@ -107,6 +124,30 @@ const UserPostManager = ({ darkMode }) => {
         if (doc.exists()) {
           const data = doc.data();
           const now = Date.now();
+
+          // Check and clear ban if expired
+          if (data.bannedUntil) {
+            if (now >= data.bannedUntil) {
+              // Ban has expired, clear it completely
+              await clearExpiredBan(doc.ref);
+              setIsRateLimited(false);
+              setRateLimitMessage("");
+              setCooldownEnd(null);
+              setRecentRejections(0);
+              return;
+            } else {
+              // User is still banned
+              const hoursLeft = Math.ceil(
+                (data.bannedUntil - now) / (1000 * 60 * 60)
+              );
+              setRateLimitMessage(
+                `You are temporarily banned from posting for ${hoursLeft} hours due to multiple rejected posts.`
+              );
+              setIsRateLimited(true);
+              setCooldownEnd(data.bannedUntil);
+              return;
+            }
+          }
 
           // Check if it's been 6 hours since last rejection and reset if needed
           if (data.lastRejectionTime && data.recentRejections > 0) {
@@ -121,25 +162,11 @@ const UserPostManager = ({ darkMode }) => {
                 lastRejectionTime: null,
               });
               setRecentRejections(0);
-              return;
             }
           }
 
           // Track recent rejections
           setRecentRejections(data.recentRejections || 0);
-
-          // Check if user is banned
-          if (data.bannedUntil && now < data.bannedUntil) {
-            const hoursLeft = Math.ceil(
-              (data.bannedUntil - now) / (1000 * 60 * 60)
-            );
-            setRateLimitMessage(
-              `You are temporarily banned from posting for ${hoursLeft} hours due to multiple rejected posts.`
-            );
-            setIsRateLimited(true);
-            setCooldownEnd(data.bannedUntil);
-            return;
-          }
 
           // Check cooldown periods
           if (data.lastPostTime) {
@@ -328,11 +355,24 @@ const UserPostManager = ({ darkMode }) => {
       return;
     }
 
+    if (currentPost.content.length < 10 || currentPost.content.length > 10000) {
+      setValidationError("Content must be between 10 and 10,000 characters");
+      return;
+    }
+
     if (
-      currentPost.content.length < 200 ||
-      currentPost.content.length > 10000
+      !currentPost.category ||
+      !["news", "review", "guide", "opinion"].includes(currentPost.category)
     ) {
-      setValidationError("Content must be between 200 and 10,000 characters");
+      setValidationError("Please select a valid category");
+      return;
+    }
+
+    if (
+      !Array.isArray(currentPost.platforms) ||
+      currentPost.platforms.length === 0
+    ) {
+      setValidationError("Please select at least one platform");
       return;
     }
 
@@ -363,14 +403,19 @@ const UserPostManager = ({ darkMode }) => {
         imageData = await uploadImage(imageFile);
       }
 
-      // Create the post document
+      // Create the post document with all required fields
       const postsCollection = collection(db, "posts");
       const newPost = {
-        ...currentPost,
+        title: currentPost.title,
+        content: currentPost.content,
+        category: currentPost.category,
+        platforms: Array.isArray(currentPost.platforms)
+          ? currentPost.platforms
+          : [],
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorEmail: user.email,
-        authorPhotoURL: user.photoURL,
+        authorPhotoURL: user.photoURL || null,
         imageUrl: imageData?.url || null,
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),
@@ -400,10 +445,11 @@ const UserPostManager = ({ darkMode }) => {
       });
       setImageFile(null);
       setImagePreview(null);
-      setIsUploading(false);
+      setValidationError(null);
     } catch (error) {
       console.error("Error creating post:", error);
       setValidationError(error.message);
+    } finally {
       setIsUploading(false);
     }
   };
