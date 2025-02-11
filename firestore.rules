@@ -164,16 +164,25 @@ service cloud.firestore {
 
     // Users collection rules
     match /users/{userId} {
-      // Users can read other users' basic info
-      allow read: if isSignedIn();
+      // Allow reading usernames for availability check and signed-in users
+      allow list: if true;  // Allow listing users for username checks
+      allow get: if isSignedIn();  // Require auth for getting specific user docs
+      
+      // Allow user creation during signup
+      allow create: if request.auth != null && 
+                   request.auth.uid == userId &&
+                   request.resource.data.keys().hasAll(['uid', 'email', 'name', 'role', 'isActive', 'createdAt', 'lastLogin']) &&
+                   request.resource.data.uid == userId &&
+                   request.resource.data.role == 'user' &&
+                   request.resource.data.isActive == true &&
+                   request.resource.data.createdAt is timestamp &&
+                   request.resource.data.lastLogin is timestamp;
       // Users can update their own data
-      allow write: if isSignedIn() && userId == request.auth.uid;
+      allow update: if isSignedIn() && userId == request.auth.uid;
       // Only admins can update other users' roles and status
       allow update: if isAdmin() && 
                    (request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['role', 'isActive']));
-      // Allow user creation during signup
-      allow create: if isSignedIn() && isOwner(userId);
       allow delete: if isAdmin();
     }
 

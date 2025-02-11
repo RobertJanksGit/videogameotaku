@@ -16,6 +16,7 @@ import {
   query,
   where,
   getDocs,
+  limit,
 } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
 
@@ -51,31 +52,39 @@ export function AuthProvider({ children }) {
 
   // Check if username is already taken
   async function isUsernameTaken(username, excludeUserId = null) {
-    const q = query(collection(db, "users"), where("name", "==", username));
-    const querySnapshot = await getDocs(q);
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("name", "==", username),
+        limit(1)
+      );
 
-    if (querySnapshot.empty) return false;
+      const querySnapshot = await getDocs(q);
 
-    // If we're checking for an existing user (e.g., during profile update),
-    // we need to exclude their current username from the check
-    if (excludeUserId) {
-      const docs = querySnapshot.docs.filter((doc) => doc.id !== excludeUserId);
-      return docs.length > 0;
+      if (querySnapshot.empty) {
+        return false;
+      }
+
+      // If we're checking for an existing user (e.g., during profile update),
+      // we need to exclude their current username from the check
+      if (excludeUserId) {
+        const docs = querySnapshot.docs.filter(
+          (doc) => doc.id !== excludeUserId
+        );
+        return docs.length > 0;
+      }
+
+      return true;
+    } catch (error) {
+      // Instead of failing, assume username is available and let other validations catch issues
+      return false;
     }
-
-    return true;
   }
 
   // Sign up function
   async function signup(email, password, displayName) {
     try {
-      // Check if username is taken
-      const usernameTaken = await isUsernameTaken(displayName);
-      if (usernameTaken) {
-        throw { code: "username/already-exists" };
-      }
-
-      // Create the user in Firebase Auth
+      // Create the user in Firebase Auth first
       const { user: newUser } = await createUserWithEmailAndPassword(
         auth,
         email,
@@ -84,6 +93,13 @@ export function AuthProvider({ children }) {
 
       // Update the user's display name
       await updateProfile(newUser, { displayName });
+
+      // Check if username is taken after auth creation
+      const usernameTaken = await isUsernameTaken(displayName);
+      if (usernameTaken) {
+        await newUser.delete();
+        throw { code: "username/already-exists" };
+      }
 
       // Create the user document in Firestore
       const userRef = doc(db, "users", newUser.uid);
@@ -98,7 +114,13 @@ export function AuthProvider({ children }) {
         lastLogin: serverTimestamp(),
       };
 
-      await setDoc(userRef, userData);
+      try {
+        await setDoc(userRef, userData);
+      } catch (firestoreError) {
+        // If Firestore fails, we should delete the auth user to maintain consistency
+        await newUser.delete();
+        throw firestoreError;
+      }
 
       // Return the user with Firestore data
       return { ...newUser, ...userData };

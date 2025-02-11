@@ -92,11 +92,6 @@ const PasswordInput = ({
               ? "Min. 8 characters with letters, numbers & symbols"
               : "Enter your password"
           }
-          pattern={
-            isRegistrationPassword
-              ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
-              : undefined
-          }
           title={
             isRegistrationPassword
               ? "Must contain at least 8 characters, including uppercase, lowercase, number and special character"

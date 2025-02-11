@@ -357,7 +357,7 @@ const PostManager = ({ darkMode }) => {
             Platforms
           </label>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            {["Nintendo", "Sony", "Microsoft", "PC"].map((platform) => (
+            {["Nintendo", "Sony", "Microsoft", "PC", "VR"].map((platform) => (
               <label
                 key={platform}
                 className={`flex items-center p-2 rounded-md cursor-pointer ${
