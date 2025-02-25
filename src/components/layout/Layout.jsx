@@ -264,7 +264,7 @@ const Layout = ({ children }) => {
               to="/"
               className="text-xl font-semibold text-white hover:text-gray-300 transition-colors"
             >
-              Videogame Otaku
+              VideoGameOtaku
             </Link>
             <nav className="flex items-center space-x-4">
               {user ? (

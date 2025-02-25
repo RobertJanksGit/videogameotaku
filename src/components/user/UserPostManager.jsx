@@ -608,42 +608,44 @@ const UserPostManager = ({ darkMode }) => {
             Platforms
           </label>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            {["Nintendo", "Sony", "Microsoft", "PC", "VR"].map((platform) => (
-              <label
-                key={platform}
-                className={`flex items-center p-2 rounded-md cursor-pointer ${
-                  darkMode
-                    ? currentPost.platforms.includes(platform)
-                      ? "bg-[#316DCA] text-white"
-                      : "bg-[#1C2128] text-gray-200 hover:bg-[#2D333B]"
-                    : currentPost.platforms.includes(platform)
-                    ? "bg-blue-500 text-white"
-                    : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="hidden"
-                  checked={currentPost.platforms.includes(platform)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setCurrentPost({
-                        ...currentPost,
-                        platforms: [...currentPost.platforms, platform],
-                      });
-                    } else {
-                      setCurrentPost({
-                        ...currentPost,
-                        platforms: currentPost.platforms.filter(
-                          (p) => p !== platform
-                        ),
-                      });
-                    }
-                  }}
-                />
-                <span className="ml-2">{platform}</span>
-              </label>
-            ))}
+            {["Nintendo", "Sony", "Microsoft", "PC", "VR", "Mobile"].map(
+              (platform) => (
+                <label
+                  key={platform}
+                  className={`flex items-center p-2 rounded-md cursor-pointer ${
+                    darkMode
+                      ? currentPost.platforms.includes(platform)
+                        ? "bg-[#316DCA] text-white"
+                        : "bg-[#1C2128] text-gray-200 hover:bg-[#2D333B]"
+                      : currentPost.platforms.includes(platform)
+                      ? "bg-blue-500 text-white"
+                      : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="hidden"
+                    checked={currentPost.platforms.includes(platform)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setCurrentPost({
+                          ...currentPost,
+                          platforms: [...currentPost.platforms, platform],
+                        });
+                      } else {
+                        setCurrentPost({
+                          ...currentPost,
+                          platforms: currentPost.platforms.filter(
+                            (p) => p !== platform
+                          ),
+                        });
+                      }
+                    }}
+                  />
+                  <span className="ml-2">{platform}</span>
+                </label>
+              )
+            )}
           </div>
           {currentPost.platforms.length === 0 && (
             <p

@@ -485,6 +485,8 @@ const HomePage = () => {
               <option value="Sony">Sony</option>
               <option value="Microsoft">Microsoft</option>
               <option value="PC">PC</option>
+              <option value="VR">VR</option>
+              <option value="Mobile">Mobile</option>
             </select>
             <select
               value={selectedCategory}
