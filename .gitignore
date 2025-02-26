@@ -14,6 +14,8 @@ dist-ssr
 
 # Environment Variables
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
@@ -24,6 +26,9 @@ dist-ssr
 firebase-debug.log
 firebase-debug.*.log
 src/config/firebase.js
+*-service-account.json
+.runtimeconfig.json
+firebase-adminsdk-*.json
 
 # Logs
 logs
@@ -59,3 +64,11 @@ lerna-debug.log*
 
 # Yarn Integrity file
 .yarn-integrity
+
+# Security and Secrets
+*.key
+*.pem
+*.cert
+*.password
+credentials.json
+secret.*
