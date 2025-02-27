@@ -357,7 +357,7 @@ const PostManager = ({ darkMode }) => {
             Platforms
           </label>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            {["Nintendo", "Sony", "Microsoft", "PC", "VR", "Mobile"].map(
+            {["Nintendo", "PlayStation", "Xbox", "PC", "VR", "Mobile"].map(
               (platform) => (
                 <label
                   key={platform}

@@ -482,8 +482,8 @@ const HomePage = () => {
             >
               <option value="all">All Platforms</option>
               <option value="Nintendo">Nintendo</option>
-              <option value="Sony">Sony</option>
-              <option value="Microsoft">Microsoft</option>
+              <option value="PlayStation">PlayStation</option>
+              <option value="Xbox">Xbox</option>
               <option value="PC">PC</option>
               <option value="VR">VR</option>
               <option value="Mobile">Mobile</option>

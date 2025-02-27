@@ -131,12 +131,10 @@ service cloud.firestore {
       // Allow authenticated users to create posts with valid data and rate limit
       allow create: if (isSignedIn() && 
                    isValidPostData(request.resource.data) && 
-                   request.resource.data.authorId == request.auth.uid &&
                    request.resource.data.status == 'pending' &&
                    isWithinRateLimit()) || 
                    (isAdmin() && 
-                   isValidPostData(request.resource.data) &&
-                   request.resource.data.authorId == request.auth.uid);
+                   isValidPostData(request.resource.data));
       // Only allow admins to update posts, or users to update vote counts
       allow update: if isAdmin() || 
                    (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
