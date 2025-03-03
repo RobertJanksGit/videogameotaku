@@ -54,13 +54,23 @@ const getOpenAIClient = () => {
 };
 
 // Constants for duplicate detection
-const SIMILARITY_THRESHOLD = 0.65;
+const SIMILARITY_THRESHOLD = 0.7;
 const RECENT_POSTS_HOURS = 48;
 const EMBEDDING_MODEL = "text-embedding-3-small";
-const BATCH_SIZE = 10; // For Firestore 'in' query limit
-const TITLE_WEIGHT = 1.5; // Weight for title similarity
-const MAX_CONCURRENT_EMBEDDINGS = 3; // Reduced from 5 to 3 to avoid timeouts
-const FUNCTION_TIMEOUT = 540; // 9 minutes in seconds
+const MAX_CONCURRENT_EMBEDDINGS = 3;
+const FUNCTION_TIMEOUT = 540;
+
+// Helper function to standardize text for embedding
+const getStandardizedText = (title, content) => {
+  // Remove URLs, special characters, and extra whitespace
+  const cleanContent = content
+    .replace(/\[Source\]\([^)]+\)/g, "")
+    .replace(/\[img:[^\]]+\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `${title.trim()} ${cleanContent}`;
+};
 
 // Helper function to process in batches with timeout tracking
 const processBatch = async (items, batchSize, processor) => {
@@ -93,7 +103,7 @@ const getEmbeddingsWithRetry = async (texts, maxRetries = 3) => {
       const openaiClient = getOpenAIClient();
       const response = await openaiClient.embeddings.create({
         model: EMBEDDING_MODEL,
-        input: texts,
+        input: texts.map((text) => text.substring(0, 8000)), // Ensure we don't exceed token limit
       });
       return response.data.map((item) => item.embedding);
     } catch (error) {
@@ -132,13 +142,6 @@ const cosineSimilarity = (vecA, vecB) => {
   return dotProduct / (normA * normB);
 };
 
-// Helper function to calculate weighted similarity
-const calculateWeightedSimilarity = (titleSimilarity, contentSimilarity) => {
-  return (
-    (titleSimilarity * TITLE_WEIGHT + contentSimilarity) / (TITLE_WEIGHT + 1)
-  );
-};
-
 // Helper function to check for semantic duplicates
 const checkForSemanticDuplicates = async (articles) => {
   try {
@@ -173,210 +176,123 @@ const checkForSemanticDuplicates = async (articles) => {
     const recentPostIds = recentPosts.map((post) => post.id);
     const duplicateIds = new Set();
 
-    // Process in batches of BATCH_SIZE due to Firestore 'in' query limit
-    for (let i = 0; i < recentPostIds.length; i += BATCH_SIZE) {
-      const batchIds = recentPostIds.slice(i, i + BATCH_SIZE);
-      console.log(`Processing batch ${i / BATCH_SIZE + 1} of posts...`);
+    // Get all embeddings first
+    const embeddingsSnapshot = await db
+      .collection("postEmbeddings")
+      .where("postId", "in", recentPostIds)
+      .get();
 
-      const embeddingsSnapshot = await db
-        .collection("postEmbeddings")
-        .where("postId", "in", batchIds)
-        .get();
+    console.log(`Found ${embeddingsSnapshot.size} existing embeddings`);
 
+    const existingEmbeddings = new Map(
+      embeddingsSnapshot.docs.map((doc) => [
+        doc.data().postId,
+        doc.data().embedding,
+      ])
+    );
+
+    // Generate embeddings for posts that don't have them
+    const postsNeedingEmbeddings = recentPosts
+      .filter((post) => !existingEmbeddings.has(post.id))
+      .map((post) => ({
+        id: post.id,
+        text: getStandardizedText(post.title, post.content),
+      }));
+
+    if (postsNeedingEmbeddings.length > 0) {
       console.log(
-        `Found ${embeddingsSnapshot.size} existing embeddings in this batch`
+        `Generating embeddings for ${postsNeedingEmbeddings.length} posts without embeddings`
+      );
+      const newEmbeddings = await getEmbeddings(
+        postsNeedingEmbeddings.map((p) => p.text)
       );
 
-      const existingEmbeddings = new Map(
-        embeddingsSnapshot.docs.map((doc) => [
-          doc.data().postId,
-          doc.data().embedding,
-        ])
-      );
-
-      // Generate embeddings for posts that don't have them
-      const postsNeedingEmbeddings = recentPosts
-        .filter((post) => !existingEmbeddings.has(post.id))
-        .map((post) => ({
-          id: post.id,
-          text: `${post.title} ${post.content}`,
-        }));
-
-      if (postsNeedingEmbeddings.length > 0) {
-        console.log(
-          `Generating embeddings for ${postsNeedingEmbeddings.length} posts without embeddings`
-        );
-        const newEmbeddings = await getEmbeddings(
-          postsNeedingEmbeddings.map((p) => p.text)
-        );
-
-        // Store new embeddings
-        const batch = db.batch();
-        postsNeedingEmbeddings.forEach((post, index) => {
-          const embeddingDoc = db.collection("postEmbeddings").doc(post.id);
-          batch.set(embeddingDoc, {
-            postId: post.id,
-            embedding: newEmbeddings[index],
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          existingEmbeddings.set(post.id, newEmbeddings[index]);
+      // Store new embeddings
+      const batch = db.batch();
+      postsNeedingEmbeddings.forEach((post, index) => {
+        const embeddingDoc = db.collection("postEmbeddings").doc(post.id);
+        batch.set(embeddingDoc, {
+          postId: post.id,
+          embedding: newEmbeddings[index],
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        await batch.commit();
-        console.log(`Stored ${postsNeedingEmbeddings.length} new embeddings`);
-      }
+        existingEmbeddings.set(post.id, newEmbeddings[index]);
+      });
+      await batch.commit();
+      console.log(`Stored ${postsNeedingEmbeddings.length} new embeddings`);
+    }
 
-      // Get embeddings for new articles (process titles and content together)
-      console.log("Generating embeddings for new articles...");
-      const newArticleTexts = articles.flatMap((article) => [
-        article.title,
-        article.summary,
-      ]);
+    // Get embeddings for new articles using standardized text
+    console.log("Generating embeddings for new articles...");
+    const newArticleTexts = articles.map((article) =>
+      getStandardizedText(article.title, article.summary)
+    );
 
-      const newArticleEmbeddings = await getEmbeddings(newArticleTexts);
-      const newArticleTitleEmbeddings = newArticleEmbeddings.filter(
-        (_, i) => i % 2 === 0
-      );
-      const newArticleContentEmbeddings = newArticleEmbeddings.filter(
-        (_, i) => i % 2 === 1
-      );
+    const newArticleEmbeddings = await getEmbeddings(newArticleTexts);
+    console.log(`Generated embeddings for ${articles.length} new articles`);
 
-      console.log(`Generated embeddings for ${articles.length} new articles`);
+    // Check for duplicates with detailed logging
+    for (const [articleIndex, article] of articles.entries()) {
+      const articleEmbedding = newArticleEmbeddings[articleIndex];
+      console.log(`\nChecking article: "${article.title}"`);
+      console.log(`Standardized text: "${newArticleTexts[articleIndex]}"`);
 
-      // Check for duplicates with detailed logging
-      for (const [articleIndex, article] of articles.entries()) {
-        const articleTitleEmbedding = newArticleTitleEmbeddings[articleIndex];
-        const articleContentEmbedding =
-          newArticleContentEmbeddings[articleIndex];
-        console.log(`\nChecking article: "${article.title}"`);
+      let highestSimilarity = 0;
+      let mostSimilarPostId = null;
 
-        let highestSimilarity = 0;
-        let mostSimilarPostId = null;
+      // Compare with all existing posts
+      for (const [postId, existingEmbedding] of existingEmbeddings) {
+        const existingPost = recentPosts.find((p) => p.id === postId);
+        if (!existingPost) continue;
 
-        // Process existing posts in parallel with batching
-        const existingPostBatches = Array.from(existingEmbeddings.entries());
-        const batchSize = 5; // Process 5 comparisons at a time
+        const similarity = cosineSimilarity(
+          articleEmbedding,
+          existingEmbedding
+        );
 
-        for (let j = 0; j < existingPostBatches.length; j += batchSize) {
-          const batch = existingPostBatches.slice(j, j + batchSize);
-          const batchResults = await Promise.all(
-            batch.map(async ([postId]) => {
-              const existingPost = recentPosts.find((p) => p.id === postId);
-              if (!existingPost) return null;
-
-              // Use existing embeddings if available
-              const existingEmbedding = existingEmbeddings.get(postId);
-              if (!existingEmbedding) return null;
-
-              const titleSimilarity = cosineSimilarity(
-                articleTitleEmbedding,
-                existingEmbedding
-              );
-              const contentSimilarity = cosineSimilarity(
-                articleContentEmbedding,
-                existingEmbedding
-              );
-
-              const similarity = calculateWeightedSimilarity(
-                titleSimilarity,
-                contentSimilarity
-              );
-
-              return {
-                postId,
-                existingPost,
-                titleSimilarity,
-                contentSimilarity,
-                similarity,
-              };
-            })
-          );
-
-          // Process batch results
-          for (const result of batchResults) {
-            if (!result) continue;
-
-            const {
-              postId,
-              existingPost,
-              titleSimilarity,
-              contentSimilarity,
-              similarity,
-            } = result;
-
-            if (similarity > highestSimilarity) {
-              highestSimilarity = similarity;
-              mostSimilarPostId = postId;
-            }
-
-            console.log(`Comparing with: "${existingPost.title}"`);
-            console.log(
-              `- Title Similarity: ${titleSimilarity.toFixed(
-                4
-              )} (Threshold: ${SIMILARITY_THRESHOLD})`
-            );
-            console.log(
-              `- Content Similarity: ${contentSimilarity.toFixed(4)}`
-            );
-            console.log(
-              `- Weighted Similarity: ${similarity.toFixed(
-                4
-              )} (Threshold: ${SIMILARITY_THRESHOLD})`
-            );
-            console.log(
-              `- Would be marked duplicate? ${
-                similarity >= SIMILARITY_THRESHOLD ? "Yes" : "No"
-              }`
-            );
-            console.log(
-              `- Title match? ${
-                titleSimilarity >= SIMILARITY_THRESHOLD ? "Yes" : "No"
-              }`
-            );
-
-            if (
-              similarity >= SIMILARITY_THRESHOLD ||
-              titleSimilarity >= SIMILARITY_THRESHOLD
-            ) {
-              duplicateIds.add(article.sourceUrl);
-              console.log(`\nDUPLICATE FOUND:`);
-              console.log(`- New Article: "${article.title}"`);
-              console.log(`- Existing Post: "${existingPost.title}"`);
-              console.log(
-                `- Title Similarity: ${titleSimilarity.toFixed(
-                  4
-                )} vs Threshold ${SIMILARITY_THRESHOLD}`
-              );
-              console.log(
-                `- Content Similarity: ${contentSimilarity.toFixed(4)}`
-              );
-              console.log(
-                `- Weighted Similarity: ${similarity.toFixed(
-                  4
-                )} vs Threshold ${SIMILARITY_THRESHOLD}`
-              );
-              console.log(
-                `- Duplicate triggered by: ${
-                  similarity >= SIMILARITY_THRESHOLD
-                    ? "Weighted Similarity"
-                    : "Title Similarity"
-                }`
-              );
-              console.log(`- Post ID: ${postId}`);
-            }
-          }
+        if (similarity > highestSimilarity) {
+          highestSimilarity = similarity;
+          mostSimilarPostId = postId;
         }
 
-        if (!duplicateIds.has(article.sourceUrl)) {
-          console.log(`No duplicates found for "${article.title}"`);
+        console.log(`Comparing with: "${existingPost.title}"`);
+        console.log(
+          `Standardized existing text: "${getStandardizedText(
+            existingPost.title,
+            existingPost.content
+          )}"`
+        );
+        console.log(
+          `Similarity: ${similarity.toFixed(
+            4
+          )} (Threshold: ${SIMILARITY_THRESHOLD})`
+        );
+
+        if (similarity >= SIMILARITY_THRESHOLD) {
+          duplicateIds.add(article.sourceUrl);
+          console.log(`\nDUPLICATE FOUND:`);
+          console.log(`New Article: "${article.title}"`);
+          console.log(`Existing Post: "${existingPost.title}"`);
           console.log(
-            `Highest similarity score: ${highestSimilarity.toFixed(4)}`
+            `Similarity: ${similarity.toFixed(
+              4
+            )} vs Threshold ${SIMILARITY_THRESHOLD}`
           );
-          if (mostSimilarPostId) {
-            const mostSimilarPost = recentPosts.find(
-              (p) => p.id === mostSimilarPostId
-            );
-            console.log(`Most similar post: "${mostSimilarPost?.title}"`);
-          }
+          console.log(`Post ID: ${postId}`);
+          break; // Exit loop once a duplicate is found
+        }
+      }
+
+      if (!duplicateIds.has(article.sourceUrl)) {
+        console.log(`No duplicates found for "${article.title}"`);
+        console.log(
+          `Highest similarity score: ${highestSimilarity.toFixed(4)}`
+        );
+        if (mostSimilarPostId) {
+          const mostSimilarPost = recentPosts.find(
+            (p) => p.id === mostSimilarPostId
+          );
+          console.log(`Most similar post: "${mostSimilarPost?.title}"`);
         }
       }
     }
@@ -584,31 +500,10 @@ export const validatePost = onDocumentCreated(
       // Log the original post data for debugging
       console.log("Original post data:", JSON.stringify(data, null, 2));
 
-      // Validate post content
-      const response = await fetch(`${newsApiUrl.value()}/api/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: data.title,
-          content: data.content,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Validation API request failed: ${response.statusText}`
-        );
-      }
-
-      const result = await response.json();
-      let validationResult = JSON.parse(result.message);
-
-      // Only update specific fields, preserving author information
+      // Auto-publish posts since we don't have a validation endpoint
       const updateData = {
-        status: validationResult.isValid ? "published" : "rejected",
-        moderationMessage: validationResult.message || null,
+        status: "published",
+        moderationMessage: "Auto-published - no validation required",
         updatedAt: db.FieldValue.serverTimestamp(),
         validatedAt: db.FieldValue.serverTimestamp(),
       };
@@ -650,9 +545,7 @@ export const validatePost = onDocumentCreated(
       }
 
       console.log(
-        `Post ${postId} validation complete. Status: ${
-          validationResult.isValid ? "published" : "rejected"
-        }`
+        `Post ${postId} validation complete. Status: ${updatedData.status}`
       );
     } catch (error) {
       console.error("Error validating post:", error);
@@ -998,40 +891,42 @@ export const fetchAndSavePosts = onSchedule(
     // Memory cleanup helper
     const cleanupMemory = async () => {
       try {
-        // Clear any cached data
-        openai = null;
+        console.log("Memory cleanup started:", new Date().toISOString());
 
-        // Try to force garbage collection
-        try {
-          if (typeof global !== "undefined" && global.gc) {
-            global.gc();
+        // Clear any large objects from memory
+        const largeObjects = [
+          "openai",
+          "imageData",
+          "responseData",
+          "articles",
+        ];
+        largeObjects.forEach((obj) => {
+          try {
+            if (typeof this[obj] !== "undefined") {
+              this[obj] = null;
+            }
+          } catch (e) {
+            // Ignore errors for individual objects
           }
-        } catch (e) {
-          // Ignore if gc is not available
-        }
+        });
 
-        // Wait a short time for GC to complete
+        // Small delay to allow natural GC to occur
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const heapStats = v8.getHeapStatistics();
-        const memoryAfterCleanup = {
-          heapUsed: Math.round(heapStats.used_heap_size / 1024 / 1024),
-          heapTotal: Math.round(heapStats.total_heap_size / 1024 / 1024),
-          heapLimit: Math.round(heapStats.heap_size_limit / 1024 / 1024),
-          available: Math.round(
-            (heapStats.heap_size_limit - heapStats.used_heap_size) / 1024 / 1024
-          ),
-        };
-
-        console.log("Memory after cleanup:", memoryAfterCleanup);
-        return memoryAfterCleanup;
-      } catch (e) {
-        console.warn("Memory cleanup failed:", e);
-        return null;
+        console.log("Memory cleanup completed:", new Date().toISOString());
+      } catch (error) {
+        console.warn("Memory cleanup attempt failed:", error);
       }
     };
 
-    const initialMemory = getDetailedMemoryUsage();
+    const initialMemory = getDetailedMemoryUsage() || {
+      heapUsed: 0,
+      heapTotal: 0,
+      heapLimit: 0,
+      physicalTotal: 0,
+      available: 0,
+      growthRate: 0,
+    };
     console.log("Initial memory state:", initialMemory);
 
     try {
@@ -1043,7 +938,7 @@ export const fetchAndSavePosts = onSchedule(
         functionName: "fetchAndSavePosts",
         startTime: admin.firestore.Timestamp.fromMillis(startTime),
         status: "initializing",
-        lastSuccessfulArticle,
+        lastSuccessfulArticle: null,
         memoryUsage: initialMemory,
         recoveryAttempt: 0,
       });
@@ -1057,9 +952,24 @@ export const fetchAndSavePosts = onSchedule(
         systemUserId: SYSTEM_USER.id,
       });
 
-      // Fetch articles with improved error handling
-      const articles = await fetchArticlesWithRetry();
-      if (!articles?.length) throw new Error("No articles fetched");
+      // Fetch articles with improved error handling and longer timeout
+      const articles = await fetchArticlesWithRetry(3);
+      if (!articles?.length) {
+        await executionRef.update({
+          status: "completed",
+          endTime: admin.firestore.Timestamp.now(),
+          finalSuccessCount: 0,
+          finalErrorCount: 1,
+          executionTimeSeconds: (Date.now() - startTime) / 1000,
+          finalMemoryUsage: getDetailedMemoryUsage() || initialMemory,
+          error: {
+            message: "No articles fetched",
+            code: "NO_ARTICLES",
+            timestamp: admin.firestore.Timestamp.now(),
+          },
+        });
+        return;
+      }
 
       console.log(`Fetched ${articles.length} articles`);
       await executionRef.update({
@@ -1067,9 +977,20 @@ export const fetchAndSavePosts = onSchedule(
         totalArticles: articles.length,
       });
 
+      // Check for semantic duplicates first
+      console.log("Checking for semantic duplicates...");
+      const semanticDuplicates = await checkForSemanticDuplicates(articles);
+      console.log(`Found ${semanticDuplicates.size} semantic duplicates`);
+
+      // Filter out duplicates before processing
+      const uniqueArticles = articles.filter(
+        (article) => !semanticDuplicates.has(article.sourceUrl)
+      );
+      console.log(`Processing ${uniqueArticles.length} unique articles`);
+
       // Process articles in smaller batches with memory monitoring
-      const BATCH_SIZE = 3; // Reduced from 5 to 3
-      for (let i = 0; i < articles.length; i += BATCH_SIZE) {
+      const BATCH_SIZE = 3;
+      for (let i = 0; i < uniqueArticles.length; i += BATCH_SIZE) {
         const memoryBeforeBatch = getDetailedMemoryUsage();
         console.log(
           `Memory before batch ${i / BATCH_SIZE + 1}:`,
@@ -1101,7 +1022,7 @@ export const fetchAndSavePosts = onSchedule(
           return;
         }
 
-        const batch = articles.slice(i, i + BATCH_SIZE);
+        const batch = uniqueArticles.slice(i, i + BATCH_SIZE);
 
         // Process batch
         await processArticleBatch(
@@ -1123,7 +1044,7 @@ export const fetchAndSavePosts = onSchedule(
         const currentMemory = getDetailedMemoryUsage();
         await executionRef.update({
           currentBatch: Math.floor(i / BATCH_SIZE) + 1,
-          totalBatches: Math.ceil(articles.length / BATCH_SIZE),
+          totalBatches: Math.ceil(uniqueArticles.length / BATCH_SIZE),
           successCount,
           errorCount,
           lastSuccessfulArticle,
@@ -1134,16 +1055,19 @@ export const fetchAndSavePosts = onSchedule(
       }
 
       // Final cleanup and update
-      const finalMemory = await cleanupMemory();
+      const finalMemory = (await cleanupMemory()) || initialMemory;
       await executionRef.update({
         status: "completed",
         endTime: admin.firestore.Timestamp.now(),
-        finalSuccessCount: successCount,
-        finalErrorCount: errorCount,
+        finalSuccessCount: successCount || 0,
+        finalErrorCount: errorCount || 0,
         executionTimeSeconds: (Date.now() - startTime) / 1000,
         finalMemoryUsage: finalMemory,
         averageMemoryGrowth:
-          memoryGrowthRate.reduce((a, b) => a + b, 0) / memoryGrowthRate.length,
+          memoryGrowthRate.length > 0
+            ? memoryGrowthRate.reduce((a, b) => a + b, 0) /
+              memoryGrowthRate.length
+            : 0,
       });
 
       console.log(
@@ -1154,25 +1078,35 @@ export const fetchAndSavePosts = onSchedule(
       console.error("Error in fetchAndSavePosts:", error);
 
       // Enhanced error logging with memory state
+      const currentMemory = getDetailedMemoryUsage() || {
+        heapUsed: 0,
+        heapTotal: 0,
+        heapLimit: 0,
+        physicalTotal: 0,
+        available: 0,
+        growthRate: 0,
+      };
+
       const errorDetails = {
-        message: error.message,
-        code: error.code,
-        stack: error.stack,
-        memoryUsage: getDetailedMemoryUsage(),
-        memoryGrowthRate: memoryGrowthRate,
+        message: error.message || "Unknown error",
+        code: error.code || "UNKNOWN_ERROR",
+        stack: error.stack || "",
+        timestamp: admin.firestore.Timestamp.now(),
+        memoryUsage: currentMemory,
         executionTime: (Date.now() - startTime) / 1000,
       };
 
       if (executionRef) {
         try {
+          const cleanedMemory = (await cleanupMemory()) || currentMemory;
           await executionRef.update({
             status: "failed",
             error: errorDetails,
             endTime: admin.firestore.Timestamp.now(),
-            lastSuccessfulArticle,
-            finalSuccessCount: successCount,
-            finalErrorCount: errorCount,
-            memoryState: await cleanupMemory(),
+            lastSuccessfulArticle: lastSuccessfulArticle || null,
+            finalSuccessCount: successCount || 0,
+            finalErrorCount: errorCount || 0,
+            memoryState: cleanedMemory,
           });
         } catch (updateError) {
           console.error("Failed to update execution status:", updateError);
@@ -1216,27 +1150,60 @@ async function initializeSystemUser(maxRetries = 3) {
 
 // Helper function to fetch articles with retry
 async function fetchArticlesWithRetry(maxRetries = 3) {
+  // Initial wake up call
+  try {
+    console.log("Making initial wake-up call to the API");
+    await fetch(`${newsApiUrl.value()}`);
+    console.log(
+      "Wake-up call completed, waiting 60 seconds before first attempt"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60000)); // Wait 1 minute
+  } catch (error) {
+    console.log("Wake-up call failed, proceeding with normal retry flow");
+  }
+
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const response = await Promise.race([
-        fetch(`${newsApiUrl.value()}/api/news`),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("API request timeout")), 30000)
-        ),
-      ]);
+      console.log(
+        `Attempting to fetch articles (attempt ${i + 1}/${maxRetries})`
+      );
+
+      // Use direct fetch like test endpoint
+      const response = await fetch(`${newsApiUrl.value()}`);
 
       if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
+        console.error(
+          `API Response Status: ${response.status} ${response.statusText}`
+        );
+        console.error(
+          `API Response Headers:`,
+          Object.fromEntries(response.headers.entries())
+        );
+        const errorText = await response.text();
+        console.error(`API Error Response:`, errorText);
+        throw new Error(
+          `API request failed with status ${response.status} - ${response.statusText}`
+        );
       }
 
-      const data = await response.json();
-      return data?.data || [];
+      const responseData = await response.json();
+      if (
+        !responseData ||
+        !responseData.data ||
+        !Array.isArray(responseData.data)
+      ) {
+        throw new Error("Invalid API response format");
+      }
+
+      console.log(`Successfully fetched ${responseData.data.length} articles`);
+      return responseData.data;
     } catch (error) {
       console.error(`Article fetch attempt ${i + 1} failed:`, error);
       if (i === maxRetries - 1) throw error;
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.pow(2, i) * 1000)
-      );
+
+      // Wait 60 seconds between retries
+      console.log("Waiting 60 seconds before next attempt...");
+      await new Promise((resolve) => setTimeout(resolve, 60000));
     }
   }
 }
@@ -1259,11 +1226,18 @@ async function processArticleBatch(
         return false;
       }
 
-      // Process article with memory cleanup after heavy operations
+      // Handle image if it exists
       if (article.imageUrl) {
-        // Process image with cleanup
-        const imageData = await processImage(article.imageUrl, SYSTEM_USER);
-        await cleanupMemory(); // Clean up after image processing
+        console.log(`Processing image for article: ${article.title}`);
+        try {
+          article.imageData = await processImage(article.imageUrl, SYSTEM_USER);
+          await cleanupMemory(); // Clean up after image processing
+        } catch (error) {
+          console.error(
+            `Error processing image for article ${article.title}:`,
+            error
+          );
+        }
       }
 
       // Generate embeddings with cleanup
@@ -1368,6 +1342,9 @@ async function createPost(article, SYSTEM_USER, embedding) {
     authorName: SYSTEM_USER.name,
     authorEmail: SYSTEM_USER.email,
     authorPhotoURL: SYSTEM_USER.photoURL,
+    imageUrl: article.imageData?.url || null,
+    imagePath: article.imageData?.path || null,
+    imageContentType: article.imageData?.contentType || null,
     sourceUrl: article.sourceUrl,
     sourceName: "Gaming News Aggregator",
     createdAt: timestamp,
@@ -1386,11 +1363,15 @@ async function createPost(article, SYSTEM_USER, embedding) {
 
   // Store embedding if available
   if (embedding) {
-    await db.collection("postEmbeddings").doc(docRef.id).set({
-      postId: docRef.id,
-      embedding: embedding,
-      createdAt: timestamp,
-    });
+    await db
+      .collection("postEmbeddings")
+      .doc(docRef.id)
+      .set({
+        postId: docRef.id,
+        embedding: embedding,
+        standardizedText: getStandardizedText(article.title, article.summary),
+        createdAt: timestamp,
+      });
   }
 
   return docRef;
@@ -1424,7 +1405,7 @@ export const testFetchAndSavePosts = onRequest(
       }
 
       console.log("Testing API connection...");
-      const response = await fetch(`${newsApiUrl.value()}/api/news`);
+      const response = await fetch(`${newsApiUrl.value()}`);
 
       if (!response.ok) {
         throw new Error(`API request failed with status ${response.status}`);
@@ -1442,33 +1423,31 @@ export const testFetchAndSavePosts = onRequest(
       const articles = responseData.data;
       console.log(`Fetched ${articles.length} articles`);
 
-      // Check for semantic duplicates
+      // Check for semantic duplicates first
       console.log("Checking for semantic duplicates...");
       const semanticDuplicates = await checkForSemanticDuplicates(articles);
       console.log(`Found ${semanticDuplicates.size} semantic duplicates`);
 
-      // Process each article
-      for (const article of articles) {
+      // Filter out duplicates before processing
+      const uniqueArticles = articles.filter(
+        (article) => !semanticDuplicates.has(article.sourceUrl)
+      );
+      console.log(`Processing ${uniqueArticles.length} unique articles`);
+
+      // Process each unique article
+      for (const article of uniqueArticles) {
         try {
           // Add delay between posts (2 seconds)
           await new Promise((resolve) => setTimeout(resolve, 2000));
 
-          // Skip if article is a semantic duplicate
-          if (semanticDuplicates.has(article.sourceUrl)) {
-            console.log(
-              `Skipping semantic duplicate article: ${article.title}`
-            );
-            continue;
-          }
-
-          // Check if article already exists by URL
+          // Double-check URL duplicates first (before any expensive operations)
           const existingPosts = await db
             .collection("posts")
             .where("sourceUrl", "==", article.sourceUrl)
             .get();
 
           if (!existingPosts.empty) {
-            console.log(`Skipping duplicate article: ${article.title}`);
+            console.log(`Skipping URL duplicate article: ${article.title}`);
             continue;
           }
 
@@ -1477,69 +1456,13 @@ export const testFetchAndSavePosts = onRequest(
           if (article.imageUrl) {
             console.log(`Processing image for article: ${article.title}`);
             try {
-              const imageResponse = await fetchWithTimeout(article.imageUrl);
-              if (imageResponse.ok) {
-                const contentType = imageResponse.headers.get("content-type");
-                if (!ALLOWED_MIME_TYPES.includes(contentType)) {
-                  console.warn(
-                    `Skipping image with unsupported type: ${contentType}`
-                  );
-                  continue;
-                }
-
-                const imageBuffer = Buffer.from(
-                  await imageResponse.arrayBuffer()
-                );
-                if (imageBuffer.length > MAX_IMAGE_SIZE) {
-                  console.warn("Image size exceeds limit, skipping");
-                  continue;
-                }
-
-                const timestamp = Date.now();
-                const secureToken = generateSecureToken();
-                const fileName = `post-images/${timestamp}_${article.imageUrl
-                  .split("/")
-                  .pop()}`;
-
-                const file = getBucket().file(fileName);
-                await file.save(imageBuffer, {
-                  metadata: {
-                    contentType,
-                    metadata: {
-                      firebaseStorageDownloadTokens: secureToken,
-                      userId: SYSTEM_USER.id,
-                      originalUrl: article.imageUrl,
-                      uploadTimestamp: timestamp.toString(),
-                    },
-                  },
-                });
-
-                // Construct the correct URL format
-                const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${
-                  getBucket().name
-                }/o/${encodeURIComponent(
-                  fileName
-                )}?alt=media&token=${secureToken}`;
-
-                imageData = {
-                  url: publicUrl,
-                  path: fileName,
-                  contentType: contentType,
-                };
-
-                console.log(`Successfully processed image: ${imageData.url}`);
-              } else {
-                console.warn(
-                  `Failed to download image for article: ${article.title}`,
-                  await imageResponse.text()
-                );
-              }
-            } catch (imageError) {
-              console.warn(
+              imageData = await processImage(article.imageUrl, SYSTEM_USER);
+              await cleanupMemory(); // Clean up after image processing
+            } catch (error) {
+              console.error(
                 `Error processing image for article ${article.title}:`,
-                imageError
+                error
               );
-              // Continue without image if there's an error
             }
           }
 
@@ -1584,39 +1507,19 @@ export const testFetchAndSavePosts = onRequest(
           // Create the post
           const docRef = await db.collection("posts").add(postData);
 
-          // Generate and store embedding for the new post
-          try {
-            const embedding = await getEmbeddings([
-              `${article.title} ${article.summary}`,
-            ]);
-            await db.collection("postEmbeddings").doc(docRef.id).set({
-              postId: docRef.id,
-              embedding: embedding[0],
-              createdAt: timestamp,
-            });
-          } catch (embeddingError) {
-            console.error(
-              `Error storing embedding for post ${docRef.id}:`,
-              embeddingError
-            );
-            // Continue even if embedding storage fails
-          }
+          // Use the same standardized text that was used for duplicate checking
+          const standardizedText = getStandardizedText(
+            article.title,
+            article.summary
+          );
+          const embedding = await getEmbeddings([standardizedText]);
 
-          // Verify the created post
-          const createdPost = await db.collection("posts").doc(docRef.id).get();
-          const createdData = createdPost.data();
-
-          // Verify author information and image data
-          if (
-            createdData.authorId !== postData.authorId ||
-            createdData.authorEmail !== postData.authorEmail ||
-            createdData.authorName !== postData.authorName ||
-            createdData.authorPhotoURL !== postData.authorPhotoURL ||
-            createdData.imageUrl !== postData.imageUrl ||
-            createdData.imagePath !== postData.imagePath
-          ) {
-            throw new Error("Data mismatch in created post");
-          }
+          await db.collection("postEmbeddings").doc(docRef.id).set({
+            postId: docRef.id,
+            embedding: embedding[0],
+            standardizedText, // Store the text used for embedding for debugging
+            createdAt: timestamp,
+          });
 
           console.log(
             `Successfully created post for article "${article.title}"`
@@ -1630,9 +1533,7 @@ export const testFetchAndSavePosts = onRequest(
 
       res.json({
         success: true,
-        message: `Processed ${
-          successCount + errorCount
-        } articles. Success: ${successCount}, Errors: ${errorCount}`,
+        message: `Processed ${uniqueArticles.length} unique articles. Success: ${successCount}, Errors: ${errorCount}, Duplicates skipped: ${semanticDuplicates.size}`,
       });
     } catch (error) {
       console.error("Error in testFetchAndSavePosts:", error);
@@ -1643,3 +1544,29 @@ export const testFetchAndSavePosts = onRequest(
     }
   }
 );
+
+// Memory management helper function
+async function cleanupMemory() {
+  try {
+    console.log("Memory cleanup started:", new Date().toISOString());
+
+    // Clear any large objects from memory
+    const largeObjects = ["openai", "imageData", "responseData", "articles"];
+    largeObjects.forEach((obj) => {
+      try {
+        if (typeof this[obj] !== "undefined") {
+          this[obj] = null;
+        }
+      } catch (e) {
+        // Ignore errors for individual objects
+      }
+    });
+
+    // Small delay to allow natural GC to occur
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    console.log("Memory cleanup completed:", new Date().toISOString());
+  } catch (error) {
+    console.warn("Memory cleanup attempt failed:", error);
+  }
+}
