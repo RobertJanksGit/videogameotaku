@@ -313,7 +313,12 @@ const checkForSemanticDuplicates = async (articles) => {
 
 // Security Constants
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+];
 const SECURE_TOKEN_LENGTH = 32;
 
 // System user configuration
@@ -1226,28 +1231,44 @@ async function processArticleBatch(
         return false;
       }
 
-      // Handle image if it exists
-      if (article.imageUrl) {
-        console.log(`Processing image for article: ${article.title}`);
-        try {
-          article.imageData = await processImage(article.imageUrl, SYSTEM_USER);
-          await cleanupMemory(); // Clean up after image processing
-        } catch (error) {
-          console.error(
-            `Error processing image for article ${article.title}:`,
-            error
-          );
-        }
+      // Skip articles without images
+      if (!article.imageUrl) {
+        console.log(`Skipping article without image: ${article.title}`);
+        onError();
+        continue;
+      }
+
+      // Process image
+      console.log(`Processing image for article: ${article.title}`);
+      try {
+        article.imageData = await processImage(article.imageUrl, SYSTEM_USER);
+        await cleanupMemory(); // Clean up after image processing
+      } catch (error) {
+        console.error(
+          `Error processing image for article ${article.title}:`,
+          error
+        );
+        console.log(
+          `Skipping article due to image processing failure: ${article.title}`
+        );
+        onError();
+        continue; // Skip this article and move to the next one
       }
 
       // Generate embeddings with cleanup
       const embedding = await generateEmbedding(article);
       await cleanupMemory(); // Clean up after embedding generation
 
-      // Create post
-      await createPost(article, SYSTEM_USER, embedding);
-
-      onSuccess(article);
+      // Create post only if we have valid image data
+      if (article.imageData) {
+        await createPost(article, SYSTEM_USER, embedding);
+        onSuccess(article);
+      } else {
+        console.log(
+          `Skipping article creation due to missing image data: ${article.title}`
+        );
+        onError();
+      }
     } catch (error) {
       console.error(`Error processing article: ${article.title}`, error);
       onError();
@@ -1259,22 +1280,44 @@ async function processArticleBatch(
 // Helper functions for article processing
 async function processImage(imageUrl, SYSTEM_USER) {
   try {
+    console.log(`Starting image processing for URL: ${imageUrl}`);
+
     const imageResponse = await fetchWithTimeout(imageUrl);
     if (!imageResponse.ok) {
-      console.warn(`Failed to download image from ${imageUrl}`);
-      return null;
+      const errorDetails = {
+        status: imageResponse.status,
+        statusText: imageResponse.statusText,
+        headers: Object.fromEntries(imageResponse.headers.entries()),
+      };
+      console.error(
+        `Failed to download image from ${imageUrl}. Details:`,
+        errorDetails
+      );
+      throw new Error(
+        `Image download failed: ${imageResponse.status} ${imageResponse.statusText}`
+      );
     }
 
     const contentType = imageResponse.headers.get("content-type");
+    console.log(`Image content type: ${contentType}`);
+
     if (!ALLOWED_MIME_TYPES.includes(contentType)) {
-      console.warn(`Skipping image with unsupported type: ${contentType}`);
-      return null;
+      console.error(
+        `Unsupported image type: ${contentType}. Allowed types: ${ALLOWED_MIME_TYPES.join(
+          ", "
+        )}`
+      );
+      throw new Error(`Unsupported image type: ${contentType}`);
     }
 
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+    console.log(`Image size: ${imageBuffer.length} bytes`);
+
     if (imageBuffer.length > MAX_IMAGE_SIZE) {
-      console.warn("Image size exceeds limit, skipping");
-      return null;
+      console.error(
+        `Image size (${imageBuffer.length} bytes) exceeds limit of ${MAX_IMAGE_SIZE} bytes`
+      );
+      throw new Error(`Image size exceeds limit of ${MAX_IMAGE_SIZE} bytes`);
     }
 
     const timestamp = Date.now();
@@ -1294,6 +1337,8 @@ async function processImage(imageUrl, SYSTEM_USER) {
       },
     });
 
+    console.log(`Successfully processed and stored image: ${fileName}`);
+
     return {
       url: `https://firebasestorage.googleapis.com/v0/b/${
         getBucket().name
@@ -1303,7 +1348,7 @@ async function processImage(imageUrl, SYSTEM_USER) {
     };
   } catch (error) {
     console.error("Error processing image:", error);
-    return null;
+    throw error; // Re-throw the error to be handled by the caller
   }
 }
 
