@@ -466,15 +466,16 @@ const HomePage = () => {
 
       {/* Latest Posts Section */}
       <section className="w-full">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col space-y-4 mb-6">
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
             Latest Posts
           </h2>
-          <div className="flex space-x-4">
+          {/* Mobile-optimized filters */}
+          <div className="flex flex-col sm:flex-row gap-4">
             <select
               value={selectedPlatform}
               onChange={(e) => setSelectedPlatform(e.target.value)}
-              className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+              className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
                 darkMode
                   ? "bg-[#1C2128] border-gray-700 text-white"
                   : "border-gray-300"
@@ -491,7 +492,7 @@ const HomePage = () => {
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className={`rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+              className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
                 darkMode
                   ? "bg-[#1C2128] border-gray-700 text-white"
                   : "border-gray-300"
@@ -517,52 +518,52 @@ const HomePage = () => {
               } shadow-lg border cursor-pointer transition-transform hover:scale-[1.01]`}
             >
               {post.imageUrl && (
-                <div className="aspect-w-16 aspect-h-9">
+                <div className="w-full h-64">
                   <img
                     src={post.imageUrl}
                     alt={post.title}
-                    className="w-full h-64 object-cover"
+                    className="w-full h-full object-cover object-top"
                   />
                 </div>
               )}
               <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center space-x-2">
+                <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {/* Platform tags */}
+                    {(Array.isArray(post.platforms)
+                      ? post.platforms
+                      : [post.platform]
+                    ).map((platform) => (
                       <span
-                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                        key={platform}
+                        className={`inline-block px-3 py-1 text-sm font-semibold rounded-full ${
                           darkMode
                             ? "bg-gray-700 text-gray-300"
                             : "bg-gray-100 text-gray-600"
                         }`}
                       >
-                        {post.category}
+                        {platform}
                       </span>
-                      <div className="flex flex-wrap gap-1">
-                        {(Array.isArray(post.platforms)
-                          ? post.platforms
-                          : [post.platform]
-                        ).map((platform) => (
-                          <span
-                            key={platform}
-                            className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                              darkMode
-                                ? "bg-gray-700 text-gray-300"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
-                            {platform}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    {renderVoteButtons(post)}
+                    ))}
+                    {/* Category tag */}
+                    <span
+                      className={`inline-block px-3 py-1 text-sm font-semibold rounded-full ${
+                        darkMode
+                          ? "bg-gray-700 text-gray-300"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {post.category}
+                    </span>
                   </div>
-                  <ShareButtons
-                    url={`${window.location.origin}/post/${post.id}`}
-                    title={post.title}
-                    darkMode={darkMode}
-                  />
+                  <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
+                    {renderVoteButtons(post)}
+                    <ShareButtons
+                      url={`${window.location.origin}/post/${post.id}`}
+                      title={post.title}
+                      darkMode={darkMode}
+                    />
+                  </div>
                 </div>
                 <h3
                   className={`text-2xl font-bold mb-4 ${
