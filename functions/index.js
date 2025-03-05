@@ -13,6 +13,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
   onDocumentUpdated,
+  onDocumentWritten,
 } from "firebase-functions/v2/firestore";
 import fetch from "node-fetch";
 import { defineInt, defineSecret } from "firebase-functions/params";
@@ -55,21 +56,33 @@ const getOpenAIClient = () => {
 
 // Constants for duplicate detection
 const SIMILARITY_THRESHOLD = 0.7;
-const RECENT_POSTS_HOURS = 48;
+const RECENT_POSTS_HOURS = 96;
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const MAX_CONCURRENT_EMBEDDINGS = 3;
 const FUNCTION_TIMEOUT = 540;
 
 // Helper function to standardize text for embedding
 const getStandardizedText = (title, content) => {
+  // Normalize text to lowercase
+  const normalizedTitle = title.toLowerCase();
+  const normalizedContent = content.toLowerCase();
+
   // Remove URLs, special characters, and extra whitespace
-  const cleanContent = content
-    .replace(/\[Source\]\([^)]+\)/g, "")
-    .replace(/\[img:[^\]]+\]/g, "")
+  const cleanContent = normalizedContent
+    .replace(/\[Source\]\([^)]+\)/g, "") // Remove source links
+    .replace(/\[img:[^\]]+\]/g, "") // Remove image tags
+    .replace(/https?:\/\/\S+/g, "") // Remove URLs
+    .replace(/[^\w\s-]/g, " ") // Replace special chars with space
+    .replace(/\s+/g, " ") // Normalize whitespace
+    .trim();
+
+  const cleanTitle = normalizedTitle
+    .replace(/[^\w\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  return `${title.trim()} ${cleanContent}`;
+  // Combine title and content with more weight on the title
+  return `${cleanTitle} ${cleanTitle} ${cleanContent}`;
 };
 
 // Helper function to process in batches with timeout tracking
@@ -145,6 +158,14 @@ const cosineSimilarity = (vecA, vecB) => {
 // Helper function to check for semantic duplicates
 const checkForSemanticDuplicates = async (articles) => {
   try {
+    console.log(
+      "Starting semantic duplicate check for articles:",
+      articles.map((a) => ({
+        title: a.title,
+        url: a.sourceUrl,
+      }))
+    );
+
     // Get recent posts from the last 48 hours
     const cutoffTime = admin.firestore.Timestamp.fromMillis(
       Date.now() - RECENT_POSTS_HOURS * 60 * 60 * 1000
@@ -161,7 +182,9 @@ const checkForSemanticDuplicates = async (articles) => {
     }
 
     console.log(
-      `Found ${recentPostsSnapshot.size} recent posts for comparison`
+      `Found ${
+        recentPostsSnapshot.size
+      } recent posts for comparison. Cutoff time: ${cutoffTime.toDate()}`
     );
 
     // Get embeddings for recent posts
@@ -172,127 +195,108 @@ const checkForSemanticDuplicates = async (articles) => {
       ...doc.data(),
     }));
 
-    // Get embeddings for recent posts from postEmbeddings collection
-    const recentPostIds = recentPosts.map((post) => post.id);
+    console.log(
+      "Recent posts for comparison:",
+      recentPosts.map((p) => ({ id: p.id, title: p.title }))
+    );
+
+    // Process embeddings in batches of 25 to stay under the 30-item limit
+    const BATCH_SIZE = 25;
     const duplicateIds = new Set();
 
-    // Get all embeddings first
-    const embeddingsSnapshot = await db
-      .collection("postEmbeddings")
-      .where("postId", "in", recentPostIds)
-      .get();
+    for (let i = 0; i < recentPosts.length; i += BATCH_SIZE) {
+      const batchPosts = recentPosts.slice(i, i + BATCH_SIZE);
+      const batchIds = batchPosts.map((post) => post.id);
 
-    console.log(`Found ${embeddingsSnapshot.size} existing embeddings`);
+      // Get embeddings for this batch
+      const embeddingsSnapshot = await db
+        .collection("postEmbeddings")
+        .where("postId", "in", batchIds)
+        .get();
 
-    const existingEmbeddings = new Map(
-      embeddingsSnapshot.docs.map((doc) => [
-        doc.data().postId,
-        doc.data().embedding,
-      ])
-    );
-
-    // Generate embeddings for posts that don't have them
-    const postsNeedingEmbeddings = recentPosts
-      .filter((post) => !existingEmbeddings.has(post.id))
-      .map((post) => ({
-        id: post.id,
-        text: getStandardizedText(post.title, post.content),
-      }));
-
-    if (postsNeedingEmbeddings.length > 0) {
       console.log(
-        `Generating embeddings for ${postsNeedingEmbeddings.length} posts without embeddings`
+        `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}, found ${
+          embeddingsSnapshot.size
+        } embeddings`
       );
-      const newEmbeddings = await getEmbeddings(
-        postsNeedingEmbeddings.map((p) => p.text)
+
+      const batchEmbeddings = new Map(
+        embeddingsSnapshot.docs.map((doc) => [
+          doc.data().postId,
+          doc.data().embedding,
+        ])
       );
 
-      // Store new embeddings
-      const batch = db.batch();
-      postsNeedingEmbeddings.forEach((post, index) => {
-        const embeddingDoc = db.collection("postEmbeddings").doc(post.id);
-        batch.set(embeddingDoc, {
-          postId: post.id,
-          embedding: newEmbeddings[index],
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        existingEmbeddings.set(post.id, newEmbeddings[index]);
-      });
-      await batch.commit();
-      console.log(`Stored ${postsNeedingEmbeddings.length} new embeddings`);
-    }
+      // Check each article against this batch of embeddings
+      for (const article of articles) {
+        if (duplicateIds.has(article.sourceUrl)) continue;
 
-    // Get embeddings for new articles using standardized text
-    console.log("Generating embeddings for new articles...");
-    const newArticleTexts = articles.map((article) =>
-      getStandardizedText(article.title, article.summary)
-    );
+        const articleText = getStandardizedText(article.title, article.summary);
+        const articleEmbedding = (await getEmbeddings([articleText]))[0];
 
-    const newArticleEmbeddings = await getEmbeddings(newArticleTexts);
-    console.log(`Generated embeddings for ${articles.length} new articles`);
+        let highestSimilarity = 0;
+        let mostSimilarPostId = null;
+        let mostSimilarTitle = null;
 
-    // Check for duplicates with detailed logging
-    for (const [articleIndex, article] of articles.entries()) {
-      const articleEmbedding = newArticleEmbeddings[articleIndex];
-      console.log(`\nChecking article: "${article.title}"`);
-      console.log(`Standardized text: "${newArticleTexts[articleIndex]}"`);
+        // Compare with embeddings in this batch
+        for (const [postId, existingEmbedding] of batchEmbeddings) {
+          const existingPost = batchPosts.find((p) => p.id === postId);
+          if (!existingPost) continue;
 
-      let highestSimilarity = 0;
-      let mostSimilarPostId = null;
+          const similarity = cosineSimilarity(
+            articleEmbedding,
+            existingEmbedding
+          );
 
-      // Compare with all existing posts
-      for (const [postId, existingEmbedding] of existingEmbeddings) {
-        const existingPost = recentPosts.find((p) => p.id === postId);
-        if (!existingPost) continue;
+          if (similarity > highestSimilarity) {
+            highestSimilarity = similarity;
+            mostSimilarPostId = postId;
+            mostSimilarTitle = existingPost.title;
+          }
 
-        const similarity = cosineSimilarity(
-          articleEmbedding,
-          existingEmbedding
-        );
+          // Log all high similarity scores (even if below threshold)
+          if (similarity >= 0.5) {
+            console.log(`High similarity detected (${similarity.toFixed(4)}):`);
+            console.log(`New Article: "${article.title}"`);
+            console.log(`Existing Post: "${existingPost.title}"`);
+            console.log(`Post ID: ${postId}`);
+            console.log(
+              `Standardized new text: "${getStandardizedText(
+                article.title,
+                article.summary
+              )}"`
+            );
+            console.log(
+              `Standardized existing text: "${getStandardizedText(
+                existingPost.title,
+                existingPost.content
+              )}"`
+            );
+          }
 
-        if (similarity > highestSimilarity) {
-          highestSimilarity = similarity;
-          mostSimilarPostId = postId;
+          if (similarity >= SIMILARITY_THRESHOLD) {
+            console.log(`\nDUPLICATE FOUND (${similarity.toFixed(4)}):`);
+            console.log(`New Article: "${article.title}"`);
+            console.log(`Existing Post: "${existingPost.title}"`);
+            console.log(`Post ID: ${postId}`);
+            duplicateIds.add(article.sourceUrl);
+            break;
+          }
         }
 
-        console.log(`Comparing with: "${existingPost.title}"`);
-        console.log(
-          `Standardized existing text: "${getStandardizedText(
-            existingPost.title,
-            existingPost.content
-          )}"`
-        );
-        console.log(
-          `Similarity: ${similarity.toFixed(
-            4
-          )} (Threshold: ${SIMILARITY_THRESHOLD})`
-        );
-
-        if (similarity >= SIMILARITY_THRESHOLD) {
-          duplicateIds.add(article.sourceUrl);
-          console.log(`\nDUPLICATE FOUND:`);
-          console.log(`New Article: "${article.title}"`);
-          console.log(`Existing Post: "${existingPost.title}"`);
+        if (!duplicateIds.has(article.sourceUrl)) {
           console.log(
-            `Similarity: ${similarity.toFixed(
-              4
-            )} vs Threshold ${SIMILARITY_THRESHOLD}`
+            `Batch ${
+              Math.floor(i / BATCH_SIZE) + 1
+            } - No duplicates found for "${article.title}"`
           );
-          console.log(`Post ID: ${postId}`);
-          break; // Exit loop once a duplicate is found
-        }
-      }
-
-      if (!duplicateIds.has(article.sourceUrl)) {
-        console.log(`No duplicates found for "${article.title}"`);
-        console.log(
-          `Highest similarity score: ${highestSimilarity.toFixed(4)}`
-        );
-        if (mostSimilarPostId) {
-          const mostSimilarPost = recentPosts.find(
-            (p) => p.id === mostSimilarPostId
-          );
-          console.log(`Most similar post: "${mostSimilarPost?.title}"`);
+          if (mostSimilarTitle) {
+            console.log(
+              `Highest similarity in this batch: ${highestSimilarity.toFixed(
+                4
+              )} with "${mostSimilarTitle}" (${mostSimilarPostId})`
+            );
+          }
         }
       }
     }
@@ -303,6 +307,7 @@ const checkForSemanticDuplicates = async (articles) => {
     console.log(
       `Articles to be posted: ${articles.length - duplicateIds.size}`
     );
+    console.log(`Duplicate URLs:`, Array.from(duplicateIds));
 
     return duplicateIds;
   } catch (error) {
@@ -1485,17 +1490,6 @@ export const testFetchAndSavePosts = onRequest(
           // Add delay between posts (2 seconds)
           await new Promise((resolve) => setTimeout(resolve, 2000));
 
-          // Double-check URL duplicates first (before any expensive operations)
-          const existingPosts = await db
-            .collection("posts")
-            .where("sourceUrl", "==", article.sourceUrl)
-            .get();
-
-          if (!existingPosts.empty) {
-            console.log(`Skipping URL duplicate article: ${article.title}`);
-            continue;
-          }
-
           // Handle image if it exists
           let imageData = null;
           if (article.imageUrl) {
@@ -1615,3 +1609,295 @@ async function cleanupMemory() {
     console.warn("Memory cleanup attempt failed:", error);
   }
 }
+
+// Add website URL parameter and Facebook token
+const WEBSITE_URL = defineSecret("WEBSITE_URL");
+const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
+
+// Update the Facebook auto-posting function
+export const autoPostToFacebook = onDocumentWritten(
+  {
+    document: "posts/{postId}",
+    secrets: [FACEBOOK_PAGE_ACCESS_TOKEN, WEBSITE_URL],
+    maxInstances: 10,
+  },
+  async (event) => {
+    console.log("autoPostToFacebook function triggered");
+    let pageId = null;
+
+    // Validate configurations immediately
+    try {
+      if (!FACEBOOK_PAGE_ACCESS_TOKEN.value()) {
+        throw new Error("Facebook Page Access Token is not configured");
+      }
+
+      // Validate website URL format
+      try {
+        new URL(WEBSITE_URL.value());
+      } catch (e) {
+        throw new Error("Invalid Website URL configuration");
+      }
+
+      // Get the page ID and verify access
+      const pageResponse = await fetch(
+        `https://graph.facebook.com/v19.0/me?fields=id,access_token`,
+        {
+          headers: {
+            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
+          },
+        }
+      );
+
+      if (!pageResponse.ok) {
+        const errorData = await pageResponse.json();
+        throw new Error(
+          `Invalid Facebook token or page access: ${
+            errorData.error?.message || "Token validation failed"
+          }`
+        );
+      }
+
+      const pageData = await pageResponse.json();
+      pageId = pageData.id;
+      console.log("Successfully retrieved Facebook Page ID:", pageId);
+
+      // Verify the token works for posting
+      const testResponse = await fetch(
+        `https://graph.facebook.com/v19.0/${pageId}?fields=id,name`,
+        {
+          headers: {
+            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
+          },
+        }
+      );
+
+      if (!testResponse.ok) {
+        const errorData = await testResponse.json();
+        throw new Error(
+          `Cannot access page with token: ${
+            errorData.error?.message || "Access verification failed"
+          }`
+        );
+      }
+
+      const testData = await testResponse.json();
+      console.log("Successfully verified page access for:", testData.name);
+    } catch (error) {
+      console.error("Configuration validation failed:", error);
+      throw error;
+    }
+
+    // Ensure we have the after data
+    if (!event.data.after || !event.data.after.exists) {
+      console.log("Document was deleted, skipping");
+      return;
+    }
+
+    // Get the document data
+    const afterData = event.data.after.data();
+    const beforeData = event.data.before?.exists
+      ? event.data.before.data()
+      : null;
+
+    // Log the event details
+    console.log("Post event details:", {
+      postId: event.params.postId,
+      beforeStatus: beforeData?.status,
+      afterStatus: afterData?.status,
+      isNewPost: !event.data.before?.exists,
+      hasImage: !!afterData.imageUrl,
+    });
+
+    // Only proceed for published posts
+    if (afterData.status !== "published") {
+      console.log("Post is not published, skipping");
+      return;
+    }
+
+    // Check if this is a new post or status changed to published
+    const isNewPublishedPost = !beforeData && afterData.status === "published";
+    const isStatusChangedToPublished =
+      beforeData &&
+      beforeData.status !== "published" &&
+      afterData.status === "published";
+
+    if (!isNewPublishedPost && !isStatusChangedToPublished) {
+      console.log("Skipping - not a new or newly published post");
+      return;
+    }
+
+    try {
+      // Prepare the post URL
+      const postUrl = `${WEBSITE_URL.value().replace(/\/$/, "")}/post/${
+        event.params.postId
+      }`;
+
+      const cleanContent = afterData.content
+        .replace(/\[Source\]\([^)]+\)/g, "")
+        .replace(/\[.*?\]\(.*?\)/g, "")
+        .replace(/\n+/g, " ")
+        .trim();
+
+      const words = cleanContent.split(" ");
+      const teaser =
+        words.slice(0, 100).join(" ") + (words.length > 100 ? "..." : "");
+
+      const message = `${afterData.title}\n\n${teaser}\n\nRead more: ${postUrl}`;
+
+      // Initialize post data with message only
+      let postData = {
+        message: message,
+      };
+
+      // If we have an image, verify it's accessible and upload it
+      if (afterData.imageUrl) {
+        try {
+          // First verify the image URL is accessible
+          console.log("Verifying image accessibility:", afterData.imageUrl);
+          const imageCheckResponse = await fetch(afterData.imageUrl, {
+            method: "HEAD",
+          });
+
+          if (!imageCheckResponse.ok) {
+            throw new Error(
+              `Image URL is not accessible: ${imageCheckResponse.status}`
+            );
+          }
+
+          console.log("Image is accessible, attempting upload to Facebook");
+
+          // Upload image with detailed error handling and debugging
+          const imageUploadResponse = await fetch(
+            `https://graph.facebook.com/v19.0/${pageId}/photos`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
+              },
+              body: JSON.stringify({
+                url: afterData.imageUrl,
+                published: false, // Important: Keep this false
+                temporary: true, // This is correct for attachments
+                caption: afterData.title,
+                description: cleanContent.substring(0, 200), // Add description for better preview
+              }),
+            }
+          );
+
+          const imageResponseText = await imageUploadResponse.text();
+          console.log("Raw image upload response:", imageResponseText);
+
+          let imageData;
+          try {
+            imageData = JSON.parse(imageResponseText);
+          } catch (e) {
+            console.error("Failed to parse image upload response:", e);
+            throw new Error(
+              `Invalid response from Facebook: ${imageResponseText}`
+            );
+          }
+
+          if (!imageUploadResponse.ok || !imageData.id) {
+            throw new Error(
+              `Facebook image upload failed: ${
+                imageData.error?.message || "No image ID returned"
+              }`
+            );
+          }
+
+          console.log("Successfully uploaded image to Facebook:", imageData);
+
+          // Create post with attached media only (no link)
+          postData = {
+            message: message,
+            attached_media: [{ media_fbid: imageData.id }],
+          };
+
+          // Log the final post data structure
+          console.log("Posting with image attachment:", postData);
+        } catch (imageError) {
+          console.error("Error handling image:", {
+            error: imageError.message,
+            stack: imageError.stack,
+            imageUrl: afterData.imageUrl,
+          });
+          // If image fails, fall back to link post
+          postData.link = postUrl;
+          console.log("Falling back to link-only post");
+        }
+      } else {
+        // No image, use link
+        postData.link = postUrl;
+      }
+
+      console.log("Final Facebook post data:", {
+        hasMessage: !!postData.message,
+        hasLink: !!postData.link,
+        hasAttachedMedia: !!postData.attached_media,
+        postUrl: postUrl,
+        pageId: pageId,
+      });
+
+      // Create the post
+      const response = await fetch(
+        `https://graph.facebook.com/v19.0/${pageId}/feed`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
+          },
+          body: JSON.stringify(postData),
+        }
+      );
+
+      const responseText = await response.text();
+      console.log("Raw Facebook post response:", responseText);
+
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error("Failed to parse post response:", e);
+        throw new Error(`Invalid response from Facebook: ${responseText}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Facebook API error: ${
+            responseData.error?.message || "Unknown error"
+          }`
+        );
+      }
+
+      console.log("Successfully posted to Facebook:", {
+        postId: event.params.postId,
+        facebookPostId: responseData.id,
+        title: afterData.title,
+      });
+
+      // Update the post with Facebook post ID
+      await event.data.after.ref.update({
+        facebookPostId: responseData.id,
+        lastFacebookPost: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Error posting to Facebook:", {
+        error: error.message,
+        stack: error.stack,
+        postId: event.params.postId,
+      });
+
+      // Store the error in the post document
+      await event.data.after.ref.update({
+        facebookPostError: {
+          message: error.message,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      });
+
+      throw error;
+    }
+  }
+);
