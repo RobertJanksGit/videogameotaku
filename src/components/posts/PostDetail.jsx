@@ -23,6 +23,10 @@ import {
   getNotificationMessage,
 } from "../../utils/notifications";
 import RichContent from "./RichContent";
+import SEO from "../common/SEO";
+import StructuredData from "../common/StructuredData";
+import Breadcrumbs from "../common/Breadcrumbs";
+import OptimizedImage from "../common/OptimizedImage";
 
 const ReplyForm = ({ onSubmit, darkMode, isMainThreadComment }) => {
   const [replyContent, setReplyContent] = useState("");
@@ -381,49 +385,20 @@ const PostDetail = () => {
     const fetchPost = async () => {
       try {
         const postDoc = await getDoc(doc(db, "posts", postId));
-        if (!postDoc.exists()) {
+        if (postDoc.exists()) {
+          const postData = { id: postDoc.id, ...postDoc.data() };
+          setPost(postData);
+
+          // Set page title and meta description
+          document.title = `${postData.title} | Video Game Otaku`;
+        } else {
           navigate("/");
-          return;
         }
-        setPost({ id: postDoc.id, ...postDoc.data() });
-
-        // Only fetch top-level comments initially
-        const commentsQuery = query(
-          collection(db, "comments"),
-          where("postId", "==", postId),
-          where("parentId", "==", null),
-          orderBy("createdAt", "desc")
-        );
-        const commentsSnapshot = await getDocs(commentsQuery);
-
-        // Get the reply count for each comment
-        const commentsWithCounts = await Promise.all(
-          commentsSnapshot.docs.map(async (doc) => {
-            const comment = {
-              id: doc.id,
-              ...doc.data(),
-              isLoadingReplies: false, // Initialize isLoadingReplies
-            };
-
-            // Get the count of replies
-            const replyCountQuery = query(
-              collection(db, "comments"),
-              where("postId", "==", postId),
-              where("parentId", "==", doc.id)
-            );
-            const replySnapshot = await getDocs(replyCountQuery);
-            comment.replyCount = replySnapshot.size;
-
-            return comment;
-          })
-        );
-
-        setComments(commentsWithCounts);
-        setLoadedCommentIds(new Set(commentsWithCounts.map((c) => c.id)));
-        setLoading(false);
       } catch (error) {
         console.error("Error fetching post:", error);
         navigate("/");
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -769,271 +744,353 @@ const PostDetail = () => {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
+      <main
+        className="flex justify-center items-center min-h-screen"
+        role="main"
+      >
         <div
           className={`text-xl font-semibold ${
             darkMode ? "text-gray-200" : "text-gray-900"
           }`}
+          aria-live="polite"
         >
           Loading...
         </div>
-      </div>
+      </main>
     );
   }
 
   if (!post) return null;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      {loading ? (
-        <div>Loading...</div>
-      ) : post ? (
-        <div className="space-y-6">
-          <div
-            className={`rounded-lg shadow-lg overflow-hidden ${
-              darkMode ? "bg-gray-800" : "bg-white"
-            }`}
-          >
-            {post.imageUrl && (
-              <img
-                src={post.imageUrl}
-                alt={post.title}
-                className="w-full h-64 object-cover"
-              />
-            )}
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
-                        darkMode ? "bg-gray-700" : "bg-gray-100"
-                      }`}
-                    >
-                      {post.authorPhotoURL ? (
-                        <img
-                          src={post.authorPhotoURL}
-                          alt={post.authorName}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span
-                          className={`text-lg font-medium ${
-                            darkMode ? "text-gray-300" : "text-gray-600"
-                          }`}
-                        >
-                          {post.authorName[0].toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <div className="ml-3">
-                      <p
-                        className={`text-sm font-medium ${
-                          darkMode ? "text-gray-200" : "text-gray-900"
+    <>
+      {post && (
+        <>
+          <SEO
+            title={post.title}
+            description={post.content.substring(0, 160)}
+            image={post.imageUrl}
+            type="article"
+            keywords={`${post.platforms?.join(", ")}, ${
+              post.category
+            }, gaming, video games`}
+            author={post.authorName}
+          />
+          <StructuredData
+            type="Article"
+            data={{
+              title: post.title,
+              description: post.content.substring(0, 160),
+              image: post.imageUrl,
+              datePublished: post.createdAt?.toDate().toISOString(),
+              dateModified:
+                post.updatedAt?.toDate().toISOString() ||
+                post.createdAt?.toDate().toISOString(),
+              author: post.authorName,
+            }}
+          />
+        </>
+      )}
+      <main className="max-w-4xl mx-auto px-4 py-8" role="main">
+        <nav aria-label="Breadcrumb">
+          <Breadcrumbs
+            customCrumbs={[
+              { path: "/", label: "Home" },
+              { path: `/${post.category.toLowerCase()}`, label: post.category },
+              { path: `/post/${post.id}`, label: post.title },
+            ]}
+          />
+        </nav>
+        {loading ? (
+          <div aria-live="polite">Loading...</div>
+        ) : post ? (
+          <article className="h-entry space-y-6">
+            <header
+              className={`rounded-lg shadow-lg overflow-hidden ${
+                darkMode ? "bg-gray-800" : "bg-white"
+              }`}
+            >
+              {post.imageUrl && (
+                <figure>
+                  <OptimizedImage
+                    src={post.imageUrl}
+                    alt={post.title}
+                    className="w-full h-64 rounded-lg mb-6 u-photo"
+                    sizes="(min-width: 1024px) 896px, 100vw"
+                  />
+                </figure>
+              )}
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-4">
+                    <address className="flex items-center not-italic h-card p-author">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
+                          darkMode ? "bg-gray-700" : "bg-gray-100"
                         }`}
                       >
-                        {post.authorName}
-                      </p>
-                      <p
-                        className={`text-xs ${
+                        {post.authorPhotoURL ? (
+                          <img
+                            src={post.authorPhotoURL}
+                            alt={post.authorName}
+                            className="w-full h-full object-cover u-photo"
+                          />
+                        ) : (
+                          <span
+                            className={`text-lg font-medium ${
+                              darkMode ? "text-gray-300" : "text-gray-600"
+                            }`}
+                          >
+                            {post.authorName[0].toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="ml-3">
+                        <p
+                          className={`text-sm font-medium p-name ${
+                            darkMode ? "text-gray-200" : "text-gray-900"
+                          }`}
+                        >
+                          {post.authorName}
+                        </p>
+                        <time
+                          dateTime={post.createdAt?.toDate().toISOString()}
+                          className={`text-xs dt-published ${
+                            darkMode ? "text-gray-400" : "text-gray-500"
+                          }`}
+                        >
+                          {post.createdAt?.toDate().toLocaleDateString()}
+                        </time>
+                      </div>
+                    </address>
+                    <div
+                      className="flex items-center space-x-2"
+                      role="list"
+                      aria-label="Platforms"
+                    >
+                      {(Array.isArray(post.platforms)
+                        ? post.platforms
+                        : [post.platform]
+                      ).map((platform) => (
+                        <div
+                          key={platform}
+                          role="listitem"
+                          className={`px-3 py-1 rounded-full text-sm p-category ${
+                            darkMode
+                              ? "bg-gray-700 text-gray-300"
+                              : "bg-gray-100 text-gray-700"
+                          }`}
+                        >
+                          {platform}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <ShareButtons
+                    url={window.location.href}
+                    title={post.title}
+                    darkMode={darkMode}
+                  />
+                </div>
+                <h1
+                  className={`text-2xl font-bold mb-4 p-name ${
+                    darkMode ? "text-gray-100" : "text-gray-900"
+                  }`}
+                >
+                  {post.title}
+                </h1>
+                <div className="mb-6 e-content">
+                  <RichContent content={post.content} darkMode={darkMode} />
+                </div>
+                <footer className="mt-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <span
+                        className={`text-sm ${
                           darkMode ? "text-gray-400" : "text-gray-500"
                         }`}
                       >
-                        {post.createdAt?.toDate().toLocaleDateString()}
-                      </p>
+                        <time
+                          dateTime={
+                            post.updatedAt?.toDate().toISOString() ||
+                            post.createdAt?.toDate().toISOString()
+                          }
+                          className="dt-updated"
+                        >
+                          Updated:{" "}
+                          {post.updatedAt?.toDate().toLocaleDateString() ||
+                            post.createdAt?.toDate().toLocaleDateString()}
+                        </time>
+                      </span>
+                      <a href={window.location.href} className="u-url hidden">
+                        Permalink
+                      </a>
                     </div>
+                    <VoteButtons
+                      post={post}
+                      onVoteChange={handleVoteChange}
+                      darkMode={darkMode}
+                    />
                   </div>
-                  <div className="flex items-center space-x-2">
-                    {(Array.isArray(post.platforms)
-                      ? post.platforms
-                      : [post.platform]
-                    ).map((platform) => (
-                      <div
-                        key={platform}
-                        className={`px-3 py-1 rounded-full text-sm ${
-                          darkMode
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-gray-100 text-gray-700"
-                        }`}
-                      >
-                        {platform}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <ShareButtons
-                  url={window.location.href}
-                  title={post.title}
-                  darkMode={darkMode}
-                />
+                </footer>
               </div>
-              <h1
-                className={`text-2xl font-bold mb-4 ${
-                  darkMode ? "text-gray-100" : "text-gray-900"
+            </header>
+
+            {/* Comments Section */}
+            <section className="mt-12" aria-label="Comments">
+              <h2
+                className={`text-2xl font-bold mb-6 ${
+                  darkMode ? "text-white" : "text-gray-900"
                 }`}
               >
-                {post.title}
-              </h1>
-              <div className="mb-6">
-                <RichContent content={post.content} darkMode={darkMode} />
-              </div>
-              <div className="mt-6">
-                <VoteButtons
-                  post={post}
-                  onVoteChange={handleVoteChange}
-                  darkMode={darkMode}
-                />
-              </div>
-            </div>
-          </div>
+                Comments
+              </h2>
 
-          {/* Comments Section */}
-          <div className="mt-12">
-            <h2
-              className={`text-2xl font-bold mb-6 ${
-                darkMode ? "text-white" : "text-gray-900"
-              }`}
-            >
-              Comments
-            </h2>
-
-            {/* New Comment Form */}
-            {user ? (
-              <form onSubmit={handleSubmitComment} className="mb-8">
-                <textarea
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Write a comment... (Press Enter to submit, Shift+Enter for new line)"
-                  className={`w-full p-4 rounded-lg ${
-                    darkMode
-                      ? "bg-gray-800 text-white border-gray-700"
-                      : "bg-white text-gray-900 border-gray-200"
-                  } border`}
-                  rows="3"
-                />
-                <div className="flex justify-end mt-2">
-                  <button
-                    type="submit"
-                    className={`px-4 py-2 text-sm font-medium text-white rounded-md ${
+              {user ? (
+                <form onSubmit={handleSubmitComment} className="mb-8">
+                  <label htmlFor="comment" className="sr-only">
+                    Add a comment
+                  </label>
+                  <textarea
+                    id="comment"
+                    rows="3"
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Add a comment..."
+                    className={`w-full px-4 py-2 rounded-lg ${
                       darkMode
-                        ? "bg-blue-600 hover:bg-blue-700"
-                        : "bg-blue-500 hover:bg-blue-600"
-                    }`}
-                  >
-                    Post Comment
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div
-                className={`p-4 rounded-lg mb-8 ${
-                  darkMode ? "bg-gray-800" : "bg-gray-100"
-                }`}
-              >
+                        ? "bg-gray-700 text-white placeholder-gray-400"
+                        : "bg-white text-gray-900 placeholder-gray-500"
+                    } border ${
+                      darkMode ? "border-gray-600" : "border-gray-300"
+                    } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    aria-label="Add a comment"
+                  />
+                  <div className="mt-2 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={!newComment.trim()}
+                      className={`px-4 py-2 rounded-lg ${
+                        darkMode
+                          ? "bg-blue-600 hover:bg-blue-700"
+                          : "bg-blue-500 hover:bg-blue-600"
+                      } text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      Post Comment
+                    </button>
+                  </div>
+                </form>
+              ) : (
                 <p
-                  className={`text-center ${
+                  className={`mb-8 ${
                     darkMode ? "text-gray-300" : "text-gray-600"
                   }`}
                 >
-                  Please sign in to leave a comment.
+                  Please sign in to comment.
                 </p>
-              </div>
-            )}
-
-            {/* Comments List */}
-            <div className="space-y-6">
-              {currentThreadId ? (
-                <>
-                  <button
-                    onClick={handleBackClick}
-                    className={`flex items-center space-x-2 mb-4 text-sm ${
-                      darkMode
-                        ? "text-blue-400 hover:text-blue-300"
-                        : "text-blue-600 hover:text-blue-700"
-                    }`}
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                      />
-                    </svg>
-                    <span>
-                      {threadHistory.length > 0
-                        ? "Back to previous thread"
-                        : "Back to all comments"}
-                    </span>
-                  </button>
-                  {/* First show the main comment */}
-                  {comments
-                    .filter((comment) => comment.id === currentThreadId)
-                    .map((comment) => (
-                      <Comment
-                        key={comment.id}
-                        comment={comment}
-                        darkMode={darkMode}
-                        onReply={handleReply}
-                        user={user}
-                        onThreadClick={handleThreadClick}
-                        allComments={comments}
-                        onLoadReplies={loadReplies}
-                        isLoadingReplies={comment.isLoadingReplies}
-                        isInThread={true}
-                        currentThreadId={currentThreadId}
-                      />
-                    ))}
-                  {/* Then show all replies */}
-                  {comments
-                    .filter((comment) => comment.parentId === currentThreadId)
-                    .map((comment) => (
-                      <Comment
-                        key={comment.id}
-                        comment={comment}
-                        darkMode={darkMode}
-                        onReply={handleReply}
-                        user={user}
-                        onThreadClick={handleThreadClick}
-                        allComments={comments}
-                        onLoadReplies={loadReplies}
-                        isLoadingReplies={comment.isLoadingReplies}
-                        isInThread={true}
-                        currentThreadId={currentThreadId}
-                      />
-                    ))}
-                </>
-              ) : (
-                // Show top-level comments
-                comments
-                  .filter((comment) => comment.parentId === null)
-                  .map((comment) => (
-                    <Comment
-                      key={comment.id}
-                      comment={comment}
-                      darkMode={darkMode}
-                      onReply={handleReply}
-                      user={user}
-                      onThreadClick={handleThreadClick}
-                      allComments={comments}
-                      onLoadReplies={loadReplies}
-                      isLoadingReplies={comment.isLoadingReplies}
-                      isInThread={false}
-                      currentThreadId={currentThreadId}
-                    />
-                  ))
               )}
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
+
+              {/* Comments List */}
+              <div className="space-y-6" role="feed" aria-label="Comments list">
+                {currentThreadId ? (
+                  <>
+                    <button
+                      onClick={handleBackClick}
+                      className={`flex items-center space-x-2 mb-4 text-sm ${
+                        darkMode
+                          ? "text-blue-400 hover:text-blue-300"
+                          : "text-blue-600 hover:text-blue-700"
+                      }`}
+                      aria-label={
+                        threadHistory.length > 0
+                          ? "Back to previous thread"
+                          : "Back to all comments"
+                      }
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                        />
+                      </svg>
+                      <span>
+                        {threadHistory.length > 0
+                          ? "Back to previous thread"
+                          : "Back to all comments"}
+                      </span>
+                    </button>
+                    {/* First show the main comment */}
+                    {comments
+                      .filter((comment) => comment.id === currentThreadId)
+                      .map((comment) => (
+                        <Comment
+                          key={comment.id}
+                          comment={comment}
+                          darkMode={darkMode}
+                          onReply={handleReply}
+                          user={user}
+                          onThreadClick={handleThreadClick}
+                          allComments={comments}
+                          onLoadReplies={loadReplies}
+                          isLoadingReplies={comment.isLoadingReplies}
+                          isInThread={true}
+                          currentThreadId={currentThreadId}
+                        />
+                      ))}
+                    {/* Then show all replies */}
+                    {comments
+                      .filter((comment) => comment.parentId === currentThreadId)
+                      .map((comment) => (
+                        <Comment
+                          key={comment.id}
+                          comment={comment}
+                          darkMode={darkMode}
+                          onReply={handleReply}
+                          user={user}
+                          onThreadClick={handleThreadClick}
+                          allComments={comments}
+                          onLoadReplies={loadReplies}
+                          isLoadingReplies={comment.isLoadingReplies}
+                          isInThread={true}
+                          currentThreadId={currentThreadId}
+                        />
+                      ))}
+                  </>
+                ) : (
+                  // Show top-level comments
+                  comments
+                    .filter((comment) => comment.parentId === null)
+                    .map((comment) => (
+                      <Comment
+                        key={comment.id}
+                        comment={comment}
+                        darkMode={darkMode}
+                        onReply={handleReply}
+                        user={user}
+                        onThreadClick={handleThreadClick}
+                        allComments={comments}
+                        onLoadReplies={loadReplies}
+                        isLoadingReplies={comment.isLoadingReplies}
+                        isInThread={false}
+                        currentThreadId={currentThreadId}
+                      />
+                    ))
+                )}
+              </div>
+            </section>
+          </article>
+        ) : null}
+      </main>
+    </>
   );
 };
 

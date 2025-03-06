@@ -16,6 +16,9 @@ import {
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
 import ShareButtons from "../common/ShareButtons";
+import SEO from "../common/SEO";
+import StructuredData from "../common/StructuredData";
+import OptimizedImage from "../common/OptimizedImage";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -304,239 +307,94 @@ const HomePage = () => {
   };
 
   return (
-    <div className="w-full space-y-8">
-      {/* Featured Posts Section */}
-      <section className="w-full">
-        <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
-          Featured Posts
-        </h2>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 relative">
-          {featuredPosts.map((post) => (
-            <div
-              key={post.id}
-              onClick={() => handlePostClick(post.id)}
-              className={`rounded-lg overflow-hidden ${
-                darkMode
-                  ? "bg-gray-800 border-gray-700"
-                  : "bg-white border-gray-200"
-              } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
-              style={{
-                gridColumn: "auto",
-                gridRow: "auto",
-                transition: "all 1s ease-in-out",
-              }}
-            >
-              {post.imageUrl ? (
-                <div className="aspect-w-16 aspect-h-9">
-                  <img
-                    src={post.imageUrl}
-                    alt={post.title}
-                    className="w-full h-48 object-cover"
-                  />
-                </div>
-              ) : (
-                <div
-                  className={`w-full h-48 flex items-center justify-center ${
-                    darkMode ? "bg-gray-700" : "bg-gray-100"
-                  }`}
-                >
-                  <span
-                    className={`text-4xl ${
-                      darkMode ? "text-gray-600" : "text-gray-400"
+    <>
+      <SEO
+        title="Home"
+        description="Discover the latest gaming news, reviews, and discussions. Join our community of video game enthusiasts and share your gaming experiences."
+        keywords="video games, gaming, game reviews, gaming community, video game discussions"
+        type="website"
+      />
+      <StructuredData
+        type="WebSite"
+        data={{
+          name: "Video Game Otaku",
+          description:
+            "Your ultimate destination for gaming news, reviews, and community discussions.",
+          url: "https://videogameotaku.com",
+        }}
+      />
+      <StructuredData
+        type="Organization"
+        data={{
+          name: "Video Game Otaku",
+          url: "https://videogameotaku.com",
+          logo: "https://videogameotaku.com/logo.svg",
+          socialLinks: [
+            "https://twitter.com/videogameotaku",
+            "https://facebook.com/videogameotaku",
+            "https://instagram.com/videogameotaku",
+          ],
+        }}
+      />
+      <div className="w-full space-y-8">
+        {/* Featured Posts Section */}
+        <section className="w-full">
+          <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
+            Featured Posts
+          </h2>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 relative">
+            {featuredPosts.map((post) => (
+              <div
+                key={post.id}
+                onClick={() => handlePostClick(post.id)}
+                className={`rounded-lg overflow-hidden ${
+                  darkMode
+                    ? "bg-gray-800 border-gray-700"
+                    : "bg-white border-gray-200"
+                } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
+                style={{
+                  gridColumn: "auto",
+                  gridRow: "auto",
+                  transition: "all 1s ease-in-out",
+                }}
+              >
+                {post.imageUrl ? (
+                  <div className="aspect-w-16 aspect-h-9">
+                    <OptimizedImage
+                      src={post.imageUrl}
+                      alt={post.title}
+                      className="w-full h-48"
+                      sizes="(min-width: 1024px) 25vw, (min-width: 768px) 50vw, 100vw"
+                      loading={
+                        featuredPosts.indexOf(post) < 2 ? "eager" : "lazy"
+                      }
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className={`w-full h-48 flex items-center justify-center ${
+                      darkMode ? "bg-gray-700" : "bg-gray-100"
                     }`}
                   >
-                    📰
-                  </span>
-                </div>
-              )}
-              <div className="p-6">
-                {/* Platforms Section */}
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {(Array.isArray(post.platforms)
-                    ? post.platforms
-                    : [post.platform]
-                  ).map((platform) => (
                     <span
-                      key={platform}
-                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                        darkMode
-                          ? "bg-gray-700 text-gray-300"
-                          : "bg-gray-100 text-gray-600"
+                      className={`text-4xl ${
+                        darkMode ? "text-gray-600" : "text-gray-400"
                       }`}
                     >
-                      {platform}
-                    </span>
-                  ))}
-                </div>
-
-                {/* Category and Vote Section */}
-                <div className="flex items-center justify-between mb-2">
-                  <span
-                    className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                      darkMode
-                        ? "bg-gray-700 text-gray-300"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {post.category}
-                  </span>
-                  {renderVoteButtons(post)}
-                </div>
-
-                <h3
-                  className={`text-xl font-semibold mb-2 ${
-                    darkMode ? "text-white" : "text-gray-900"
-                  }`}
-                >
-                  {post.title}
-                </h3>
-                <p
-                  className={`text-sm mb-4 line-clamp-2 ${
-                    darkMode ? "text-gray-300" : "text-gray-600"
-                  }`}
-                >
-                  {getPreviewContent(post.content)}
-                </p>
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`text-xs ${
-                      darkMode ? "text-gray-400" : "text-gray-500"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <div
-                        className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
-                          darkMode ? "bg-gray-700" : "bg-gray-100"
-                        }`}
-                      >
-                        {post.authorPhotoURL ? (
-                          <img
-                            src={post.authorPhotoURL}
-                            alt={post.authorName}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <span
-                            className={`text-xs font-medium ${
-                              darkMode ? "text-gray-300" : "text-gray-600"
-                            }`}
-                          >
-                            {post.authorName?.[0]?.toUpperCase() || "A"}
-                          </span>
-                        )}
-                      </div>
-                      <span>{post.authorName}</span>
-                    </div>
-                  </span>
-                  <div className="flex items-center space-x-6">
-                    <span
-                      className={`text-xs flex items-center space-x-2 ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                        />
-                      </svg>
-                      <span>{post.commentCount || 0}</span>
-                    </span>
-                    <span
-                      className={`text-xs ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      {post.createdAt?.toDate().toLocaleDateString()}
+                      📰
                     </span>
                   </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Latest Posts Section */}
-      <section className="w-full">
-        <div className="flex flex-col space-y-4 mb-6">
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Latest Posts
-          </h2>
-          {/* Mobile-optimized filters */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <select
-              value={selectedPlatform}
-              onChange={(e) => setSelectedPlatform(e.target.value)}
-              className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                darkMode
-                  ? "bg-[#1C2128] border-gray-700 text-white"
-                  : "border-gray-300"
-              }`}
-            >
-              <option value="all">All Platforms</option>
-              <option value="Nintendo">Nintendo</option>
-              <option value="PlayStation">PlayStation</option>
-              <option value="Xbox">Xbox</option>
-              <option value="PC">PC</option>
-              <option value="VR">VR</option>
-              <option value="Mobile">Mobile</option>
-            </select>
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                darkMode
-                  ? "bg-[#1C2128] border-gray-700 text-white"
-                  : "border-gray-300"
-              }`}
-            >
-              <option value="all">All Categories</option>
-              <option value="news">News</option>
-              <option value="review">Review</option>
-              <option value="guide">Guide</option>
-              <option value="opinion">Opinion</option>
-            </select>
-          </div>
-        </div>
-        <div className="space-y-8">
-          {latestPosts.map((post) => (
-            <article
-              key={post.id}
-              onClick={() => handlePostClick(post.id)}
-              className={`rounded-lg overflow-hidden ${
-                darkMode
-                  ? "bg-gray-800 border-gray-700"
-                  : "bg-white border-gray-200"
-              } shadow-lg border cursor-pointer transition-transform hover:scale-[1.01]`}
-            >
-              {post.imageUrl && (
-                <div className="w-full h-64">
-                  <img
-                    src={post.imageUrl}
-                    alt={post.title}
-                    className="w-full h-full object-cover object-top"
-                  />
-                </div>
-              )}
-              <div className="p-6">
-                <div className="flex flex-col sm:flex-row gap-4 mb-4">
-                  <div className="flex flex-wrap gap-2 items-center">
-                    {/* Platform tags */}
+                )}
+                <div className="p-6">
+                  {/* Platforms Section */}
+                  <div className="flex flex-wrap gap-1 mb-3">
                     {(Array.isArray(post.platforms)
                       ? post.platforms
                       : [post.platform]
                     ).map((platform) => (
                       <span
                         key={platform}
-                        className={`inline-block px-3 py-1 text-sm font-semibold rounded-full ${
+                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
                           darkMode
                             ? "bg-gray-700 text-gray-300"
                             : "bg-gray-100 text-gray-600"
@@ -545,9 +403,12 @@ const HomePage = () => {
                         {platform}
                       </span>
                     ))}
-                    {/* Category tag */}
+                  </div>
+
+                  {/* Category and Vote Section */}
+                  <div className="flex items-center justify-between mb-2">
                     <span
-                      className={`inline-block px-3 py-1 text-sm font-semibold rounded-full ${
+                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
                         darkMode
                           ? "bg-gray-700 text-gray-300"
                           : "bg-gray-100 text-gray-600"
@@ -555,130 +416,314 @@ const HomePage = () => {
                     >
                       {post.category}
                     </span>
-                  </div>
-                  <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
                     {renderVoteButtons(post)}
-                    <ShareButtons
-                      url={`${window.location.origin}/post/${post.id}`}
-                      title={post.title}
-                      darkMode={darkMode}
-                    />
                   </div>
-                </div>
-                <h3
-                  className={`text-2xl font-bold mb-4 ${
-                    darkMode ? "text-white" : "text-gray-900"
-                  }`}
-                >
-                  {post.title}
-                </h3>
-                <p
-                  className={`text-base mb-4 line-clamp-3 ${
-                    darkMode ? "text-gray-300" : "text-gray-600"
-                  }`}
-                >
-                  {getPreviewContent(post.content)}
-                </p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
-                        darkMode ? "bg-gray-700" : "bg-gray-100"
-                      }`}
-                    >
-                      {post.authorPhotoURL ? (
-                        <img
-                          src={post.authorPhotoURL}
-                          alt={post.authorName}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span
-                          className={`text-sm font-medium ${
-                            darkMode ? "text-gray-300" : "text-gray-600"
-                          }`}
-                        >
-                          {post.authorName?.[0]?.toUpperCase() || "A"}
-                        </span>
-                      )}
-                    </div>
-                    <span
-                      className={`text-sm ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      {post.authorName}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <span
-                      className={`text-sm flex items-center space-x-1 ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                        />
-                      </svg>
-                      <span>{post.commentCount || 0}</span>
-                    </span>
+
+                  <h3
+                    className={`text-xl font-semibold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {post.title}
+                  </h3>
+                  <p
+                    className={`text-sm mb-4 line-clamp-2 ${
+                      darkMode ? "text-gray-300" : "text-gray-600"
+                    }`}
+                  >
+                    {getPreviewContent(post.content)}
+                  </p>
+                  <div className="flex items-center justify-between">
                     <span
                       className={`text-xs ${
                         darkMode ? "text-gray-400" : "text-gray-500"
                       }`}
                     >
-                      {post.createdAt?.toDate().toLocaleDateString()}
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
+                            darkMode ? "bg-gray-700" : "bg-gray-100"
+                          }`}
+                        >
+                          {post.authorPhotoURL ? (
+                            <img
+                              src={post.authorPhotoURL}
+                              alt={post.authorName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span
+                              className={`text-xs font-medium ${
+                                darkMode ? "text-gray-300" : "text-gray-600"
+                              }`}
+                            >
+                              {post.authorName?.[0]?.toUpperCase() || "A"}
+                            </span>
+                          )}
+                        </div>
+                        <span>{post.authorName}</span>
+                      </div>
                     </span>
+                    <div className="flex items-center space-x-6">
+                      <span
+                        className={`text-xs flex items-center space-x-2 ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                          />
+                        </svg>
+                        <span>{post.commentCount || 0}</span>
+                      </span>
+                      <span
+                        className={`text-xs ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        {post.createdAt?.toDate().toLocaleDateString()}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </article>
-          ))}
-
-          <div className="flex flex-col items-center py-4 space-y-4">
-            {isLoading && (
-              <div
-                className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
-                  darkMode ? "border-white" : "border-gray-900"
-                }`}
-              ></div>
-            )}
-
-            {!isLoading && hasMore && (
-              <button
-                onClick={() => fetchLatestPosts(true)}
-                className={`px-6 py-2 text-sm rounded-md ${
-                  darkMode
-                    ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
-                    : "bg-gray-100 text-blue-500 hover:bg-gray-200"
-                }`}
-              >
-                Load More
-              </button>
-            )}
-
-            {!hasMore && latestPosts.length > 0 && (
-              <div
-                className={`text-center ${
-                  darkMode ? "text-gray-400" : "text-gray-600"
-                }`}
-              >
-                No more posts to load
-              </div>
-            )}
+            ))}
           </div>
-        </div>
-      </section>
-    </div>
+        </section>
+
+        {/* Latest Posts Section */}
+        <section className="w-full">
+          <div className="flex flex-col space-y-4 mb-6">
+            <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+              Latest Posts
+            </h2>
+            {/* Mobile-optimized filters */}
+            <div className="flex flex-col sm:flex-row gap-4">
+              <select
+                value={selectedPlatform}
+                onChange={(e) => setSelectedPlatform(e.target.value)}
+                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                  darkMode
+                    ? "bg-[#1C2128] border-gray-700 text-white"
+                    : "border-gray-300"
+                }`}
+              >
+                <option value="all">All Platforms</option>
+                <option value="Nintendo">Nintendo</option>
+                <option value="PlayStation">PlayStation</option>
+                <option value="Xbox">Xbox</option>
+                <option value="PC">PC</option>
+                <option value="VR">VR</option>
+                <option value="Mobile">Mobile</option>
+              </select>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                  darkMode
+                    ? "bg-[#1C2128] border-gray-700 text-white"
+                    : "border-gray-300"
+                }`}
+              >
+                <option value="all">All Categories</option>
+                <option value="news">News</option>
+                <option value="review">Review</option>
+                <option value="guide">Guide</option>
+                <option value="opinion">Opinion</option>
+              </select>
+            </div>
+          </div>
+          <div className="space-y-8">
+            {latestPosts.map((post) => (
+              <article
+                key={post.id}
+                onClick={() => handlePostClick(post.id)}
+                className={`h-entry rounded-lg overflow-hidden ${
+                  darkMode
+                    ? "bg-gray-800 border-gray-700"
+                    : "bg-white border-gray-200"
+                } shadow-lg border cursor-pointer transition-transform hover:scale-[1.01]`}
+              >
+                {post.imageUrl && (
+                  <div className="w-full h-64">
+                    <OptimizedImage
+                      src={post.imageUrl}
+                      alt={post.title}
+                      className="w-full h-full u-photo"
+                      sizes="(min-width: 1024px) 896px, 100vw"
+                      loading={
+                        latestPosts.indexOf(post) === 0 ? "eager" : "lazy"
+                      }
+                    />
+                  </div>
+                )}
+                <div className="p-6">
+                  <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      {/* Platform tags */}
+                      {(Array.isArray(post.platforms)
+                        ? post.platforms
+                        : [post.platform]
+                      ).map((platform) => (
+                        <span
+                          key={platform}
+                          className={`inline-block px-3 py-1 text-sm font-semibold rounded-full p-category ${
+                            darkMode
+                              ? "bg-gray-700 text-gray-300"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {platform}
+                        </span>
+                      ))}
+                      {/* Category tag */}
+                      <span
+                        className={`inline-block px-3 py-1 text-sm font-semibold rounded-full p-category ${
+                          darkMode
+                            ? "bg-gray-700 text-gray-300"
+                            : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {post.category}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
+                      {renderVoteButtons(post)}
+                      <ShareButtons
+                        url={`${window.location.origin}/post/${post.id}`}
+                        title={post.title}
+                        darkMode={darkMode}
+                      />
+                    </div>
+                  </div>
+                  <h3
+                    className={`text-2xl font-bold mb-4 p-name ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {post.title}
+                  </h3>
+                  <p
+                    className={`text-base mb-4 line-clamp-3 p-summary ${
+                      darkMode ? "text-gray-300" : "text-gray-600"
+                    }`}
+                  >
+                    {getPreviewContent(post.content)}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2 h-card p-author">
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
+                          darkMode ? "bg-gray-700" : "bg-gray-100"
+                        }`}
+                      >
+                        {post.authorPhotoURL ? (
+                          <img
+                            src={post.authorPhotoURL}
+                            alt={post.authorName}
+                            className="w-full h-full object-cover u-photo"
+                          />
+                        ) : (
+                          <span
+                            className={`text-sm font-medium ${
+                              darkMode ? "text-gray-300" : "text-gray-600"
+                            }`}
+                          >
+                            {post.authorName?.[0]?.toUpperCase() || "A"}
+                          </span>
+                        )}
+                      </div>
+                      <span
+                        className={`text-sm p-name ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        {post.authorName}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <span
+                        className={`text-sm flex items-center space-x-1 ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                          />
+                        </svg>
+                        <span>{post.commentCount || 0}</span>
+                      </span>
+                      <time
+                        dateTime={post.createdAt?.toDate().toISOString()}
+                        className={`text-xs dt-published ${
+                          darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        {post.createdAt?.toDate().toLocaleDateString()}
+                      </time>
+                    </div>
+                  </div>
+                  <a href={`/post/${post.id}`} className="u-url hidden">
+                    Permalink
+                  </a>
+                </div>
+              </article>
+            ))}
+
+            <div className="flex flex-col items-center py-4 space-y-4">
+              {isLoading && (
+                <div
+                  className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
+                    darkMode ? "border-white" : "border-gray-900"
+                  }`}
+                ></div>
+              )}
+
+              {!isLoading && hasMore && (
+                <button
+                  onClick={() => fetchLatestPosts(true)}
+                  className={`px-6 py-2 text-sm rounded-md ${
+                    darkMode
+                      ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
+                      : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+                  }`}
+                >
+                  Load More
+                </button>
+              )}
+
+              {!hasMore && latestPosts.length > 0 && (
+                <div
+                  className={`text-center ${
+                    darkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
+                >
+                  No more posts to load
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    </>
   );
 };
 

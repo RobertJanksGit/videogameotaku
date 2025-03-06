@@ -1,9 +1,57 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Welcome to Firebase Hosting</title>
+    <meta charset="UTF-8" />
+    <!-- Resource Hints -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" />
+    <link rel="preconnect" href="https://storage.googleapis.com" />
+    <link rel="preload" href="/logo.svg" as="image" type="image/svg+xml" />
+    <link rel="preload" href="/src/main.jsx" as="script" />
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#3B82F6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Video Game Otaku" />
+    <meta name="application-name" content="Video Game Otaku" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="msapplication-TileColor" content="#3B82F6" />
+    <meta name="msapplication-tap-highlight" content="no" />
+
+    <!-- Default meta tags (will be overridden by React Helmet) -->
+    <meta
+      name="description"
+      content="Your ultimate destination for gaming news, reviews, and community discussions. Join our community of video game enthusiasts."
+    />
+    <meta
+      name="keywords"
+      content="video games, gaming, game reviews, gaming community, video game discussions"
+    />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Video Game Otaku" />
+    <meta
+      property="og:description"
+      content="Your ultimate destination for gaming news, reviews, and community discussions."
+    />
+    <meta property="og:image" content="/logo.svg" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Video Game Otaku" />
+    <meta
+      name="twitter:description"
+      content="Your ultimate destination for gaming news, reviews, and community discussions."
+    />
+    <meta name="twitter:image" content="/logo.svg" />
+
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
+    <title>Video Game Otaku</title>
 
     <!-- update the version number as needed -->
     <script defer src="/__/firebase/11.2.0/firebase-app-compat.js"></script>
@@ -109,6 +157,9 @@
     </style>
   </head>
   <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="message">
       <h2>Welcome</h2>
       <h1>Firebase Hosting Setup Complete</h1>
@@ -162,6 +213,20 @@
             "Error loading the Firebase SDK, check the console.";
         }
       });
+
+      // Register Service Worker
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/service-worker.js")
+            .then((registration) => {
+              console.log("Service Worker registered:", registration);
+            })
+            .catch((error) => {
+              console.log("Service Worker registration failed:", error);
+            });
+        });
+      }
     </script>
   </body>
 </html>

@@ -1,82 +1,25 @@
+import { HelmetProvider } from "react-helmet-async";
+import { BrowserRouter as Router } from "react-router-dom";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
-import Layout from "./components/layout/Layout";
-import Settings from "./components/settings/Settings";
-import AdminPage from "./components/admin/AdminPage";
-import UserDashboard from "./components/user/UserDashboard";
-import HomePage from "./components/home/HomePage";
-import PostDetail from "./components/posts/PostDetail";
-import ContentGuidelines from "./components/guidelines/ContentGuidelines";
-import TermsOfUse from "./components/legal/TermsOfUse";
-import PropTypes from "prop-types";
+import { AuthProvider } from "./contexts/AuthContext";
+import { AccessibilityProvider } from "./components/common/AccessibilityProvider";
+import "./styles/accessibility.css";
+import AppRoutes from "./Routes";
 
 function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <ThemeProvider>
-          <Layout>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/post/:postId" element={<PostDetail />} />
-              <Route path="/guidelines" element={<ContentGuidelines />} />
-              <Route path="/terms" element={<TermsOfUse />} />
-              <Route
-                path="/settings"
-                element={
-                  <PrivateRoute>
-                    <Settings />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <PrivateRoute>
-                    <UserDashboard />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/admin"
-                element={
-                  <AdminRoute>
-                    <AdminPage />
-                  </AdminRoute>
-                }
-              />
-            </Routes>
-          </Layout>
-        </ThemeProvider>
-      </AuthProvider>
-    </Router>
+    <HelmetProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <AccessibilityProvider>
+            <Router>
+              <AppRoutes />
+            </Router>
+          </AccessibilityProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </HelmetProvider>
   );
 }
-
-// PrivateRoute component to protect routes that require authentication
-function PrivateRoute({ children }) {
-  const { user } = useAuth();
-  return user ? children : <Navigate to="/" replace />;
-}
-
-// AdminRoute component to protect routes that require admin access
-function AdminRoute({ children }) {
-  const { user } = useAuth();
-  return user?.role === "admin" ? children : <Navigate to="/" replace />;
-}
-
-PrivateRoute.propTypes = {
-  children: PropTypes.node.isRequired,
-};
-
-AdminRoute.propTypes = {
-  children: PropTypes.node.isRequired,
-};
 
 export default App;

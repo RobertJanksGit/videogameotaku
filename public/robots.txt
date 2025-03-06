@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Disallow admin and private routes
+Disallow: /admin
+Disallow: /settings
+Disallow: /dashboard
+
+# Sitemap location
+Sitemap: https://videogameotaku.com/sitemap.xml 
