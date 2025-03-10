@@ -14,6 +14,7 @@ import {
   getDocs,
   serverTimestamp,
   updateDoc,
+  increment,
 } from "firebase/firestore";
 import PropTypes from "prop-types";
 import VoteButtons from "./VoteButtons";
@@ -405,6 +406,46 @@ const PostDetail = () => {
     fetchPost();
   }, [postId, navigate]);
 
+  // Add a new useEffect to fetch comments when the post is loaded
+  useEffect(() => {
+    const fetchComments = async () => {
+      if (!postId) return;
+
+      try {
+        // Query for top-level comments (parentId is null)
+        const commentsQuery = query(
+          collection(db, "comments"),
+          where("postId", "==", postId),
+          where("parentId", "==", null),
+          orderBy("createdAt", "desc")
+        );
+
+        const commentsSnapshot = await getDocs(commentsQuery);
+
+        if (!commentsSnapshot.empty) {
+          const fetchedComments = commentsSnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            isLoadingReplies: false,
+          }));
+
+          setComments(fetchedComments);
+
+          // Update the set of loaded comment IDs
+          setLoadedCommentIds(
+            new Set(fetchedComments.map((comment) => comment.id))
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching comments:", error);
+      }
+    };
+
+    if (!loading && post) {
+      fetchComments();
+    }
+  }, [postId, loading, post]);
+
   // Separate useEffect for handling comment scrolling
   useEffect(() => {
     if (
@@ -476,6 +517,18 @@ const PostDetail = () => {
         replyCount: 0, // Add replyCount field
       });
 
+      // Update the post's comment count in Firestore
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, {
+        commentCount: increment(1),
+      });
+
+      // Update the local post state with the new comment count
+      setPost((prevPost) => ({
+        ...prevPost,
+        commentCount: (prevPost.commentCount || 0) + 1,
+      }));
+
       const newCommentObj = {
         id: commentRef.id,
         postId,
@@ -533,36 +586,44 @@ const PostDetail = () => {
         return;
       }
 
-      // Create the reply data object
+      // Create the reply data
       const replyData = {
         postId,
-        content,
+        content: content.trim(),
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL,
+        authorPhotoURL: user.photoURL || "",
         parentId,
         createdAt: serverTimestamp(),
         replyCount: 0,
       };
 
-      // Create the reply in Firestore
+      // Add the reply to Firestore
       const replyRef = await addDoc(collection(db, "comments"), replyData);
 
       // Update the parent comment's replyCount in Firestore
-      const parentRef = doc(db, "comments", parentId);
-      await updateDoc(parentRef, {
-        replyCount: (parentComment.replyCount || 0) + 1,
+      const parentCommentRef = doc(db, "comments", parentId);
+      await updateDoc(parentCommentRef, {
+        replyCount: increment(1),
       });
 
+      // Update the post's comment count in Firestore
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, {
+        commentCount: increment(1),
+      });
+
+      // Update the local post state with the new comment count
+      setPost((prevPost) => ({
+        ...prevPost,
+        commentCount: (prevPost.commentCount || 0) + 1,
+      }));
+
+      // Create the reply object for local state
       const newReply = {
         id: replyRef.id,
-        content,
-        authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL,
-        parentId,
+        ...replyData,
         createdAt: new Date(),
-        replyCount: 0,
         isLoadingReplies: false,
       };
 
