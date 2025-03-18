@@ -337,6 +337,17 @@ const HomePage = () => {
         }}
       />
       <div className="w-full space-y-8">
+        {/* Page Title - Adding h1 for main page title */}
+        <header>
+          <h1 className="text-4xl font-bold mb-6 text-gray-900 dark:text-white">
+            Video Game Otaku
+          </h1>
+          <p className="text-lg mb-8 text-gray-700 dark:text-gray-300">
+            Your ultimate destination for gaming news, reviews, and community
+            discussions.
+          </p>
+        </header>
+
         {/* Featured Posts Section */}
         <section className="w-full">
           <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
@@ -506,6 +517,10 @@ const HomePage = () => {
             <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
               Latest Posts
             </h2>
+            {/* Filter Section - Adding h3 for filter section */}
+            <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">
+              Filter by Platform and Category
+            </h3>
             {/* Mobile-optimized filters */}
             <div className="flex flex-col sm:flex-row gap-4">
               <select
@@ -698,16 +713,21 @@ const HomePage = () => {
               )}
 
               {!isLoading && hasMore && (
-                <button
-                  onClick={() => fetchLatestPosts(true)}
-                  className={`px-6 py-2 text-sm rounded-md ${
-                    darkMode
-                      ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
-                      : "bg-gray-100 text-blue-500 hover:bg-gray-200"
-                  }`}
-                >
-                  Load More
-                </button>
+                <div>
+                  <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                    More Content Available
+                  </h3>
+                  <button
+                    onClick={() => fetchLatestPosts(true)}
+                    className={`px-6 py-2 text-sm rounded-md ${
+                      darkMode
+                        ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
+                        : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+                    }`}
+                  >
+                    Load More
+                  </button>
+                </div>
               )}
 
               {!hasMore && latestPosts.length > 0 && (

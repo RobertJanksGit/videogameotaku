@@ -24,7 +24,7 @@ import {
   getNotificationMessage,
 } from "../../utils/notifications";
 import RichContent from "./RichContent";
-import SEO from "../common/SEO";
+import SEO, { createTeaser } from "../common/SEO";
 import StructuredData from "../common/StructuredData";
 import Breadcrumbs from "../common/Breadcrumbs";
 import OptimizedImage from "../common/OptimizedImage";
@@ -829,19 +829,27 @@ const PostDetail = () => {
         <>
           <SEO
             title={post.title}
-            description={post.content.substring(0, 160)}
+            description={createTeaser(post.content)}
             image={post.imageUrl}
+            url={`/post/${post.id}`}
             type="article"
             keywords={`${post.platforms?.join(", ")}, ${
               post.category
             }, gaming, video games`}
             author={post.authorName}
+            publishedTime={post.createdAt?.toDate().toISOString()}
+            modifiedTime={
+              post.updatedAt?.toDate().toISOString() ||
+              post.createdAt?.toDate().toISOString()
+            }
+            tags={Array.isArray(post.platforms) ? post.platforms : []}
+            section={post.category || "Gaming"}
           />
           <StructuredData
             type="Article"
             data={{
               title: post.title,
-              description: post.content.substring(0, 160),
+              description: createTeaser(post.content, 60),
               image: post.imageUrl,
               datePublished: post.createdAt?.toDate().toISOString(),
               dateModified:
@@ -929,6 +937,13 @@ const PostDetail = () => {
                       role="list"
                       aria-label="Platforms"
                     >
+                      <h3
+                        className={`text-sm font-semibold ${
+                          darkMode ? "text-gray-300" : "text-gray-700"
+                        }`}
+                      >
+                        Platforms:
+                      </h3>
                       {(Array.isArray(post.platforms)
                         ? post.platforms
                         : [post.platform]
@@ -964,6 +979,13 @@ const PostDetail = () => {
                   <RichContent content={post.content} darkMode={darkMode} />
                 </div>
                 <footer className="mt-6">
+                  <h3
+                    className={`text-lg font-semibold mb-2 ${
+                      darkMode ? "text-gray-200" : "text-gray-800"
+                    }`}
+                  >
+                    Article Information
+                  </h3>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
                       <span
@@ -1008,40 +1030,49 @@ const PostDetail = () => {
               </h2>
 
               {user ? (
-                <form onSubmit={handleSubmitComment} className="mb-8">
-                  <label htmlFor="comment" className="sr-only">
-                    Add a comment
-                  </label>
-                  <textarea
-                    id="comment"
-                    rows="3"
-                    value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Add a comment..."
-                    className={`w-full px-4 py-2 rounded-lg ${
-                      darkMode
-                        ? "bg-gray-700 text-white placeholder-gray-400"
-                        : "bg-white text-gray-900 placeholder-gray-500"
-                    } border ${
-                      darkMode ? "border-gray-600" : "border-gray-300"
-                    } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    aria-label="Add a comment"
-                  />
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={!newComment.trim()}
-                      className={`px-4 py-2 rounded-lg ${
+                <div>
+                  <h3
+                    className={`text-lg font-semibold mb-3 ${
+                      darkMode ? "text-gray-200" : "text-gray-800"
+                    }`}
+                  >
+                    Add Your Comment
+                  </h3>
+                  <form onSubmit={handleSubmitComment} className="mb-8">
+                    <label htmlFor="comment" className="sr-only">
+                      Add a comment
+                    </label>
+                    <textarea
+                      id="comment"
+                      rows="3"
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Add a comment..."
+                      className={`w-full px-4 py-2 rounded-lg ${
                         darkMode
-                          ? "bg-blue-600 hover:bg-blue-700"
-                          : "bg-blue-500 hover:bg-blue-600"
-                      } text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      Post Comment
-                    </button>
-                  </div>
-                </form>
+                          ? "bg-gray-700 text-white placeholder-gray-400"
+                          : "bg-white text-gray-900 placeholder-gray-500"
+                      } border ${
+                        darkMode ? "border-gray-600" : "border-gray-300"
+                      } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                      aria-label="Add a comment"
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={!newComment.trim()}
+                        className={`px-4 py-2 rounded-lg ${
+                          darkMode
+                            ? "bg-blue-600 hover:bg-blue-700"
+                            : "bg-blue-500 hover:bg-blue-600"
+                        } text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        Post Comment
+                      </button>
+                    </div>
+                  </form>
+                </div>
               ) : (
                 <p
                   className={`mb-8 ${

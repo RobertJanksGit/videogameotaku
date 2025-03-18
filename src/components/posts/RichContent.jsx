@@ -12,12 +12,18 @@ const RichContent = ({ content, darkMode }) => {
           // Handle image tags
           const [url, alt] = part.slice(5, -1).split("|");
           return (
-            <img
-              key={index}
-              src={url}
-              alt={alt || ""}
-              className="my-4 rounded-lg max-h-[500px] w-auto mx-auto"
-            />
+            <figure key={index} className="my-6">
+              <img
+                src={url}
+                alt={alt || ""}
+                className="my-4 rounded-lg max-h-[500px] w-auto mx-auto"
+              />
+              {alt && (
+                <figcaption className="text-center text-sm text-gray-500 dark:text-gray-400">
+                  {alt}
+                </figcaption>
+              )}
+            </figure>
           );
         } else {
           // Render markdown content
@@ -27,31 +33,58 @@ const RichContent = ({ content, darkMode }) => {
               components={{
                 // Style headers
                 h1: ({ children }) => (
-                  <h1
-                    className={`text-3xl font-bold mb-4 ${
-                      darkMode ? "text-white" : "text-gray-900"
-                    }`}
-                  >
-                    {children}
-                  </h1>
-                ),
-                h2: ({ children }) => (
                   <h2
-                    className={`text-2xl font-bold mb-3 ${
+                    className={`text-3xl font-bold mb-4 ${
                       darkMode ? "text-white" : "text-gray-900"
                     }`}
                   >
                     {children}
                   </h2>
                 ),
-                h3: ({ children }) => (
+                h2: ({ children }) => (
                   <h3
-                    className={`text-xl font-bold mb-2 ${
+                    className={`text-2xl font-bold mb-3 ${
                       darkMode ? "text-white" : "text-gray-900"
                     }`}
                   >
                     {children}
                   </h3>
+                ),
+                h3: ({ children }) => (
+                  <h4
+                    className={`text-xl font-bold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h4>
+                ),
+                h4: ({ children }) => (
+                  <h5
+                    className={`text-lg font-bold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h5>
+                ),
+                h5: ({ children }) => (
+                  <h6
+                    className={`text-base font-bold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h6>
+                ),
+                h6: ({ children }) => (
+                  <h6
+                    className={`text-sm font-bold mb-2 ${
+                      darkMode ? "text-white" : "text-gray-900"
+                    }`}
+                  >
+                    {children}
+                  </h6>
                 ),
                 // Style paragraphs
                 p: ({ children, node }) => {
@@ -105,7 +138,7 @@ const RichContent = ({ content, darkMode }) => {
                   </blockquote>
                 ),
                 // Style code blocks
-                code: ({ node, inline, className, children }) => {
+                code: ({ node, inline, children }) => {
                   // If it's an inline code block
                   if (inline) {
                     return (

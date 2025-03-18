@@ -8,6 +8,20 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
+        "source": "/post/**",
+        "function": {
+          "functionId": "socialMediaMetaTags",
+          "region": "us-central1"
+        },
+        "conditions": [
+          {
+            "header": "user-agent",
+            "regex": "(facebookexternalhit|Facebot|Twitterbot|Pinterest|LinkedInBot|WhatsApp|googlebot|bingbot|yandex|baiduspider|Slackbot|TelegramBot|Discord|Discordbot)",
+            "operator": "matches"
+          }
+        ]
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

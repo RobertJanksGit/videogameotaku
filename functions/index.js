@@ -1614,6 +1614,16 @@ async function cleanupMemory() {
 const WEBSITE_URL = defineSecret("WEBSITE_URL");
 const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
 
+// Helper function to ensure URLs have the proper prefix
+const normalizeUrl = (url) => {
+  if (!url) return "";
+  const trimmedUrl = url.trim();
+  if (trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://")) {
+    return trimmedUrl;
+  }
+  return `https://${trimmedUrl}`;
+};
+
 // Update the Facebook auto-posting function
 export const autoPostToFacebook = onDocumentWritten(
   {
@@ -1633,7 +1643,13 @@ export const autoPostToFacebook = onDocumentWritten(
 
       // Validate website URL format
       try {
-        new URL(WEBSITE_URL.value());
+        // Use the normalizeUrl helper function to ensure proper URL format
+        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+
+        // Validate the normalized URL
+        new URL(websiteUrl);
+
+        console.log("Website URL validated successfully");
       } catch (e) {
         throw new Error("Invalid Website URL configuration");
       }
@@ -1728,113 +1744,36 @@ export const autoPostToFacebook = onDocumentWritten(
 
     try {
       // Prepare the post URL
-      const postUrl = `${WEBSITE_URL.value().replace(/\/$/, "")}/post/${
+      const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+      const postUrl = `${websiteUrl.replace(/\/$/, "")}/post/${
         event.params.postId
       }`;
 
+      // Clean and prepare post content by removing markdown links and normalizing whitespace
       const cleanContent = afterData.content
         .replace(/\[Source\]\([^)]+\)/g, "")
         .replace(/\[.*?\]\(.*?\)/g, "")
         .replace(/\n+/g, " ")
         .trim();
 
+      // Create a shorter teaser for Facebook to entice click-through
+      // Limit to 40-50 words for better readability on Facebook
       const words = cleanContent.split(" ");
       const teaser =
-        words.slice(0, 100).join(" ") + (words.length > 100 ? "..." : "");
+        words.slice(0, 40).join(" ") + (words.length > 40 ? "..." : "");
 
+      // Create the Facebook post message with the shorter teaser
       const message = `${afterData.title}\n\n${teaser}\n\nRead more: ${postUrl}`;
 
-      // Initialize post data with message only
-      let postData = {
+      // Always use a link post to allow Facebook to scrape the image from Open Graph metadata
+      const postData = {
         message: message,
+        link: postUrl,
       };
-
-      // If we have an image, verify it's accessible and upload it
-      if (afterData.imageUrl) {
-        try {
-          // First verify the image URL is accessible
-          console.log("Verifying image accessibility:", afterData.imageUrl);
-          const imageCheckResponse = await fetch(afterData.imageUrl, {
-            method: "HEAD",
-          });
-
-          if (!imageCheckResponse.ok) {
-            throw new Error(
-              `Image URL is not accessible: ${imageCheckResponse.status}`
-            );
-          }
-
-          console.log("Image is accessible, attempting upload to Facebook");
-
-          // Upload image with detailed error handling and debugging
-          const imageUploadResponse = await fetch(
-            `https://graph.facebook.com/v19.0/${pageId}/photos`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
-              },
-              body: JSON.stringify({
-                url: afterData.imageUrl,
-                published: false, // Important: Keep this false
-                temporary: true, // This is correct for attachments
-                caption: afterData.title,
-                description: cleanContent.substring(0, 200), // Add description for better preview
-              }),
-            }
-          );
-
-          const imageResponseText = await imageUploadResponse.text();
-          console.log("Raw image upload response:", imageResponseText);
-
-          let imageData;
-          try {
-            imageData = JSON.parse(imageResponseText);
-          } catch (e) {
-            console.error("Failed to parse image upload response:", e);
-            throw new Error(
-              `Invalid response from Facebook: ${imageResponseText}`
-            );
-          }
-
-          if (!imageUploadResponse.ok || !imageData.id) {
-            throw new Error(
-              `Facebook image upload failed: ${
-                imageData.error?.message || "No image ID returned"
-              }`
-            );
-          }
-
-          console.log("Successfully uploaded image to Facebook:", imageData);
-
-          // Create post with attached media only (no link)
-          postData = {
-            message: message,
-            attached_media: [{ media_fbid: imageData.id }],
-          };
-
-          // Log the final post data structure
-          console.log("Posting with image attachment:", postData);
-        } catch (imageError) {
-          console.error("Error handling image:", {
-            error: imageError.message,
-            stack: imageError.stack,
-            imageUrl: afterData.imageUrl,
-          });
-          // If image fails, fall back to link post
-          postData.link = postUrl;
-          console.log("Falling back to link-only post");
-        }
-      } else {
-        // No image, use link
-        postData.link = postUrl;
-      }
 
       console.log("Final Facebook post data:", {
         hasMessage: !!postData.message,
         hasLink: !!postData.link,
-        hasAttachedMedia: !!postData.attached_media,
         postUrl: postUrl,
         pageId: pageId,
       });
@@ -1901,3 +1840,6 @@ export const autoPostToFacebook = onDocumentWritten(
     }
   }
 );
+
+// Export the social media metadata function
+export { socialMediaMetaTags } from "./socialMediaMetaTags.js";

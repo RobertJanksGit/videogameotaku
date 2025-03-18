@@ -125,13 +125,22 @@ const CategoryPage = () => {
             { path: `/${category}`, label: info.title },
           ]}
         />
-        <h1
-          className={`text-3xl font-bold mb-8 ${
-            darkMode ? "text-white" : "text-gray-900"
-          }`}
-        >
-          {info.title}
-        </h1>
+        <header>
+          <h1
+            className={`text-3xl font-bold mb-4 ${
+              darkMode ? "text-white" : "text-gray-900"
+            }`}
+          >
+            {info.title}
+          </h1>
+          <p
+            className={`text-lg mb-8 ${
+              darkMode ? "text-gray-300" : "text-gray-600"
+            }`}
+          >
+            {info.description}
+          </p>
+        </header>
         {loading ? (
           <div className="flex justify-center">
             <div
@@ -141,71 +150,114 @@ const CategoryPage = () => {
             />
           </div>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {posts.map((post) => (
-              <article
-                key={post.id}
-                className={`h-entry rounded-lg overflow-hidden shadow-lg ${
-                  darkMode ? "bg-gray-800" : "bg-white"
-                }`}
-              >
-                {post.imageUrl && (
-                  <OptimizedImage
-                    src={post.imageUrl}
-                    alt={post.title}
-                    className="w-full h-48 u-photo"
-                    sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
-                  />
-                )}
-                <div className="p-6">
-                  <h2
-                    className={`text-xl font-bold mb-2 p-name ${
-                      darkMode ? "text-white" : "text-gray-900"
-                    }`}
-                  >
-                    {post.title}
-                  </h2>
-                  <p
-                    className={`text-sm mb-4 p-summary ${
-                      darkMode ? "text-gray-300" : "text-gray-600"
-                    }`}
-                  >
-                    {post.content.substring(0, 150)}...
-                  </p>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center space-x-2 h-card p-author">
-                      {post.authorPhotoURL && (
-                        <img
-                          src={post.authorPhotoURL}
-                          alt={post.authorName}
-                          className="w-8 h-8 rounded-full u-photo"
-                        />
-                      )}
-                      <span
-                        className={`text-sm p-name ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        {post.authorName}
-                      </span>
-                    </div>
-                    <time
-                      dateTime={post.createdAt?.toDate().toISOString()}
-                      className={`text-sm dt-published ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
+          <section>
+            <h2
+              className={`text-2xl font-bold mb-6 ${
+                darkMode ? "text-white" : "text-gray-900"
+              }`}
+            >
+              Latest {info.title}
+            </h2>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {posts.map((post) => (
+                <article
+                  key={post.id}
+                  className={`h-entry rounded-lg overflow-hidden shadow-lg ${
+                    darkMode ? "bg-gray-800" : "bg-white"
+                  }`}
+                >
+                  {post.imageUrl && (
+                    <OptimizedImage
+                      src={post.imageUrl}
+                      alt={post.title}
+                      className="w-full h-48 u-photo"
+                      sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                    />
+                  )}
+                  <div className="p-6">
+                    <h3
+                      className={`text-xl font-bold mb-2 p-name ${
+                        darkMode ? "text-white" : "text-gray-900"
                       }`}
                     >
-                      {post.createdAt?.toDate().toLocaleDateString()}
-                    </time>
+                      {post.title}
+                    </h3>
+                    <p
+                      className={`text-sm mb-4 p-summary ${
+                        darkMode ? "text-gray-300" : "text-gray-600"
+                      }`}
+                    >
+                      {post.content.substring(0, 150)}...
+                    </p>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center space-x-2 h-card p-author">
+                        <h4
+                          className={`text-sm font-semibold ${
+                            darkMode ? "text-gray-300" : "text-gray-700"
+                          }`}
+                        >
+                          Author:
+                        </h4>
+                        {post.authorPhotoURL && (
+                          <img
+                            src={post.authorPhotoURL}
+                            alt={post.authorName}
+                            className="w-8 h-8 rounded-full u-photo"
+                          />
+                        )}
+                        <span
+                          className={`text-sm p-name ${
+                            darkMode ? "text-gray-400" : "text-gray-500"
+                          }`}
+                        >
+                          {post.authorName}
+                        </span>
+                      </div>
+                      <div>
+                        <h4
+                          className={`text-sm font-semibold mb-1 ${
+                            darkMode ? "text-gray-300" : "text-gray-700"
+                          }`}
+                        >
+                          Published:
+                        </h4>
+                        <time
+                          dateTime={post.createdAt?.toDate().toISOString()}
+                          className={`text-sm dt-published ${
+                            darkMode ? "text-gray-400" : "text-gray-500"
+                          }`}
+                        >
+                          {post.createdAt?.toDate().toLocaleDateString()}
+                        </time>
+                      </div>
+                    </div>
+                    <a href={`/post/${post.id}`} className="u-url hidden">
+                      Permalink
+                    </a>
+                    <span className="p-category hidden">{post.category}</span>
                   </div>
-                  <a href={`/post/${post.id}`} className="u-url hidden">
-                    Permalink
-                  </a>
-                  <span className="p-category hidden">{post.category}</span>
-                </div>
-              </article>
-            ))}
-          </div>
+                </article>
+              ))}
+            </div>
+            {posts.length === 0 && (
+              <div className="text-center py-8">
+                <h3
+                  className={`text-xl font-semibold ${
+                    darkMode ? "text-gray-300" : "text-gray-700"
+                  }`}
+                >
+                  No Posts Found
+                </h3>
+                <p
+                  className={`mt-2 ${
+                    darkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
+                >
+                  Check back later for new content in this category.
+                </p>
+              </div>
+            )}
+          </section>
         )}
       </div>
     </>
