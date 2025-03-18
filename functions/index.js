@@ -55,7 +55,7 @@ const getOpenAIClient = () => {
 };
 
 // Constants for duplicate detection
-const SIMILARITY_THRESHOLD = 0.7;
+const SIMILARITY_THRESHOLD = 0.68;
 const RECENT_POSTS_HOURS = 96;
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const MAX_CONCURRENT_EMBEDDINGS = 3;
