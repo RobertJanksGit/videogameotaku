@@ -337,6 +337,17 @@ const HomePage = () => {
         }}
       />
 
+      {/* Page Title - Adding h1 for main page title */}
+      <header className="max-w-4xl mx-auto px-4 pt-8 pb-4">
+        <h1 className="text-4xl font-bold mb-6 text-gray-900 dark:text-white">
+          Video Game Otaku
+        </h1>
+        <p className="text-lg mb-4 text-gray-700 dark:text-gray-300">
+          Your ultimate destination for gaming news, reviews, and community
+          discussions.
+        </p>
+      </header>
+
       {/* Featured Posts Section - Full Width (outside the container) */}
       <section className="w-full px-4 py-8">
         <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white max-w-7xl mx-auto">
@@ -501,17 +512,6 @@ const HomePage = () => {
 
       {/* Main content with restricted width */}
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        {/* Page Title - Adding h1 for main page title */}
-        <header>
-          <h1 className="text-4xl font-bold mb-6 text-gray-900 dark:text-white">
-            Video Game Otaku
-          </h1>
-          <p className="text-lg mb-8 text-gray-700 dark:text-gray-300">
-            Your ultimate destination for gaming news, reviews, and community
-            discussions.
-          </p>
-        </header>
-
         {/* Latest Posts Section */}
         <section className="w-full">
           <div className="flex flex-col space-y-4 mb-6">
