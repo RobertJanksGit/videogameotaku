@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useToast } from "../../contexts/ToastContext";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../../config/firebase";
 import PropTypes from "prop-types";
 
 const VoteButtons = ({ post, darkMode, onVoteChange }) => {
   const { user } = useAuth();
+  const { showInfoToast } = useToast();
   const [isVoting, setIsVoting] = useState(false);
 
   // Calculate total votes
@@ -15,7 +17,8 @@ const VoteButtons = ({ post, darkMode, onVoteChange }) => {
 
   const handleVote = async (voteType) => {
     if (!user) {
-      // TODO: Show login prompt
+      // Show toast notification for non-signed-in users
+      showInfoToast("Please sign in to vote on posts", 3000);
       return;
     }
 
