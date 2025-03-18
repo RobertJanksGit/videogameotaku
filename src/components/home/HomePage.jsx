@@ -336,7 +336,171 @@ const HomePage = () => {
           ],
         }}
       />
-      <div className="w-full space-y-8">
+
+      {/* Featured Posts Section - Full Width (outside the container) */}
+      <section className="w-full px-4 py-8">
+        <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white max-w-7xl mx-auto">
+          Featured Posts
+        </h2>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
+          {featuredPosts.map((post) => (
+            <div
+              key={post.id}
+              onClick={() => handlePostClick(post.id)}
+              className={`rounded-lg overflow-hidden ${
+                darkMode
+                  ? "bg-gray-800 border-gray-700"
+                  : "bg-white border-gray-200"
+              } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
+              style={{
+                gridColumn: "auto",
+                gridRow: "auto",
+                transition: "all 1s ease-in-out",
+              }}
+            >
+              {post.imageUrl ? (
+                <div className="aspect-w-16 aspect-h-9 overflow-hidden">
+                  <OptimizedImage
+                    src={post.imageUrl}
+                    alt={post.title}
+                    className="w-full h-auto object-contain"
+                    sizes="(min-width: 1024px) 25vw, (min-width: 768px) 50vw, 100vw"
+                    loading={featuredPosts.indexOf(post) < 2 ? "eager" : "lazy"}
+                    objectFit="contain"
+                  />
+                </div>
+              ) : (
+                <div
+                  className={`w-full h-48 flex items-center justify-center ${
+                    darkMode ? "bg-gray-700" : "bg-gray-100"
+                  }`}
+                >
+                  <span
+                    className={`text-4xl ${
+                      darkMode ? "text-gray-600" : "text-gray-400"
+                    }`}
+                  >
+                    📰
+                  </span>
+                </div>
+              )}
+              <div className="p-6">
+                {/* Platforms Section */}
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {(Array.isArray(post.platforms)
+                    ? post.platforms
+                    : [post.platform]
+                  ).map((platform) => (
+                    <span
+                      key={platform}
+                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                        darkMode
+                          ? "bg-gray-700 text-gray-300"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {platform}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Category and Vote Section */}
+                <div className="flex items-center justify-between mb-2">
+                  <span
+                    className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                      darkMode
+                        ? "bg-gray-700 text-gray-300"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {post.category}
+                  </span>
+                  {renderVoteButtons(post)}
+                </div>
+
+                <h3
+                  className={`text-xl font-semibold mb-2 ${
+                    darkMode ? "text-white" : "text-gray-900"
+                  }`}
+                >
+                  {post.title}
+                </h3>
+                <p
+                  className={`text-sm mb-4 line-clamp-2 ${
+                    darkMode ? "text-gray-300" : "text-gray-600"
+                  }`}
+                >
+                  {getPreviewContent(post.content)}
+                </p>
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-xs ${
+                      darkMode ? "text-gray-400" : "text-gray-500"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
+                          darkMode ? "bg-gray-700" : "bg-gray-100"
+                        }`}
+                      >
+                        {post.authorPhotoURL ? (
+                          <img
+                            src={post.authorPhotoURL}
+                            alt={post.authorName}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span
+                            className={`text-xs font-medium ${
+                              darkMode ? "text-gray-300" : "text-gray-600"
+                            }`}
+                          >
+                            {post.authorName?.[0]?.toUpperCase() || "A"}
+                          </span>
+                        )}
+                      </div>
+                      <span>{post.authorName}</span>
+                    </div>
+                  </span>
+                  <div className="flex items-center space-x-6">
+                    <span
+                      className={`text-xs flex items-center space-x-2 ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                        />
+                      </svg>
+                      <span>{post.commentCount || 0}</span>
+                    </span>
+                    <span
+                      className={`text-xs ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      {post.createdAt?.toDate().toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Main content with restricted width */}
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         {/* Page Title - Adding h1 for main page title */}
         <header>
           <h1 className="text-4xl font-bold mb-6 text-gray-900 dark:text-white">
@@ -347,169 +511,6 @@ const HomePage = () => {
             discussions.
           </p>
         </header>
-
-        {/* Featured Posts Section */}
-        <section className="w-full">
-          <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white">
-            Featured Posts
-          </h2>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 relative">
-            {featuredPosts.map((post) => (
-              <div
-                key={post.id}
-                onClick={() => handlePostClick(post.id)}
-                className={`rounded-lg overflow-hidden ${
-                  darkMode
-                    ? "bg-gray-800 border-gray-700"
-                    : "bg-white border-gray-200"
-                } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
-                style={{
-                  gridColumn: "auto",
-                  gridRow: "auto",
-                  transition: "all 1s ease-in-out",
-                }}
-              >
-                {post.imageUrl ? (
-                  <div className="aspect-w-16 aspect-h-9">
-                    <OptimizedImage
-                      src={post.imageUrl}
-                      alt={post.title}
-                      className="w-full h-48"
-                      sizes="(min-width: 1024px) 25vw, (min-width: 768px) 50vw, 100vw"
-                      loading={
-                        featuredPosts.indexOf(post) < 2 ? "eager" : "lazy"
-                      }
-                    />
-                  </div>
-                ) : (
-                  <div
-                    className={`w-full h-48 flex items-center justify-center ${
-                      darkMode ? "bg-gray-700" : "bg-gray-100"
-                    }`}
-                  >
-                    <span
-                      className={`text-4xl ${
-                        darkMode ? "text-gray-600" : "text-gray-400"
-                      }`}
-                    >
-                      📰
-                    </span>
-                  </div>
-                )}
-                <div className="p-6">
-                  {/* Platforms Section */}
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {(Array.isArray(post.platforms)
-                      ? post.platforms
-                      : [post.platform]
-                    ).map((platform) => (
-                      <span
-                        key={platform}
-                        className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                          darkMode
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {platform}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Category and Vote Section */}
-                  <div className="flex items-center justify-between mb-2">
-                    <span
-                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                        darkMode
-                          ? "bg-gray-700 text-gray-300"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {post.category}
-                    </span>
-                    {renderVoteButtons(post)}
-                  </div>
-
-                  <h3
-                    className={`text-xl font-semibold mb-2 ${
-                      darkMode ? "text-white" : "text-gray-900"
-                    }`}
-                  >
-                    {post.title}
-                  </h3>
-                  <p
-                    className={`text-sm mb-4 line-clamp-2 ${
-                      darkMode ? "text-gray-300" : "text-gray-600"
-                    }`}
-                  >
-                    {getPreviewContent(post.content)}
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-xs ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <div
-                          className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
-                            darkMode ? "bg-gray-700" : "bg-gray-100"
-                          }`}
-                        >
-                          {post.authorPhotoURL ? (
-                            <img
-                              src={post.authorPhotoURL}
-                              alt={post.authorName}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span
-                              className={`text-xs font-medium ${
-                                darkMode ? "text-gray-300" : "text-gray-600"
-                              }`}
-                            >
-                              {post.authorName?.[0]?.toUpperCase() || "A"}
-                            </span>
-                          )}
-                        </div>
-                        <span>{post.authorName}</span>
-                      </div>
-                    </span>
-                    <div className="flex items-center space-x-6">
-                      <span
-                        className={`text-xs flex items-center space-x-2 ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth="2"
-                            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                          />
-                        </svg>
-                        <span>{post.commentCount || 0}</span>
-                      </span>
-                      <span
-                        className={`text-xs ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        {post.createdAt?.toDate().toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
 
         {/* Latest Posts Section */}
         <section className="w-full">
@@ -569,15 +570,16 @@ const HomePage = () => {
                 } shadow-lg border cursor-pointer transition-transform hover:scale-[1.01]`}
               >
                 {post.imageUrl && (
-                  <div className="w-full h-64">
+                  <div className="w-full aspect-w-16 aspect-h-9 overflow-hidden">
                     <OptimizedImage
                       src={post.imageUrl}
                       alt={post.title}
-                      className="w-full h-full u-photo"
+                      className="w-full h-auto object-contain u-photo"
                       sizes="(min-width: 1024px) 896px, 100vw"
                       loading={
                         latestPosts.indexOf(post) === 0 ? "eager" : "lazy"
                       }
+                      objectFit="contain"
                     />
                   </div>
                 )}

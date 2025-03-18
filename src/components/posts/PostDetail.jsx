@@ -884,8 +884,9 @@ const PostDetail = () => {
                   <OptimizedImage
                     src={post.imageUrl}
                     alt={post.title}
-                    className="w-full h-64 rounded-lg mb-6 u-photo"
+                    className="w-full h-auto rounded-lg mb-6 u-photo"
                     sizes="(min-width: 1024px) 896px, 100vw"
+                    objectFit="contain"
                   />
                 </figure>
               )}

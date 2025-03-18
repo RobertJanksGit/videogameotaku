@@ -115,10 +115,17 @@ const OptimizedImage = ({
           loading={loading}
           onLoad={handleLoad}
           onError={handleError}
-          className={`w-full h-full transition-opacity duration-300 ${
+          className={`transition-opacity duration-300 ${
             loaded ? "opacity-100" : "opacity-0"
+          } ${
+            objectFit === "contain" || className?.includes("h-auto")
+              ? "w-full h-auto"
+              : "w-full h-full"
           }`}
-          style={{ objectFit }}
+          style={{
+            objectFit,
+            objectPosition: objectFit === "contain" ? "center" : "center",
+          }}
           srcSet={generateSrcSet()}
           sizes={sizes}
           decoding="async"
