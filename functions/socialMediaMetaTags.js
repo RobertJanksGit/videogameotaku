@@ -166,8 +166,23 @@ export const socialMediaMetaTags = onRequest(
 
         res.status(200).send(html);
       } else {
-        // For regular users, redirect to the main app
-        res.redirect(url.pathname);
+        // For regular users, we'll redirect to the root with a hash fragment
+        // This will maintain the original path and work with client-side routing
+        console.log(
+          `Regular user detected. Redirecting with path hash for: ${url.pathname}`
+        );
+
+        // Set cache control to prevent browser caching redirect
+        res.set(
+          "Cache-Control",
+          "no-store, no-cache, must-revalidate, proxy-revalidate"
+        );
+        res.set("Pragma", "no-cache");
+        res.set("Expires", "0");
+
+        // Redirect to the index page with a special parameter that the client can use
+        // to restore the original route after the page loads
+        res.redirect(302, `/?redirect=${encodeURIComponent(url.pathname)}`);
       }
     } catch (error) {
       console.error("Error generating meta tags:", error);

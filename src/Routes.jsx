@@ -1,4 +1,11 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { useEffect } from "react";
 import { useAuth } from "./contexts/AuthContext";
 import PropTypes from "prop-types";
 import Layout from "./components/layout/Layout";
@@ -23,6 +30,26 @@ const AdminRoute = ({ children }) => {
   return user?.role === "admin" ? children : <Navigate to="/" replace />;
 };
 
+// RedirectHandler component to handle redirect parameter
+const RedirectHandler = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Check if we have a redirect parameter
+    const params = new URLSearchParams(location.search);
+    const redirectPath = params.get("redirect");
+
+    if (redirectPath) {
+      // Navigate to the specified path without adding to history
+      // This ensures the browser's back button works properly
+      navigate(redirectPath, { replace: true });
+    }
+  }, [location, navigate]);
+
+  return null;
+};
+
 PrivateRoute.propTypes = {
   children: PropTypes.node.isRequired,
 };
@@ -34,6 +61,9 @@ AdminRoute.propTypes = {
 const AppRoutes = () => {
   return (
     <Layout>
+      {/* Handle redirects from Cloud Function */}
+      <RedirectHandler />
+
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={<HomePage />} />

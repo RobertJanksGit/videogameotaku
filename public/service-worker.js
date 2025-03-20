@@ -1,8 +1,8 @@
-const CACHE_NAME = "vgotaku-cache-v1";
-const STATIC_CACHE = "static-v1";
-const DYNAMIC_CACHE = "dynamic-v1";
-const API_CACHE = "api-v1";
-const IMAGE_CACHE = "images-v1";
+// Cache names
+const STATIC_CACHE = "static-v2";
+const DYNAMIC_CACHE = "dynamic-v2";
+const API_CACHE = "api-v2";
+const IMAGE_CACHE = "images-v2";
 
 const STATIC_ASSETS = [
   "/",
@@ -83,7 +83,23 @@ const isResponseStale = (response, strategy) => {
 
 // Fetch event with different strategies based on request type
 self.addEventListener("fetch", (event) => {
+  // Skip non-GET requests
+  if (event.request.method !== "GET") return;
+
   const strategy = getCacheStrategy(event.request);
+
+  // Handle navigation requests differently
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      // For navigation, try network first then fallback to cache
+      fetch(event.request, { cache: "no-store" }).catch(() => {
+        return caches
+          .match("/index.html")
+          .then((response) => response || fetch("/index.html"));
+      })
+    );
+    return;
+  }
 
   switch (strategy) {
     case "static":
