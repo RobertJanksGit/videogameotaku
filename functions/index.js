@@ -24,6 +24,9 @@ import { randomBytes } from "crypto";
 import OpenAI from "openai";
 import v8 from "v8";
 
+// Import sitemap generation function
+import { generateSitemapScheduled } from "./generateSitemapScheduled.js";
+
 // Initialize Firebase Admin with admin privileges and explicit project configuration
 admin.initializeApp();
 
@@ -1843,3 +1846,6 @@ export const autoPostToFacebook = onDocumentWritten(
 
 // Export the social media metadata function
 export { socialMediaMetaTags } from "./socialMediaMetaTags.js";
+
+// Export the scheduled sitemap generation function
+export { generateSitemapScheduled };

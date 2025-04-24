@@ -142,10 +142,42 @@ async function generateSitemap() {
     // Write to file
     fs.writeFileSync(path.join(process.cwd(), "public", "sitemap.xml"), xml);
     console.log("Enhanced sitemap generated successfully!");
+
+    // Generate sitemap index file
+    generateSitemapIndex();
   } catch (error) {
     console.error("Error generating sitemap:", error);
   } finally {
     process.exit();
+  }
+}
+
+function generateSitemapIndex() {
+  try {
+    // Create the sitemapindex
+    const sitemapIndex = create({ version: "1.0", encoding: "UTF-8" }).ele(
+      "sitemapindex",
+      {
+        xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9",
+      }
+    );
+
+    // Add main sitemap
+    const sitemap = sitemapIndex.ele("sitemap");
+    sitemap.ele("loc").txt(`${SITE_URL}/sitemap.xml`);
+    sitemap.ele("lastmod").txt(new Date().toISOString());
+
+    // Convert to XML string
+    const xml = sitemapIndex.end({ prettyPrint: true });
+
+    // Write to file
+    fs.writeFileSync(
+      path.join(process.cwd(), "public", "sitemapindex.xml"),
+      xml
+    );
+    console.log("Sitemap index generated successfully!");
+  } catch (error) {
+    console.error("Error generating sitemap index:", error);
   }
 }
 

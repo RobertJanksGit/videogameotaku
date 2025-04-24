@@ -6,5 +6,6 @@ Disallow: /admin
 Disallow: /settings
 Disallow: /dashboard
 
-# Sitemap location
-Sitemap: https://videogameotaku.com/sitemap.xml 
+# Sitemap locations
+Sitemap: https://videogameotaku.com/sitemap.xml
+Sitemap: https://videogameotaku.com/sitemapindex.xml 

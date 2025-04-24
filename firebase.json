@@ -8,6 +8,14 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
+        "source": "/sitemap.xml",
+        "destination": "/sitemap.xml"
+      },
+      {
+        "source": "/sitemapindex.xml",
+        "destination": "/sitemapindex.xml"
+      },
+      {
         "source": "/post/**",
         "function": {
           "functionId": "socialMediaMetaTags",
@@ -46,11 +54,15 @@
         ]
       },
       {
-        "source": "/@(manifest.json|sitemap.xml|robots.txt)",
+        "source": "/@(manifest.json|sitemap.xml|sitemapindex.xml|robots.txt)",
         "headers": [
           {
             "key": "Cache-Control",
             "value": "public, max-age=3600"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/xml"
           }
         ]
       },
