@@ -24,7 +24,7 @@
     <!-- Default meta tags (will be overridden by React Helmet) -->
     <meta
       name="description"
-      content="Your ultimate destination for gaming news, reviews, and community discussions. Join our community of video game enthusiasts."
+      content="The latest gaming news, reviews, and community discussions for gamers. Join Video Game Otaku to discover the latest updates in the gaming world."
     />
     <meta
       name="keywords"
@@ -36,7 +36,7 @@
     <meta property="og:title" content="Video Game Otaku" />
     <meta
       property="og:description"
-      content="Your ultimate destination for gaming news, reviews, and community discussions."
+      content="The latest gaming news, reviews, and community discussions for gamers."
     />
     <meta property="og:image" content="/logo.svg" />
 
@@ -45,7 +45,7 @@
     <meta name="twitter:title" content="Video Game Otaku" />
     <meta
       name="twitter:description"
-      content="Your ultimate destination for gaming news, reviews, and community discussions."
+      content="The latest gaming news, reviews, and community discussions for gamers."
     />
     <meta name="twitter:image" content="/logo.svg" />
 
@@ -91,6 +91,38 @@
       to avoid connecting the SDK to running emulators.
     -->
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+
+    <!-- Schema.org structured data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Video Game Otaku",
+        "url": "https://videogameotaku.com",
+        "description": "The latest gaming news, reviews, and community discussions for gamers",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "https://videogameotaku.com/search?q={search_term_string}",
+          "query-input": "required name=search_term_string"
+        }
+      }
+    </script>
+
+    <!-- Organization schema -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Video Game Otaku",
+        "url": "https://videogameotaku.com",
+        "logo": "https://videogameotaku.com/logo.svg",
+        "sameAs": [
+          "https://twitter.com/VideoGameOtaku",
+          "https://www.facebook.com/VideoGameOtaku",
+          "https://www.instagram.com/videogameotaku/"
+        ]
+      }
+    </script>
 
     <style media="screen">
       body {

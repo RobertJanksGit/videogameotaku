@@ -210,6 +210,23 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.recipientId == request.auth.uid;
     }
 
+    // Sitemap locks collection - only accessible via Cloud Functions
+    match /sitemapLocks/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Sitemap logs collection - only accessible via Cloud Functions
+    match /sitemapLogs/{document=**} {
+      allow read: if isAdmin(); // Allow admins to view logs
+      allow write: if false;   // Only writable by Cloud Functions
+    }
+
+    // Sitemap errors collection - only accessible via Cloud Functions
+    match /sitemapErrors/{document=**} {
+      allow read: if isAdmin(); // Allow admins to view errors
+      allow write: if false;   // Only writable by Cloud Functions
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

@@ -1,0 +1,51 @@
+# API Keys
+
+VITE_FIREBASE_API_KEY=your_api_key_here
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain_here
+VITE_FIREBASE_PROJECT_ID=your_project_id_here
+VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket_here
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id_here
+VITE_FIREBASE_APP_ID=your_app_id_here
+
+# API URLs
+
+VITE_API_URL="http://localhost:3000"
+
+# Feature Flags
+
+VITE_ENABLE_AUTH=true
+VITE_ENABLE_COMMENTS=true
+
+# Misc
+
+VITE_APP_NAME="Video Game Otaku"
+VITE_APP_DESCRIPTION="Your source for the latest gaming news and community discussions"
+
+# Optional Configuration
+
+VITE_MAX_IMAGE_SIZE=5242880 # 5MB in bytes
+VITE_ALLOWED_IMAGE_TYPES=image/jpeg,image/png,image/gif,image/webp
+VITE_MAX_POSTS_PER_HOUR=50
+VITE_POST_COOLDOWN_MINUTES=10
+VITE_REJECTED_POST_COOLDOWN_MINUTES=3
+
+# API Configuration
+
+VALIDATION_API_URL=your_validation_api_url_here
+VALIDATION_PROMPT=your_validation_prompt_here
+
+# System Configuration
+
+SYSTEM_USER_ID=your_system_user_id_here
+
+# Rate Limiting
+
+MAX_CALLS_PER_MINUTE=50
+MAX_SYSTEM_CALLS_PER_MINUTE=500
+REQUEST_TIMEOUT=5000
+
+# Content Limits
+
+MAX_TITLE_LENGTH=200
+MAX_CONTENT_LENGTH=10000
+MIN_CONTENT_LENGTH=10

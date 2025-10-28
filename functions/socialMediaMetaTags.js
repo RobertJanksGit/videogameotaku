@@ -44,8 +44,8 @@ const createTeaser = (content = "", wordLimit = 100) => {
 
 /**
  * Cloud Function that serves pre-rendered HTML with Open Graph meta tags
- * for social media crawlers. This ensures Facebook, Twitter, and other platforms
- * can properly display link previews even though the main site is a SPA.
+ * for social media crawlers and search engines. This ensures proper indexing
+ * and rich snippets in search results as well as social media platforms.
  */
 export const socialMediaMetaTags = onRequest(
   {
@@ -73,7 +73,7 @@ export const socialMediaMetaTags = onRequest(
       let metaTags = {
         title: APP_NAME.value() || "Video Game Otaku",
         description:
-          "The latest gaming news, reviews, and community discussions",
+          "The latest gaming news, reviews, and community discussions for gamers",
         image: `${websiteUrl}/logo.svg`,
         url: websiteUrl,
         type: "website",
@@ -150,11 +150,19 @@ export const socialMediaMetaTags = onRequest(
       const isTwitterBot = /Twitterbot/i.test(userAgent);
       const isLinkedInBot = /LinkedInBot/i.test(userAgent);
       const isSocialBot = isFacebookBot || isTwitterBot || isLinkedInBot;
+
+      // Extended search engine bots pattern to include more search engines
+      const isSearchBot =
+        /googlebot|bingbot|yandex|baiduspider|yahoo|duckduckbot|sogou|exabot|semrushbot|ahrefsbot/i.test(
+          userAgent
+        );
+
       const isBot =
         isSocialBot ||
-        /bot|crawler|spider|pinterest|google|bing|yandex/i.test(userAgent);
+        isSearchBot ||
+        /bot|crawler|spider|pinterest|slackbot/i.test(userAgent);
 
-      // If this is a social media bot, serve only the meta tags without JS bundle
+      // If this is a social media bot or search engine crawler, serve the meta tags
       // For regular browsers, redirect to the main app
       if (isBot) {
         console.log(
@@ -162,7 +170,7 @@ export const socialMediaMetaTags = onRequest(
         );
 
         // Generate HTML with just the necessary meta tags
-        const html = generateHTML(metaTags);
+        const html = generateHTML(metaTags, isSearchBot);
 
         res.status(200).send(html);
       } else {
@@ -192,14 +200,21 @@ export const socialMediaMetaTags = onRequest(
 );
 
 /**
- * Generate HTML with appropriate meta tags
+ * Generate HTML with appropriate meta tags and schema.org markup
+ * @param {Object} metaTags - Object containing all meta tag data
+ * @param {boolean} isSearchBot - Whether the requesting agent is a search engine bot
+ * @returns {string} HTML document with meta tags
  */
-function generateHTML(metaTags) {
+function generateHTML(metaTags, isSearchBot = false) {
   const tagsArray = [
     `<meta charset="utf-8">`,
     `<meta name="viewport" content="width=device-width, initial-scale=1">`,
     `<title>${metaTags.title}</title>`,
     `<meta name="description" content="${metaTags.description}">`,
+
+    // Search engine specific meta tags
+    `<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">`,
+    `<link rel="canonical" href="${metaTags.url}">`,
 
     // Open Graph tags
     `<meta property="og:title" content="${metaTags.title}">`,
@@ -248,18 +263,88 @@ function generateHTML(metaTags) {
     }
   }
 
+  // Add schema.org structured data if this is a search engine bot
+  let structuredData = "";
+  if (isSearchBot) {
+    if (metaTags.type === "article") {
+      structuredData = `
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Article",
+          "headline": "${metaTags.title}",
+          "description": "${metaTags.description}",
+          "image": "${metaTags.image}",
+          "datePublished": "${metaTags.publishedTime || ""}",
+          "dateModified": "${metaTags.modifiedTime || ""}",
+          "author": {
+            "@type": "Person",
+            "name": "${metaTags.author || "Video Game Otaku"}"
+          },
+          "publisher": {
+            "@type": "Organization",
+            "name": "${APP_NAME.value() || "Video Game Otaku"}",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "${normalizeUrl(WEBSITE_URL.value())}/logo.svg"
+            }
+          },
+          "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "${metaTags.url}"
+          }
+        }
+      </script>`;
+    } else {
+      structuredData = `
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          "name": "${APP_NAME.value() || "Video Game Otaku"}",
+          "url": "${normalizeUrl(WEBSITE_URL.value())}",
+          "description": "${metaTags.description}",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "${normalizeUrl(
+              WEBSITE_URL.value()
+            )}/search?q={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
+        }
+      </script>
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "name": "${APP_NAME.value() || "Video Game Otaku"}",
+          "url": "${normalizeUrl(WEBSITE_URL.value())}",
+          "logo": "${normalizeUrl(WEBSITE_URL.value())}/logo.svg"
+        }
+      </script>`;
+    }
+  }
+
+  // Build the HTML document
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   ${tagsArray.join("\n  ")}
-  <link rel="canonical" href="${metaTags.url}">
+  ${structuredData}
 </head>
 <body>
   <h1>${metaTags.title}</h1>
   <p>${metaTags.description}</p>
-  <p>You are viewing a simplified version of this page optimized for social media sharing. <a href="${
-    metaTags.url
-  }">Click here</a> to visit the full page.</p>
+  ${
+    metaTags.type === "article"
+      ? `<p>Published on: ${new Date(
+          metaTags.publishedTime || Date.now()
+        ).toLocaleDateString()}</p>`
+      : ""
+  }
+  <p>View the full content at <a href="${metaTags.url}">${
+    metaTags.title
+  }</a></p>
 </body>
 </html>`;
 }

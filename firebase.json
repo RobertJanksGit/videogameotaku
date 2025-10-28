@@ -4,6 +4,7 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
+    "site": "videogameotaku-74ad8",
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
@@ -18,13 +19,13 @@
       {
         "source": "/post/**",
         "function": {
-          "functionId": "socialMediaMetaTags",
+          "functionId": "prerender",
           "region": "us-central1"
         },
         "conditions": [
           {
             "header": "user-agent",
-            "regex": "(facebookexternalhit|Facebot|Twitterbot|Pinterest|LinkedInBot|WhatsApp|googlebot|bingbot|yandex|baiduspider|Slackbot|TelegramBot|Discord|Discordbot)",
+            "regex": "(facebookexternalhit|Facebot|Twitterbot|Pinterest|LinkedInBot|WhatsApp|googlebot|bingbot|yandex|baiduspider|Slackbot|TelegramBot|Discord|Discordbot|crawler|spider|robot|crawling)",
             "operator": "matches"
           }
         ]

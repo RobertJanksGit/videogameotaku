@@ -23,6 +23,26 @@ import { Buffer } from "buffer";
 import { randomBytes } from "crypto";
 import OpenAI from "openai";
 import v8 from "v8";
+import {
+  pingSearchEngines,
+  pingSearchEnginesOnUpdate,
+  pingGoogle,
+  pingBing,
+} from "./pingSearchEngines.js";
+import puppeteer from "puppeteer";
+import { generateSitemap } from "./generateSitemap.js";
+import normalizeUrl from "./utils/normalizeUrl.js";
+
+// Define all secrets at the top of the file
+const bucketName = defineSecret("STORAGE_BUCKET_NAME");
+const validationApiUrl = defineSecret("VALIDATION_API_URL");
+const validationPrompt = defineSecret("VALIDATION_PROMPT");
+const openaiApiKey = defineSecret("OPENAI_API_KEY");
+const newsApiUrl = defineSecret("NEWS_API_URL");
+const systemUserId = defineSecret("SYSTEM_USER_ID");
+const WEBSITE_URL = defineSecret("WEBSITE_URL");
+const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
+const SITEMAP_API_KEY = defineSecret("SITEMAP_API_KEY");
 
 // Import sitemap generation function
 import { generateSitemapScheduled } from "./generateSitemapScheduled.js";
@@ -34,11 +54,6 @@ const db = admin.firestore();
 const storage = admin.storage();
 
 // Define configuration parameters
-const bucketName = defineSecret("STORAGE_BUCKET_NAME");
-const validationApiUrl = defineSecret("VALIDATION_API_URL");
-const validationPrompt = defineSecret("VALIDATION_PROMPT");
-const openaiApiKey = defineSecret("OPENAI_API_KEY");
-const newsApiUrl = defineSecret("NEWS_API_URL");
 const requestTimeout = defineInt("REQUEST_TIMEOUT", { default: 5000 }); // 5 seconds
 const maxCallsPerMinute = defineInt("MAX_CALLS_PER_MINUTE", { default: 50 });
 const maxSystemCallsPerMinute = defineInt("MAX_SYSTEM_CALLS_PER_MINUTE", {
@@ -330,7 +345,6 @@ const ALLOWED_MIME_TYPES = [
 const SECURE_TOKEN_LENGTH = 32;
 
 // System user configuration
-const systemUserId = defineSecret("SYSTEM_USER_ID");
 let SYSTEM_USER = null;
 
 // Helper function to get system user
@@ -486,11 +500,11 @@ async function checkRateLimit(userId, operationType = "default") {
   }
 }
 
-// Post validation function
+// Post validation function with sitemap regeneration
 export const validatePost = onDocumentCreated(
   {
     document: "posts/{postId}",
-    secrets: [validationApiUrl, validationPrompt, newsApiUrl],
+    secrets: [validationApiUrl, validationPrompt, newsApiUrl, WEBSITE_URL],
     maxInstances: 10,
   },
   async (event) => {
@@ -560,6 +574,18 @@ export const validatePost = onDocumentCreated(
       console.log(
         `Post ${postId} validation complete. Status: ${updatedData.status}`
       );
+
+      // After post is published, regenerate sitemap with debouncing
+      await regenerateSitemapWithDebounce();
+
+      // Ping search engines after sitemap is updated
+      try {
+        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+        await pingGoogle(`${websiteUrl}/sitemap.xml`);
+        console.log("Successfully pinged Google with updated sitemap");
+      } catch (pingError) {
+        console.error("Error pinging search engines:", pingError);
+      }
     } catch (error) {
       console.error("Error validating post:", error);
 
@@ -1613,20 +1639,6 @@ async function cleanupMemory() {
   }
 }
 
-// Add website URL parameter and Facebook token
-const WEBSITE_URL = defineSecret("WEBSITE_URL");
-const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
-
-// Helper function to ensure URLs have the proper prefix
-const normalizeUrl = (url) => {
-  if (!url) return "";
-  const trimmedUrl = url.trim();
-  if (trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://")) {
-    return trimmedUrl;
-  }
-  return `https://${trimmedUrl}`;
-};
-
 // Update the Facebook auto-posting function
 export const autoPostToFacebook = onDocumentWritten(
   {
@@ -1849,3 +1861,256 @@ export { socialMediaMetaTags } from "./socialMediaMetaTags.js";
 
 // Export the scheduled sitemap generation function
 export { generateSitemapScheduled };
+
+// Export the new pingSearchEngines functions
+export { pingSearchEngines, pingSearchEnginesOnUpdate };
+
+/**
+ * HTTP-triggered function that allows manual regeneration of the sitemap
+ * and pinging of search engines via a simple API endpoint.
+ *
+ * This can be called using:
+ * curl -X POST https://updateindexing-[region]-[project-id].cloudfunctions.net/
+ */
+export const updateIndexing = onRequest(
+  {
+    maxInstances: 1,
+    timeoutSeconds: 300, // 5 minute timeout for sitemap generation
+    secrets: [SITEMAP_API_KEY, WEBSITE_URL],
+  },
+  async (req, res) => {
+    try {
+      // Only allow POST requests
+      if (req.method !== "POST") {
+        res
+          .status(405)
+          .send("Method Not Allowed: Only POST requests are supported");
+        return;
+      }
+
+      console.log("Manual sitemap generation and search engine ping triggered");
+
+      // Get API key from request (improved security with Firebase secret)
+      const apiKey = req.query.key || req.headers["x-api-key"];
+
+      // Check against the Firebase secret
+      if (!apiKey || apiKey !== SITEMAP_API_KEY.value()) {
+        res.status(403).send("Unauthorized: Invalid or missing API key");
+        return;
+      }
+
+      // Execute sitemap generation using our direct implementation
+      try {
+        await generateSitemap();
+        console.log("Sitemap generated successfully");
+      } catch (error) {
+        console.error("Error generating sitemap:", error);
+        throw error;
+      }
+
+      // Ping Google and Bing to let them know about the updated sitemap
+      try {
+        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+        await pingGoogle(`${websiteUrl}/sitemap.xml`);
+        await pingBing(`${websiteUrl}/sitemap.xml`);
+        console.log("Search engines pinged successfully");
+      } catch (error) {
+        console.error("Error pinging search engines:", error);
+        throw error;
+      }
+
+      res.status(200).send({
+        success: true,
+        message: "Sitemap generated and search engines notified successfully",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error in manual indexing update:", error);
+      res.status(500).send({
+        success: false,
+        message: "Error processing request",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// Implement debounced sitemap regeneration
+async function regenerateSitemapWithDebounce() {
+  const lockRef = db.collection("sitemapLocks").doc("lastGeneration");
+  const minDelayMs = 5 * 60 * 1000; // 5 minutes
+
+  try {
+    // Use a transaction to ensure atomic read-write operation
+    const result = await db.runTransaction(async (transaction) => {
+      const lockDoc = await transaction.get(lockRef);
+      const now = Date.now();
+
+      if (lockDoc.exists) {
+        const lastGenerated = lockDoc.data().timestamp.toMillis();
+        if (now - lastGenerated < minDelayMs) {
+          console.log(
+            "Skipping sitemap regeneration: Recent generation detected within 5 minutes"
+          );
+          return {
+            regenerate: false,
+            lastGenerated: new Date(lastGenerated),
+          };
+        }
+      }
+
+      // Update the lock with current timestamp
+      transaction.set(lockRef, {
+        timestamp: admin.firestore.Timestamp.now(),
+        updatedBy: "validatePost function",
+      });
+
+      return {
+        regenerate: true,
+        lastGenerated: lockDoc.exists
+          ? new Date(lockDoc.data().timestamp.toMillis())
+          : null,
+      };
+    });
+
+    if (result.regenerate) {
+      console.log("Lock acquired, generating sitemap...");
+      try {
+        // Generate the sitemap directly with our enhanced implementation
+        await generateSitemap();
+
+        // Success! Update the lock with completion status
+        await lockRef.update({
+          completedAt: admin.firestore.Timestamp.now(),
+          status: "success",
+        });
+
+        console.log("Sitemap regeneration completed successfully");
+      } catch (genError) {
+        console.error("Error generating sitemap:", genError);
+
+        // Update lock with error status
+        await lockRef.update({
+          completedAt: admin.firestore.Timestamp.now(),
+          status: "error",
+          error: genError.message,
+        });
+
+        throw genError;
+      }
+    } else {
+      console.log(
+        `Sitemap generation skipped. Last generated: ${result.lastGenerated}`
+      );
+    }
+  } catch (error) {
+    console.error("Error in regenerateSitemapWithDebounce:", error);
+    throw error;
+  }
+}
+
+// Prerender function for SPA SEO optimization
+export const prerender = onRequest(
+  {
+    maxInstances: 10,
+    memory: "1GiB",
+    timeoutSeconds: 60,
+    secrets: [WEBSITE_URL],
+  },
+  async (req, res) => {
+    try {
+      // Set security headers
+      res.set("X-Content-Type-Options", "nosniff");
+      res.set("X-Frame-Options", "DENY");
+      res.set("X-XSS-Protection", "1; mode=block");
+      res.set(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains"
+      );
+      res.set("Content-Security-Policy", "default-src 'self'");
+
+      // Get user agent and check if it's a crawler
+      const userAgent = req.get("User-Agent") || "";
+      const isCrawler =
+        /bot|googlebot|crawler|spider|robot|crawling|slurp|bingbot|yandex|duckduckbot|baiduspider/i.test(
+          userAgent
+        );
+
+      // If not a crawler, redirect to the SPA route
+      if (!isCrawler) {
+        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+        res.redirect(`${websiteUrl}${req.path}`);
+        return;
+      }
+
+      console.log(`Prerendering page for crawler: ${userAgent}`);
+      console.log(`Requested path: ${req.path}`);
+
+      // Launch headless browser to render the page
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+
+      try {
+        const page = await browser.newPage();
+
+        // Set a crawler user agent to ensure proper rendering
+        await page.setUserAgent(
+          "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+        );
+
+        // Set viewport to ensure proper rendering
+        await page.setViewport({
+          width: 1200,
+          height: 800,
+        });
+
+        // Construct the full URL to render
+        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+        const url = `${websiteUrl}${req.path}`;
+        console.log(`Rendering URL: ${url}`);
+
+        // Navigate to the page and wait for network to be idle
+        await page.goto(url, {
+          waitUntil: "networkidle0",
+          timeout: 30000,
+        });
+
+        // Additional wait for SPA to fully render
+        await page.waitForTimeout(2000);
+
+        // Get the rendered HTML
+        const content = await page.content();
+
+        // Send the prerendered content
+        res.set("Content-Type", "text/html");
+        res.set("Cache-Control", "public, max-age=300"); // Cache for 5 minutes
+        res.status(200).send(content);
+        console.log(`Successfully prerendered: ${url}`);
+      } finally {
+        // Always close the browser
+        await browser.close();
+      }
+    } catch (error) {
+      console.error("Error in prerender function:", error);
+
+      // Return fallback content for crawlers
+      res.status(500).send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Video Game Otaku</title>
+          <meta name="description" content="Video Game Otaku - Your source for video game news, reviews, guides and opinions">
+        </head>
+        <body>
+          <h1>Video Game Otaku</h1>
+          <p>We're experiencing technical difficulties. Please try again later.</p>
+        </body>
+        </html>
+      `);
+    }
+  }
+);

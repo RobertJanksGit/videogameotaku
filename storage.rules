@@ -19,6 +19,14 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Sitemap rules
+    match /public/{fileName} {
+      // Anyone can read the sitemap files
+      allow read: if true;
+      // Only admins can write sitemap files
+      allow write: if isAdmin();
+    }
+
     // Profile images rules
     match /profile-images/{userId}/{imageId} {
       // Anyone can read profile images

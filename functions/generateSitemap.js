@@ -1,33 +1,56 @@
-/* eslint-env node */
-import process from "process";
+/**
+ * Sitemap generation utility for Firebase Functions
+ * This file contains the generateSitemap function used by Firebase Functions
+ */
+
 import { initializeApp, cert } from "firebase-admin/app";
 import admin from "firebase-admin";
 import { create } from "xmlbuilder2";
 import { Buffer } from "buffer";
-import dotenv from "dotenv";
 import { getStorage } from "firebase-admin/storage";
 
-dotenv.config();
+// Firebase Admin instances (lazy loaded)
+let app;
+let storage;
+let db;
 
-// Initialize Firebase Admin
-const app = initializeApp({
-  credential: cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  }),
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-});
+function getFirebaseApp() {
+  if (!app) {
+    app = initializeApp({
+      credential: cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      }),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    });
+  }
+  return app;
+}
 
-const storage = getStorage(app);
-const db = admin.firestore();
+function getStorageInstance() {
+  if (!storage) {
+    storage = getStorage(getFirebaseApp());
+  }
+  return storage;
+}
+
+function getFirestoreInstance() {
+  if (!db) {
+    db = admin.firestore();
+  }
+  return db;
+}
 
 const SITE_URL = "https://videogameotaku.com";
 
-async function generateSitemap() {
+export async function generateSitemap() {
   try {
+    // Get Firestore instance (lazy loaded)
+    const firestore = getFirestoreInstance();
+
     // Fetch all published posts ordered by last modified date
-    const postsSnapshot = await db
+    const postsSnapshot = await firestore
       .collection("posts")
       .where("status", "==", "published")
       .orderBy("updatedAt", "desc")
@@ -139,7 +162,7 @@ async function generateSitemap() {
     const xml = sitemap.end({ prettyPrint: true });
 
     // Upload sitemap.xml to Firebase Storage
-    const bucket = storage.bucket();
+    const bucket = getStorageInstance().bucket();
     const file = bucket.file("public/sitemap.xml");
     await file.save(Buffer.from(xml), {
       contentType: "application/xml",
@@ -153,8 +176,7 @@ async function generateSitemap() {
     await generateSitemapIndex();
   } catch (error) {
     console.error("Error generating sitemap:", error);
-  } finally {
-    // process.exit(); // Removed for Firebase Functions environment
+    throw error;
   }
 }
 
@@ -177,7 +199,7 @@ async function generateSitemapIndex() {
     const xml = sitemapIndex.end({ prettyPrint: true });
 
     // Upload sitemapindex.xml to Firebase Storage
-    const bucket = storage.bucket();
+    const bucket = getStorageInstance().bucket();
     const file = bucket.file("public/sitemapindex.xml");
     await file.save(Buffer.from(xml), {
       contentType: "application/xml",
@@ -188,7 +210,6 @@ async function generateSitemapIndex() {
     console.log("Sitemap index uploaded to Storage successfully!");
   } catch (error) {
     console.error("Error generating sitemap index:", error);
+    throw error;
   }
 }
-
-generateSitemap();
