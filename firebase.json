@@ -19,16 +19,9 @@
       {
         "source": "/post/**",
         "function": {
-          "functionId": "prerender",
+          "functionId": "socialMediaMetaTags",
           "region": "us-central1"
-        },
-        "conditions": [
-          {
-            "header": "user-agent",
-            "regex": "(facebookexternalhit|Facebot|Twitterbot|Pinterest|LinkedInBot|WhatsApp|googlebot|bingbot|yandex|baiduspider|Slackbot|TelegramBot|Discord|Discordbot|crawler|spider|robot|crawling)",
-            "operator": "matches"
-          }
-        ]
+        }
       },
       {
         "source": "**",

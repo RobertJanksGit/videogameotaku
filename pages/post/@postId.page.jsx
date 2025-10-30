@@ -8,10 +8,12 @@ import { ToastProvider } from "../../src/contexts/ToastContext";
 import { AccessibilityProvider } from "../../src/components/common/AccessibilityProvider";
 import "../../src/styles/accessibility.css";
 import AppRoutes from "../../src/Routes";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
 
 export { Page };
 
-function Page({ url, postId }) {
+function Page({ url, postId, post }) {
   return (
     <HelmetProvider context={{}}>
       <ThemeProvider>
@@ -19,7 +21,7 @@ function Page({ url, postId }) {
           <ToastProvider>
             <AccessibilityProvider>
               <StaticRouter location={url}>
-                <AppRoutes />
+                <AppRoutes initialPost={post} />
               </StaticRouter>
             </AccessibilityProvider>
           </ToastProvider>
@@ -36,18 +38,42 @@ async function onBeforeRender(pageContext) {
   const { routeParams, urlOriginal } = pageContext;
   const { postId } = routeParams;
 
+  // Initialize Firebase for server-side rendering
+  const firebaseConfig = {
+    apiKey: process.env.VITE_FIREBASE_API_KEY,
+    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.VITE_FIREBASE_APP_ID,
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  let post = null;
+  try {
+    const postDoc = await getDoc(doc(db, "posts", postId));
+    if (postDoc.exists()) {
+      post = { id: postDoc.id, ...postDoc.data() };
+    }
+  } catch (error) {
+    console.error("Error fetching post server-side:", error);
+  }
+
   return {
     pageContext: {
       url: urlOriginal,
       postId,
+      post,
     },
   };
 }
 
 async function render(pageContext) {
-  const { url, postId } = pageContext;
+  const { url, postId, post } = pageContext;
 
-  const page = <Page url={url} postId={postId} />;
+  const page = <Page url={url} postId={postId} post={post} />;
   const pageHtml = renderToString(page);
 
   // Extract helmet data

@@ -66,8 +66,10 @@ export const socialMediaMetaTags = onRequest(
       const url = new URL(req.url, `https://${req.hostname}`);
       const pathSegments = url.pathname.split("/").filter(Boolean);
 
-      // Get normalized website URL
-      const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+      // Get normalized website URL (fallback to production domain)
+      const websiteUrl = normalizeUrl(
+        WEBSITE_URL.value() || "https://videogameotaku.com"
+      );
 
       // Default meta values
       let metaTags = {
@@ -117,6 +119,9 @@ export const socialMediaMetaTags = onRequest(
               author: post.authorName,
               section: post.category || "Gaming",
               tags: Array.isArray(post.platforms) ? post.platforms : [],
+              imageType: post.imageContentType || "image/jpeg",
+              imageWidth: 1200,
+              imageHeight: 630,
             };
           } else {
             console.log(`Post ${postId} not found in Firestore`);
@@ -172,6 +177,8 @@ export const socialMediaMetaTags = onRequest(
         // Generate HTML with just the necessary meta tags
         const html = generateHTML(metaTags, isSearchBot);
 
+        // Explicitly set HTML content type for crawlers
+        res.set("Content-Type", "text/html; charset=utf-8");
         res.status(200).send(html);
       } else {
         // For regular users, we'll redirect to the root with a hash fragment
@@ -220,6 +227,11 @@ function generateHTML(metaTags, isSearchBot = false) {
     `<meta property="og:title" content="${metaTags.title}">`,
     `<meta property="og:description" content="${metaTags.description}">`,
     `<meta property="og:image" content="${metaTags.image}">`,
+    `<meta property="og:image:secure_url" content="${metaTags.image}">`,
+    `<meta property="og:image:alt" content="${metaTags.title}">`,
+    `<meta property="og:image:type" content="${metaTags.imageType || 'image/jpeg'}">`,
+    `<meta property="og:image:width" content="${metaTags.imageWidth || 1200}">`,
+    `<meta property="og:image:height" content="${metaTags.imageHeight || 630}">`,
     `<meta property="og:url" content="${metaTags.url}">`,
     `<meta property="og:type" content="${metaTags.type}">`,
     `<meta property="og:site_name" content="${
