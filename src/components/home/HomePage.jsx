@@ -19,6 +19,9 @@ import ShareButtons from "../common/ShareButtons";
 import SEO from "../common/SEO";
 import StructuredData from "../common/StructuredData";
 import OptimizedImage from "../common/OptimizedImage";
+import formatTimeAgo, {
+  getTimestampDate,
+} from "../../utils/formatTimeAgo";
 
 const HomePage = () => {
   const { darkMode } = useTheme();
@@ -279,6 +282,116 @@ const HomePage = () => {
     );
   };
 
+  const getAuthorInitials = (name = "") => {
+    const trimmed = name.trim();
+
+    if (!trimmed) return "??";
+
+    const parts = trimmed.split(/\s+/);
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
+
+  const renderAuthorHeader = (post) => {
+    const authorName = post.authorName || "Community Member";
+    const initials = getAuthorInitials(authorName);
+    const publishedAt = getTimestampDate(post.createdAt);
+    const relativeTime = formatTimeAgo(post.createdAt);
+    const timeDisplay = relativeTime
+      ? relativeTime === "just now"
+        ? relativeTime
+        : `· ${relativeTime}`
+      : "";
+
+    const TimeElement = publishedAt ? "time" : "span";
+
+    return (
+      <div
+        className={`flex items-center justify-between px-5 py-4 border-b ${
+          darkMode ? "border-gray-700 bg-gray-900/40" : "border-gray-200 bg-gray-50"
+        }`}
+      >
+        <button
+          type="button"
+          className="group/author flex items-center gap-3 text-left h-card p-author bg-transparent p-0 border-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+          onClick={(event) => {
+            event.stopPropagation();
+            // TODO: Navigate to author profile when route is available
+          }}
+        >
+          <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 text-sm font-semibold uppercase text-white shadow-sm transition group-hover/author:brightness-110">
+            {post.authorPhotoURL ? (
+              <img
+                src={post.authorPhotoURL}
+                alt={authorName}
+                className="h-full w-full object-cover u-photo"
+              />
+            ) : (
+              initials
+            )}
+          </span>
+          <span
+            className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
+              darkMode
+                ? "text-white group-hover/author:text-gray-100"
+                : "text-gray-900 group-hover/author:text-gray-700"
+            }`}
+          >
+            {authorName}
+          </span>
+        </button>
+        {timeDisplay ? (
+          <TimeElement
+            dateTime={
+              publishedAt ? publishedAt.toISOString() : undefined
+            }
+            className={`text-xs ${
+              darkMode ? "text-gray-400" : "text-gray-500"
+            }`}
+          >
+            {timeDisplay}
+          </TimeElement>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderCardFooter = (post) => (
+    <div className="flex items-center justify-between pt-4">
+      <div
+        className={`flex items-center gap-2 text-sm ${
+          darkMode ? "text-gray-400" : "text-gray-600"
+        }`}
+      >
+        <svg
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+          />
+        </svg>
+        <span className="font-semibold">
+          {post.commentCount != null ? post.commentCount : 0}
+        </span>
+        <span className="text-xs uppercase tracking-wide opacity-70">
+          comments
+        </span>
+      </div>
+      <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+        {renderVoteButtons(post)}
+      </div>
+    </div>
+  );
+
   const handlePostClick = (postId) => {
     navigate(`/post/${postId}`);
   };
@@ -358,17 +471,11 @@ const HomePage = () => {
             <div
               key={post.id}
               onClick={() => handlePostClick(post.id)}
-              className={`rounded-lg overflow-hidden ${
-                darkMode
-                  ? "bg-gray-800 border-gray-700"
-                  : "bg-white border-gray-200"
-              } shadow-lg border cursor-pointer transition-all duration-1000 ease-in-out transform hover:scale-[1.02]`}
-              style={{
-                gridColumn: "auto",
-                gridRow: "auto",
-                transition: "all 1s ease-in-out",
-              }}
+              className={`group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg transition-transform duration-300 hover:scale-[1.02] ${
+                darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
+              }`}
             >
+              {renderAuthorHeader(post)}
               {post.imageUrl ? (
                 <div className="aspect-w-16 aspect-h-9 overflow-hidden">
                   <OptimizedImage
@@ -395,9 +502,9 @@ const HomePage = () => {
                   </span>
                 </div>
               )}
-              <div className="p-6">
+              <div className="flex flex-1 flex-col p-6">
                 {/* Platforms Section */}
-                <div className="flex flex-wrap gap-1 mb-3">
+                <div className="mb-3 flex flex-wrap gap-1">
                   {(Array.isArray(post.platforms)
                     ? post.platforms
                     : [post.platform]
@@ -415,10 +522,10 @@ const HomePage = () => {
                   ))}
                 </div>
 
-                {/* Category and Vote Section */}
-                <div className="flex items-center justify-between mb-2">
+                {/* Category */}
+                <div className="mb-4">
                   <span
-                    className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
+                    className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
                       darkMode
                         ? "bg-gray-700 text-gray-300"
                         : "bg-gray-100 text-gray-600"
@@ -426,7 +533,6 @@ const HomePage = () => {
                   >
                     {post.category}
                   </span>
-                  {renderVoteButtons(post)}
                 </div>
 
                 <h3
@@ -443,66 +549,12 @@ const HomePage = () => {
                 >
                   {getPreviewContent(post.content)}
                 </p>
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`text-xs ${
-                      darkMode ? "text-gray-400" : "text-gray-500"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <div
-                        className={`w-6 h-6 rounded-full flex items-center justify-center overflow-hidden ${
-                          darkMode ? "bg-gray-700" : "bg-gray-100"
-                        }`}
-                      >
-                        {post.authorPhotoURL ? (
-                          <img
-                            src={post.authorPhotoURL}
-                            alt={post.authorName}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <span
-                            className={`text-xs font-medium ${
-                              darkMode ? "text-gray-300" : "text-gray-600"
-                            }`}
-                          >
-                            {post.authorName?.[0]?.toUpperCase() || "A"}
-                          </span>
-                        )}
-                      </div>
-                      <span>{post.authorName}</span>
-                    </div>
-                  </span>
-                  <div className="flex items-center space-x-6">
-                    <span
-                      className={`text-xs flex items-center space-x-2 ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                        />
-                      </svg>
-                      <span>{post.commentCount || 0}</span>
-                    </span>
-                    <span
-                      className={`text-xs ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      {post.createdAt?.toDate().toLocaleDateString()}
-                    </span>
-                  </div>
+                <div
+                  className={`mt-auto border-t ${
+                    darkMode ? "border-gray-700" : "border-gray-200"
+                  }`}
+                >
+                  {renderCardFooter(post)}
                 </div>
               </div>
             </div>
@@ -563,12 +615,13 @@ const HomePage = () => {
               <article
                 key={post.id}
                 onClick={() => handlePostClick(post.id)}
-                className={`h-entry rounded-lg overflow-hidden ${
+                className={`h-entry group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg cursor-pointer transition-transform hover:scale-[1.01] ${
                   darkMode
                     ? "bg-gray-800 border-gray-700"
                     : "bg-white border-gray-200"
-                } shadow-lg border cursor-pointer transition-transform hover:scale-[1.01]`}
+                }`}
               >
+                {renderAuthorHeader(post)}
                 {post.imageUrl && (
                   <div className="w-full aspect-w-16 aspect-h-9 overflow-hidden">
                     <OptimizedImage
@@ -583,9 +636,9 @@ const HomePage = () => {
                     />
                   </div>
                 )}
-                <div className="p-6">
-                  <div className="flex flex-col sm:flex-row gap-4 mb-4">
-                    <div className="flex flex-wrap gap-2 items-center">
+                <div className="flex flex-1 flex-col p-6">
+                  <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
                       {/* Platform tags */}
                       {(Array.isArray(post.platforms)
                         ? post.platforms
@@ -593,7 +646,7 @@ const HomePage = () => {
                       ).map((platform) => (
                         <span
                           key={platform}
-                          className={`inline-block px-3 py-1 text-sm font-semibold rounded-full p-category ${
+                          className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
                             darkMode
                               ? "bg-gray-700 text-gray-300"
                               : "bg-gray-100 text-gray-600"
@@ -604,7 +657,7 @@ const HomePage = () => {
                       ))}
                       {/* Category tag */}
                       <span
-                        className={`inline-block px-3 py-1 text-sm font-semibold rounded-full p-category ${
+                        className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
                           darkMode
                             ? "bg-gray-700 text-gray-300"
                             : "bg-gray-100 text-gray-600"
@@ -613,8 +666,10 @@ const HomePage = () => {
                         {post.category}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
-                      {renderVoteButtons(post)}
+                    <div
+                      className="flex w-full items-center justify-start gap-3 sm:w-auto sm:justify-end"
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <ShareButtons
                         url={`${window.location.origin}/post/${post.id}`}
                         title={post.title}
@@ -623,80 +678,25 @@ const HomePage = () => {
                     </div>
                   </div>
                   <h3
-                    className={`text-2xl font-bold mb-4 p-name ${
+                    className={`mb-4 text-2xl font-bold p-name ${
                       darkMode ? "text-white" : "text-gray-900"
                     }`}
                   >
                     {post.title}
                   </h3>
                   <p
-                    className={`text-base mb-4 line-clamp-3 p-summary ${
+                    className={`mb-4 text-base line-clamp-3 p-summary ${
                       darkMode ? "text-gray-300" : "text-gray-600"
                     }`}
                   >
                     {getPreviewContent(post.content)}
                   </p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2 h-card p-author">
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
-                          darkMode ? "bg-gray-700" : "bg-gray-100"
-                        }`}
-                      >
-                        {post.authorPhotoURL ? (
-                          <img
-                            src={post.authorPhotoURL}
-                            alt={post.authorName}
-                            className="w-full h-full object-cover u-photo"
-                          />
-                        ) : (
-                          <span
-                            className={`text-sm font-medium ${
-                              darkMode ? "text-gray-300" : "text-gray-600"
-                            }`}
-                          >
-                            {post.authorName?.[0]?.toUpperCase() || "A"}
-                          </span>
-                        )}
-                      </div>
-                      <span
-                        className={`text-sm p-name ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        {post.authorName}
-                      </span>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <span
-                        className={`text-sm flex items-center space-x-1 ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth="2"
-                            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                          />
-                        </svg>
-                        <span>{post.commentCount || 0}</span>
-                      </span>
-                      <time
-                        dateTime={post.createdAt?.toDate().toISOString()}
-                        className={`text-xs dt-published ${
-                          darkMode ? "text-gray-400" : "text-gray-500"
-                        }`}
-                      >
-                        {post.createdAt?.toDate().toLocaleDateString()}
-                      </time>
-                    </div>
+                  <div
+                    className={`mt-auto border-t ${
+                      darkMode ? "border-gray-700" : "border-gray-200"
+                    }`}
+                  >
+                    {renderCardFooter(post)}
                   </div>
                   <a href={`/post/${post.id}`} className="u-url hidden">
                     Permalink
