@@ -211,6 +211,7 @@ const Settings = () => {
 
       if (!profileExists) {
         profileData.createdAt = serverTimestamp();
+        profileData.karma = 0;
       }
 
       await setDoc(profileRef, profileData, { merge: true });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import SEO from "../common/SEO";
@@ -7,12 +7,21 @@ import Breadcrumbs from "../common/Breadcrumbs";
 import OptimizedImage from "../common/OptimizedImage";
 import { db } from "../../config/firebase";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
+import getRankFromKarma from "../../utils/karma";
+import { useAuthorRanks } from "../../hooks/useAuthorRanks";
 
 const CategoryPage = () => {
   const { category } = useParams();
   const { darkMode } = useTheme();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const authorIds = useMemo(
+    () => Array.from(new Set(posts.map((post) => post.authorId).filter(Boolean))),
+    [posts]
+  );
+
+  const authorRanks = useAuthorRanks(authorIds);
 
   const categoryInfo = {
     news: {
@@ -159,13 +168,28 @@ const CategoryPage = () => {
               Latest {info.title}
             </h2>
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {posts.map((post) => (
-                <article
-                  key={post.id}
-                  className={`h-entry rounded-lg overflow-hidden shadow-lg ${
-                    darkMode ? "bg-gray-800" : "bg-white"
-                  }`}
-                >
+              {posts.map((post) => {
+                const karma = post.authorId
+                  ? authorRanks[post.authorId]?.karma ?? 0
+                  : 0;
+                const rank = getRankFromKarma(karma);
+                const rankBadge = (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-slate-700/70 px-2 py-0.5 text-xs font-medium text-white"
+                    title="Rank based on total upvotes across posts"
+                  >
+                    <span aria-hidden="true">{rank.emoji}</span>
+                    <span>{rank.label}</span>
+                  </span>
+                );
+
+                return (
+                  <article
+                    key={post.id}
+                    className={`h-entry rounded-lg overflow-hidden shadow-lg ${
+                      darkMode ? "bg-gray-800" : "bg-white"
+                    }`}
+                  >
                   {post.imageUrl && (
                     <OptimizedImage
                       src={post.imageUrl}
@@ -202,7 +226,7 @@ const CategoryPage = () => {
                           <Link
                             to={`/user/${post.authorId}`}
                             aria-label={`View ${post.authorName}'s profile`}
-                            className="flex items-center space-x-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
+                            className="flex items-center space-x-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
                           >
                             {post.authorPhotoURL && (
                               <img
@@ -211,16 +235,19 @@ const CategoryPage = () => {
                                 className="w-8 h-8 rounded-full u-photo"
                               />
                             )}
-                            <span
-                              className={`text-sm p-name transition hover:underline ${
-                                darkMode ? "text-gray-200" : "text-gray-700"
-                              }`}
-                            >
-                              {post.authorName}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-sm p-name transition hover:underline ${
+                                  darkMode ? "text-gray-200" : "text-gray-700"
+                                }`}
+                              >
+                                {post.authorName}
+                              </span>
+                                {rankBadge}
+                            </div>
                           </Link>
                         ) : (
-                          <div className="flex items-center space-x-2">
+                          <div className="flex items-center space-x-3">
                             {post.authorPhotoURL && (
                               <img
                                 src={post.authorPhotoURL}
@@ -228,13 +255,16 @@ const CategoryPage = () => {
                                 className="w-8 h-8 rounded-full u-photo"
                               />
                             )}
-                            <span
-                              className={`text-sm p-name ${
-                                darkMode ? "text-gray-400" : "text-gray-500"
-                              }`}
-                            >
-                              {post.authorName}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-sm p-name ${
+                                  darkMode ? "text-gray-400" : "text-gray-500"
+                                }`}
+                              >
+                                {post.authorName}
+                              </span>
+                                {rankBadge}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -261,8 +291,9 @@ const CategoryPage = () => {
                     </a>
                     <span className="p-category hidden">{post.category}</span>
                   </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
             {posts.length === 0 && (
               <div className="text-center py-8">

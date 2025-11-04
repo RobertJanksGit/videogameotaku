@@ -8,6 +8,7 @@ import SEO from "../common/SEO";
 import OptimizedImage from "../common/OptimizedImage";
 import VoteButtons from "../posts/VoteButtons";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
+import getRankFromKarma from "../../utils/karma";
 
 const PROFILE_POST_LIMIT = 25;
 
@@ -74,7 +75,11 @@ const ProfilePage = () => {
         try {
           const profileSnap = await getDoc(profileRef);
           if (profileSnap.exists()) {
-            profileData = profileSnap.data();
+            const data = profileSnap.data() || {};
+            profileData = {
+              ...data,
+              karma: Number.isFinite(data.karma) ? data.karma : 0,
+            };
           }
         } catch (profileError) {
           if (profileError.code === "permission-denied") {
@@ -95,6 +100,7 @@ const ProfilePage = () => {
             avatarUrl: userDocData.photoURL || "",
             bio: userDocData.bio || "",
             createdAt: userDocData.createdAt || null,
+            karma: Number.isFinite(userDocData.karma) ? userDocData.karma : 0,
           };
         }
 
@@ -318,6 +324,13 @@ const ProfilePage = () => {
     ? profile.bio
     : `${profile?.displayName || "Community member"} on Video Game Otaku.`;
 
+  const karma = Number.isFinite(profile?.karma)
+    ? profile.karma
+    : Number.isFinite(userData?.karma)
+    ? userData.karma
+    : 0;
+  const rank = getRankFromKarma(karma);
+
   return (
     <>
       <SEO
@@ -354,15 +367,31 @@ const ProfilePage = () => {
             </div>
 
             <div className="flex-1 space-y-3">
-              <div>
-                <h1 className={`text-3xl font-bold ${darkMode ? "text-white" : "text-gray-900"}`}>
-                  {profile?.displayName}
-                </h1>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className={`text-3xl font-bold ${darkMode ? "text-white" : "text-gray-900"}`}>
+                    {profile?.displayName}
+                  </h1>
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-slate-700/70 px-2 py-0.5 text-xs font-medium text-white"
+                    title="Rank based on total upvotes across posts"
+                  >
+                    <span aria-hidden="true">{rank.emoji}</span>
+                    <span>{rank.label}</span>
+                  </span>
+                </div>
                 {joinDateLabel && (
                   <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
                     Joined {joinDateLabel}
                   </p>
                 )}
+                <p
+                  className={`text-sm font-medium ${
+                    darkMode ? "text-gray-300" : "text-gray-700"
+                  }`}
+                >
+                  XP: {karma} • Rank: {rank.label}
+                </p>
               </div>
 
               {profile?.bio && (

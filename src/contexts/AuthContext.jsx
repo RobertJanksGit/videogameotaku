@@ -93,6 +93,7 @@ export function AuthProvider({ children }) {
         bio: userData?.bio || "",
         createdAt: creationTimestamp(),
         updatedAt: userData?.updatedAt || null,
+        karma: Number.isFinite(userData?.karma) ? userData.karma : 0,
       });
 
       let profileSnap;
@@ -117,6 +118,7 @@ export function AuthProvider({ children }) {
         bio: "",
         createdAt: creationTimestamp(),
         updatedAt: serverTimestamp(),
+        karma: 0,
       };
 
       try {

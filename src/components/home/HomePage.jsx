@@ -21,6 +21,7 @@ import OptimizedImage from "../common/OptimizedImage";
 import formatTimeAgo, {
   getTimestampDate,
 } from "../../utils/formatTimeAgo";
+import getRankFromKarma from "../../utils/karma";
 import {
   FEED_TAB_KEYS,
   FEED_TAB_CONFIG,
@@ -29,6 +30,7 @@ import {
   mergePostsForTab,
   processPostsForTab,
 } from "../../utils/feedQueries";
+import { useAuthorRanks } from "../../hooks/useAuthorRanks";
 
 const createEmptyTabState = () => ({
   posts: [],
@@ -58,6 +60,19 @@ const HomePage = () => {
   const currentTabState = tabData[activeTab] || createEmptyTabState();
   const postsToRender = currentTabState.posts;
   const firstPostId = postsToRender[0]?.id;
+
+  const authorIds = useMemo(() => {
+    const ids = new Set();
+    postsToRender.forEach((post) => {
+      if (post.authorId) ids.add(post.authorId);
+    });
+    featuredPosts.forEach((post) => {
+      if (post.authorId) ids.add(post.authorId);
+    });
+    return Array.from(ids);
+  }, [postsToRender, featuredPosts]);
+
+  const authorRanks = useAuthorRanks(authorIds);
 
   // Migrate old voting system to new array-based system
   const migratePost = useCallback(async (post) => {
@@ -391,6 +406,17 @@ const HomePage = () => {
     const TimeElement = publishedAt ? "time" : "span";
     const authorId = post.authorId;
     const profileUrl = authorId ? `/user/${authorId}` : null;
+    const karma = authorId ? authorRanks[authorId]?.karma ?? 0 : 0;
+    const rank = getRankFromKarma(karma);
+    const rankBadge = (
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-slate-700/70 px-2 py-0.5 text-xs font-medium text-white"
+        title="Rank based on total upvotes across posts"
+      >
+        <span aria-hidden="true">{rank.emoji}</span>
+        <span>{rank.label}</span>
+      </span>
+    );
 
     const authorContent = (
       <>
@@ -405,15 +431,18 @@ const HomePage = () => {
             initials
           )}
         </span>
-        <span
-          className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
-            darkMode
-              ? "text-white group-hover/author:text-gray-100"
-              : "text-gray-900 group-hover/author:text-gray-700"
-          }`}
-        >
-          {authorName}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
+              darkMode
+                ? "text-white group-hover/author:text-gray-100"
+                : "text-gray-900 group-hover/author:text-gray-700"
+            }`}
+          >
+            {authorName}
+          </span>
+          {rankBadge}
+        </div>
       </>
     );
 
