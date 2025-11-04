@@ -492,6 +492,39 @@ const UserPostManager = ({ darkMode }) => {
 
   return (
     <div className={`p-4 ${darkMode ? "text-gray-200" : "text-gray-900"}`}>
+      <section
+        id="share-your-find"
+        className={`mb-6 rounded-lg border px-4 py-5 sm:px-6 ${
+          darkMode
+            ? "border-gray-700 bg-[#1C2128]"
+            : "border-gray-200 bg-blue-50"
+        }`}
+        aria-labelledby="share-your-find-heading"
+      >
+        <h2
+          id="share-your-find-heading"
+          className={`text-xl font-semibold ${
+            darkMode ? "text-white" : "text-gray-900"
+          }`}
+        >
+          Share Your Find
+        </h2>
+        <p
+          className={`mt-2 text-sm ${
+            darkMode ? "text-gray-300" : "text-gray-700"
+          }`}
+        >
+          Found a cool trailer, leak, or update? Paste the link and we’ll help you share it with the Otaku community.
+        </p>
+        <p
+          className={`mt-3 text-sm ${
+            darkMode ? "text-gray-400" : "text-gray-600"
+          }`}
+        >
+          Tell us what makes it special, add platforms, and we’ll tee it up for moderators so the rest of the community can discover it fast.
+        </p>
+      </section>
+
       {rateLimitMessage && (
         <div
           className={`p-4 rounded-md ${
@@ -816,7 +849,7 @@ const UserPostManager = ({ darkMode }) => {
                 : ""
             }`}
           >
-            {isUploading ? "Uploading..." : "Create Post"}
+            {isUploading ? "Uploading..." : "Share with the Community"}
           </button>
         </div>
       </form>

@@ -74,6 +74,13 @@ const HomePage = () => {
 
   const authorRanks = useAuthorRanks(authorIds);
 
+  const handleShareYourFind = useCallback(() => {
+    navigate("/dashboard#share-your-find");
+  }, [navigate]);
+
+  const postCtaClasses =
+    "inline-flex w-full items-center justify-center rounded-full bg-[#316DCA] px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 sm:w-auto";
+
   // Migrate old voting system to new array-based system
   const migratePost = useCallback(async (post) => {
     if (
@@ -693,54 +700,65 @@ const HomePage = () => {
             <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
               Community Feed
             </h2>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-              <select
-                value={selectedPlatform}
-                onChange={(e) => setSelectedPlatform(e.target.value)}
-                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                  darkMode
-                    ? "bg-[#1C2128] border-gray-700 text-white"
-                    : "border-gray-300"
-                }`}
-              >
-                <option value="all">All Platforms</option>
-                <option value="Nintendo">Nintendo</option>
-                <option value="PlayStation">PlayStation</option>
-                <option value="Xbox">Xbox</option>
-                <option value="PC">PC</option>
-                <option value="VR">VR</option>
-                <option value="Mobile">Mobile</option>
-              </select>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                  darkMode
-                    ? "bg-[#1C2128] border-gray-700 text-white"
-                    : "border-gray-300"
-                }`}
-              >
-                <option value="all">All Categories</option>
-                <option value="news">News</option>
-                <option value="review">Review</option>
-                <option value="guide">Guide</option>
-                <option value="opinion">Opinion</option>
-              </select>
-              <select
-                value={activeTab}
-                onChange={(e) => setActiveTab(e.target.value)}
-                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                  darkMode
-                    ? "bg-[#1C2128] border-gray-700 text-white"
-                    : "border-gray-300"
-                }`}
-              >
-                {[FEED_TAB_KEYS.NEW, ...tabs.map((tab) => tab.key).filter((key) => key !== FEED_TAB_KEYS.NEW)].map((key) => (
-                  <option key={key} value={key}>
-                    {FEED_TAB_CONFIG[key]?.label || key}
-                  </option>
-                ))}
-              </select>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                <select
+                  value={selectedPlatform}
+                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                    darkMode
+                      ? "bg-[#1C2128] border-gray-700 text-white"
+                      : "border-gray-300"
+                  }`}
+                >
+                  <option value="all">All Platforms</option>
+                  <option value="Nintendo">Nintendo</option>
+                  <option value="PlayStation">PlayStation</option>
+                  <option value="Xbox">Xbox</option>
+                  <option value="PC">PC</option>
+                  <option value="VR">VR</option>
+                  <option value="Mobile">Mobile</option>
+                </select>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                    darkMode
+                      ? "bg-[#1C2128] border-gray-700 text-white"
+                      : "border-gray-300"
+                  }`}
+                >
+                  <option value="all">All Categories</option>
+                  <option value="news">News</option>
+                  <option value="review">Review</option>
+                  <option value="guide">Guide</option>
+                  <option value="opinion">Opinion</option>
+                </select>
+                <select
+                  value={activeTab}
+                  onChange={(e) => setActiveTab(e.target.value)}
+                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                    darkMode
+                      ? "bg-[#1C2128] border-gray-700 text-white"
+                      : "border-gray-300"
+                  }`}
+                >
+                  {[FEED_TAB_KEYS.NEW, ...tabs.map((tab) => tab.key).filter((key) => key !== FEED_TAB_KEYS.NEW)].map((key) => (
+                    <option key={key} value={key}>
+                      {FEED_TAB_CONFIG[key]?.label || key}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {user && (
+                <button
+                  type="button"
+                  onClick={handleShareYourFind}
+                  className={postCtaClasses}
+                >
+                  Post Your Find
+                </button>
+              )}
             </div>
           </div>
           <div className="space-y-8">
@@ -896,6 +914,17 @@ const HomePage = () => {
                 </div>
               )}
             </div>
+            {user && postsToRender.length > 0 && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleShareYourFind}
+                  className={postCtaClasses}
+                >
+                  Post Your Find
+                </button>
+              </div>
+            )}
           </div>
         </section>
       </div>

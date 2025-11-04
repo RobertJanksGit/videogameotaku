@@ -269,6 +269,12 @@ const Layout = ({ children }) => {
             <nav className="flex items-center space-x-4">
               {user ? (
                 <>
+                  <Link
+                    to="/dashboard#share-your-find"
+                    className="inline-flex items-center justify-center rounded-full bg-[#316DCA] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                  >
+                    Post Your Find
+                  </Link>
                   <div className="relative" ref={dropdownRef}>
                     <button
                       onClick={() => setShowDropdown(!showDropdown)}
