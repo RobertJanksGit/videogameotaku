@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
@@ -16,9 +16,9 @@ import {
   updateDoc,
   increment,
 } from "firebase/firestore";
-import PropTypes from "prop-types";
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
+import CommentThread from "./CommentThread";
 import {
   createNotification,
   getNotificationMessage,
@@ -28,269 +28,44 @@ import SEO, { createTeaser } from "../common/SEO";
 import StructuredData from "../common/StructuredData";
 import Breadcrumbs from "../common/Breadcrumbs";
 import OptimizedImage from "../common/OptimizedImage";
+import { getTimestampDate } from "../../utils/formatTimeAgo";
 
-const ReplyForm = ({ onSubmit, darkMode, isMainThreadComment }) => {
-  const [replyContent, setReplyContent] = useState("");
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (replyContent.trim()) {
-      await onSubmit(replyContent);
-      setReplyContent("");
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit}>
-      <textarea
-        value={replyContent}
-        onChange={(e) => setReplyContent(e.target.value)}
-        onKeyDown={handleKeyDown}
-        className={`w-full p-2 text-sm rounded-md ${
-          darkMode
-            ? "bg-gray-700 text-white border-gray-600"
-            : "bg-white text-gray-900 border-gray-300"
-        } border`}
-        rows="2"
-        placeholder="Write a reply... (Press Enter to submit, Shift+Enter for new line)"
-      />
-      <div className="flex justify-end mt-2 space-x-2">
-        {!isMainThreadComment && (
-          <button
-            type="button"
-            onClick={() => onSubmit(null)}
-            className={`px-3 py-1 text-sm rounded-md ${
-              darkMode
-                ? "text-gray-300 hover:text-gray-200"
-                : "text-gray-600 hover:text-gray-700"
-            }`}
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          type="submit"
-          className={`px-3 py-1 text-sm text-white rounded-md ${
-            darkMode
-              ? "bg-blue-600 hover:bg-blue-700"
-              : "bg-blue-500 hover:bg-blue-600"
-          }`}
-        >
-          Reply
-        </button>
-      </div>
-    </form>
-  );
+const findParentCommentId = (comment) => {
+  if (comment.parentCommentId !== undefined && comment.parentCommentId !== null) {
+    return comment.parentCommentId;
+  }
+  if (comment.parentId !== undefined && comment.parentId !== null) {
+    return comment.parentId;
+  }
+  return null;
 };
 
-ReplyForm.propTypes = {
-  onSubmit: PropTypes.func.isRequired,
-  darkMode: PropTypes.bool.isRequired,
-  isMainThreadComment: PropTypes.bool.isRequired,
+const sortByCreatedAtAsc = (a, b) => {
+  const dateA = getTimestampDate(a.createdAt) || new Date(0);
+  const dateB = getTimestampDate(b.createdAt) || new Date(0);
+  return dateA.getTime() - dateB.getTime();
 };
 
-const Comment = ({
-  comment,
-  darkMode,
-  onReply,
-  user,
-  onThreadClick,
-  allComments,
-  onLoadReplies,
-  isLoadingReplies,
-  isInThread = false,
-  currentThreadId,
-}) => {
-  const [showReplyForm, setShowReplyForm] = useState(false);
-
-  // Find all replies to this comment from the loaded comments
-  const replies = allComments.filter((c) => c.parentId === comment.id);
-  const hasReplies = comment.replyCount > 0;
-  // A comment is the main thread comment if it's the one being viewed in the thread
-  const isMainThreadComment = isInThread && comment.id === currentThreadId;
-
-  const handleCommentClick = async () => {
-    // Only load replies if there are any and they haven't been loaded yet
-    if (hasReplies && replies.length === 0) {
-      await onLoadReplies(comment.id);
+const buildCommentThreads = (comments) => {
+  const repliesByParent = comments.reduce((acc, comment) => {
+    const parentId = findParentCommentId(comment);
+    if (parentId) {
+      if (!acc[parentId]) {
+        acc[parentId] = [];
+      }
+      acc[parentId].push(comment);
     }
-    // Always trigger thread view for any clicked comment
-    onThreadClick(comment.id);
-  };
+    return acc;
+  }, {});
 
-  const handleReplySubmit = async (content) => {
-    if (content === null) {
-      setShowReplyForm(false);
-      return;
-    }
-    await onReply(comment.id, content);
-    setShowReplyForm(false);
-  };
+  const parentComments = comments
+    .filter((comment) => findParentCommentId(comment) === null)
+    .sort(sortByCreatedAtAsc);
 
-  return (
-    <div className="relative">
-      <div
-        id={`comment-${comment.id}`}
-        onClick={handleCommentClick}
-        className={`p-4 ${!isInThread ? "cursor-pointer" : ""} ${
-          darkMode ? "hover:bg-gray-800" : "hover:bg-gray-50"
-        } transition-colors duration-200 border-b ${
-          darkMode ? "border-gray-800" : "border-gray-100"
-        }`}
-      >
-        <div className="flex items-start space-x-3">
-          <div
-            className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0 ${
-              darkMode ? "bg-gray-700" : "bg-gray-100"
-            } ring-2 ${darkMode ? "ring-gray-600" : "ring-gray-200"}`}
-          >
-            {comment.authorPhotoURL ? (
-              <img
-                src={comment.authorPhotoURL}
-                alt={comment.authorName}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span
-                className={`text-sm font-medium ${
-                  darkMode ? "text-gray-100" : "text-gray-600"
-                }`}
-              >
-                {comment.authorName?.[0]?.toUpperCase() || "A"}
-              </span>
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center space-x-2">
-              <span
-                className={`font-medium ${
-                  darkMode ? "text-white" : "text-gray-900"
-                }`}
-              >
-                {comment.authorName}
-              </span>
-              <span
-                className={`text-xs ${
-                  darkMode ? "text-gray-400" : "text-gray-500"
-                }`}
-              >
-                {comment.createdAt instanceof Date
-                  ? comment.createdAt.toLocaleDateString()
-                  : comment.createdAt?.toDate().toLocaleDateString()}
-              </span>
-            </div>
-            <p
-              className={`text-sm mt-1 ${
-                darkMode ? "text-white" : "text-gray-600"
-              }`}
-            >
-              {comment.content}
-            </p>
-            <div className="flex items-center space-x-4 mt-2">
-              {user && !isMainThreadComment && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowReplyForm(!showReplyForm);
-                  }}
-                  className={`text-sm font-medium ${
-                    darkMode
-                      ? "text-blue-400 hover:text-blue-300"
-                      : "text-blue-600 hover:text-blue-700"
-                  }`}
-                >
-                  Reply
-                </button>
-              )}
-              {hasReplies && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCommentClick();
-                  }}
-                  className={`text-sm font-medium flex items-center space-x-1 ${
-                    darkMode
-                      ? "text-gray-400 hover:text-gray-300"
-                      : "text-gray-600 hover:text-gray-700"
-                  }`}
-                >
-                  <span>
-                    {comment.replyCount}{" "}
-                    {comment.replyCount === 1 ? "reply" : "replies"}
-                  </span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Show reply form directly under main thread comment */}
-      {isMainThreadComment && user && (
-        <div className="ml-11 mt-2 mb-4">
-          <ReplyForm
-            onSubmit={handleReplySubmit}
-            darkMode={darkMode}
-            isMainThreadComment={true}
-          />
-        </div>
-      )}
-
-      {/* Show reply form for other comments when requested */}
-      {!isMainThreadComment && showReplyForm && (
-        <div className="ml-11 mt-2" onClick={(e) => e.stopPropagation()}>
-          <ReplyForm
-            onSubmit={handleReplySubmit}
-            darkMode={darkMode}
-            isMainThreadComment={false}
-          />
-        </div>
-      )}
-
-      {isLoadingReplies && (
-        <div
-          className={`p-4 text-sm ${
-            darkMode ? "text-gray-400" : "text-gray-600"
-          }`}
-        >
-          Loading replies...
-        </div>
-      )}
-    </div>
-  );
-};
-
-Comment.propTypes = {
-  comment: PropTypes.shape({
-    id: PropTypes.string.isRequired,
-    content: PropTypes.string.isRequired,
-    authorName: PropTypes.string.isRequired,
-    authorPhotoURL: PropTypes.string,
-    parentId: PropTypes.string,
-    createdAt: PropTypes.oneOfType([
-      PropTypes.instanceOf(Date),
-      PropTypes.shape({
-        toDate: PropTypes.func.isRequired,
-      }),
-    ]),
-    replyCount: PropTypes.number,
-  }).isRequired,
-  darkMode: PropTypes.bool.isRequired,
-  onReply: PropTypes.func.isRequired,
-  user: PropTypes.object,
-  onThreadClick: PropTypes.func.isRequired,
-  allComments: PropTypes.array.isRequired,
-  onLoadReplies: PropTypes.func.isRequired,
-  isLoadingReplies: PropTypes.bool.isRequired,
-  isInThread: PropTypes.bool,
-  currentThreadId: PropTypes.string,
+  return parentComments.map((comment) => ({
+    parent: comment,
+    replies: (repliesByParent[comment.id] || []).sort(sortByCreatedAtAsc),
+  }));
 };
 
 const PostDetail = () => {
@@ -303,83 +78,33 @@ const PostDetail = () => {
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const hasScrolledToComment = useRef(false);
-  const [currentThreadId, setCurrentThreadId] = useState(null);
-  const [threadHistory, setThreadHistory] = useState([]);
-  const [loadedCommentIds, setLoadedCommentIds] = useState(new Set());
+  const commentThreads = useMemo(
+    () => buildCommentThreads(comments),
+    [comments]
+  );
 
-  const scrollToComment = async (commentId) => {
+  const scrollToComment = (commentId) => {
     if (!commentId) return;
 
-    const maxAttempts = 10;
-    let attempts = 0;
-
-    const attemptScroll = async () => {
-      let commentElement = document.getElementById(`comment-${commentId}`);
-
-      if (!commentElement) {
-        // Find the comment in our loaded comments
-        const targetComment = comments.find(
-          (comment) => comment.id === commentId
-        );
-
-        if (!targetComment) {
-          try {
-            // Fetch the target comment directly from Firestore
-            const commentDoc = await getDoc(doc(db, "comments", commentId));
-
-            if (commentDoc.exists()) {
-              const commentData = { id: commentDoc.id, ...commentDoc.data() };
-
-              if (commentData.parentId) {
-                // Set the parent as current thread
-                setCurrentThreadId(commentData.parentId);
-                // Load the parent's replies
-                await loadReplies(commentData.parentId);
-
-                // Add this comment to our state if it's not there
-                setComments((prevComments) => {
-                  if (!prevComments.some((c) => c.id === commentData.id)) {
-                    return [...prevComments, commentData];
-                  }
-                  return prevComments;
-                });
-
-                setLoadedCommentIds((prev) => {
-                  const newSet = new Set(prev);
-                  newSet.add(commentData.id);
-                  return newSet;
-                });
-              }
-            }
-          } catch (error) {
-            console.error("Error fetching comment:", error);
-          }
-        } else {
-          if (targetComment.parentId) {
-            setCurrentThreadId(targetComment.parentId);
-            if (!loadedCommentIds.has(commentId)) {
-              await loadReplies(targetComment.parentId);
-            }
-          }
-        }
-
-        if (attempts < maxAttempts) {
-          attempts++;
-          setTimeout(attemptScroll, 200);
-          return;
-        }
-      } else {
+    const attemptScroll = (attempt = 0) => {
+      const commentElement = document.getElementById(`comment-${commentId}`);
+      if (commentElement) {
         commentElement.scrollIntoView({ behavior: "smooth", block: "center" });
         commentElement.classList.add("highlight-comment");
         setTimeout(() => {
           commentElement.classList.remove("highlight-comment");
         }, 3000);
+        return;
+      }
+
+      if (attempt < 10) {
+        setTimeout(() => attemptScroll(attempt + 1), 200);
       }
     };
 
-    // Start the first attempt after a short delay to ensure comments are loaded
-    setTimeout(attemptScroll, 100);
+    attemptScroll();
   };
 
   useEffect(() => {
@@ -411,33 +136,27 @@ const PostDetail = () => {
     const fetchComments = async () => {
       if (!postId) return;
 
+      setCommentsLoading(true);
       try {
-        // Query for top-level comments (parentId is null)
         const commentsQuery = query(
           collection(db, "comments"),
           where("postId", "==", postId),
-          where("parentId", "==", null),
-          orderBy("createdAt", "desc")
+          orderBy("createdAt", "asc")
         );
 
         const commentsSnapshot = await getDocs(commentsQuery);
 
-        if (!commentsSnapshot.empty) {
-          const fetchedComments = commentsSnapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-            isLoadingReplies: false,
-          }));
+        const fetchedComments = commentsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          replyCount: doc.data().replyCount ?? 0,
+        }));
 
-          setComments(fetchedComments);
-
-          // Update the set of loaded comment IDs
-          setLoadedCommentIds(
-            new Set(fetchedComments.map((comment) => comment.id))
-          );
-        }
+        setComments(fetchedComments);
       } catch (error) {
         console.error("Error fetching comments:", error);
+      } finally {
+        setCommentsLoading(false);
       }
     };
 
@@ -450,6 +169,7 @@ const PostDetail = () => {
   useEffect(() => {
     if (
       !loading &&
+      !commentsLoading &&
       comments.length > 0 &&
       location.state?.targetCommentId &&
       !hasScrolledToComment.current
@@ -457,7 +177,7 @@ const PostDetail = () => {
       scrollToComment(location.state.targetCommentId);
       hasScrolledToComment.current = true;
     }
-  }, [loading, comments, location.state?.targetCommentId]);
+  }, [loading, commentsLoading, comments, location.state?.targetCommentId]);
 
   // Reset the scroll flag when the postId changes
   useEffect(() => {
@@ -513,6 +233,7 @@ const PostDetail = () => {
         authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: user.photoURL || "", // Use empty string as fallback
         parentId: null,
+        parentCommentId: null,
         createdAt: serverTimestamp(),
         replyCount: 0, // Add replyCount field
       });
@@ -537,9 +258,9 @@ const PostDetail = () => {
         authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: user.photoURL || "",
         parentId: null,
+        parentCommentId: null,
         createdAt: new Date(),
         replyCount: 0,
-        isLoadingReplies: false,
       };
 
       // Create notification for post author if it's not their own comment
@@ -565,7 +286,7 @@ const PostDetail = () => {
         }
       }
 
-      setComments([newCommentObj, ...comments]);
+      setComments((prev) => [...prev, newCommentObj]);
       setNewComment("");
     } catch (error) {
       console.error("Error adding comment:", error);
@@ -586,14 +307,20 @@ const PostDetail = () => {
         return;
       }
 
+      const trimmedContent = content.trim();
+      if (!trimmedContent) {
+        return;
+      }
+
       // Create the reply data
       const replyData = {
         postId,
-        content: content.trim(),
+        content: trimmedContent,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: user.photoURL || "",
         parentId,
+        parentCommentId: parentId,
         createdAt: serverTimestamp(),
         replyCount: 0,
       };
@@ -624,7 +351,6 @@ const PostDetail = () => {
         id: replyRef.id,
         ...replyData,
         createdAt: new Date(),
-        isLoadingReplies: false,
       };
 
       // Create notification for comment author if it's not their own reply
@@ -652,21 +378,14 @@ const PostDetail = () => {
       }
 
       // Update both the new reply and the parent comment's replyCount in local state
-      setComments((prevComments) =>
-        prevComments
-          .map((comment) =>
-            comment.id === parentId
-              ? { ...comment, replyCount: (comment.replyCount || 0) + 1 }
-              : comment
-          )
-          .concat([newReply])
-      );
+      setComments((prevComments) => {
+        const updatedComments = prevComments.map((comment) =>
+          comment.id === parentId
+            ? { ...comment, replyCount: (comment.replyCount || 0) + 1 }
+            : comment
+        );
 
-      // Add the new reply ID to loadedCommentIds
-      setLoadedCommentIds((prev) => {
-        const newSet = new Set(prev);
-        newSet.add(replyRef.id);
-        return newSet;
+        return [...updatedComments, newReply];
       });
     } catch (error) {
       console.error("Error adding reply:", error);
@@ -691,108 +410,6 @@ const PostDetail = () => {
       setPost(updatedPost);
     } catch (error) {
       console.error("Error updating post votes:", error);
-    }
-  };
-
-  const handleThreadClick = async (commentId) => {
-    // Add current thread to history before changing to new thread
-    if (currentThreadId) {
-      setThreadHistory((prev) => [...prev, currentThreadId]);
-    }
-    setCurrentThreadId(commentId);
-
-    // Set loading state for the clicked comment
-    setComments((prevComments) =>
-      prevComments.map((c) =>
-        c.id === commentId ? { ...c, isLoadingReplies: true } : c
-      )
-    );
-
-    if (!loadedCommentIds.has(commentId)) {
-      await loadReplies(commentId);
-    }
-
-    // Clear loading state
-    setComments((prevComments) =>
-      prevComments.map((c) =>
-        c.id === commentId ? { ...c, isLoadingReplies: false } : c
-      )
-    );
-  };
-
-  const handleBackClick = () => {
-    if (threadHistory.length > 0) {
-      // Get the last thread from history
-      const previousThread = threadHistory[threadHistory.length - 1];
-      // Remove it from history
-      setThreadHistory((prev) => prev.slice(0, -1));
-      // Set it as current thread
-      setCurrentThreadId(previousThread);
-    } else {
-      // If no history, go back to all comments
-      setCurrentThreadId(null);
-    }
-  };
-
-  const loadReplies = async (commentId) => {
-    try {
-      // Load direct replies to this comment
-      const repliesQuery = query(
-        collection(db, "comments"),
-        where("postId", "==", postId),
-        where("parentId", "==", commentId),
-        orderBy("createdAt", "desc")
-      );
-      const repliesSnapshot = await getDocs(repliesQuery);
-
-      const newReplies = await Promise.all(
-        repliesSnapshot.docs.map(async (doc) => {
-          const reply = {
-            id: doc.id,
-            ...doc.data(),
-            isLoadingReplies: false,
-          };
-
-          // Get the count of nested replies
-          const nestedRepliesQuery = query(
-            collection(db, "comments"),
-            where("postId", "==", postId),
-            where("parentId", "==", doc.id)
-          );
-          const nestedRepliesSnapshot = await getDocs(nestedRepliesQuery);
-          reply.replyCount = nestedRepliesSnapshot.size;
-
-          // If there are nested replies, load them recursively
-          if (reply.replyCount > 0) {
-            await loadReplies(doc.id);
-          }
-
-          return reply;
-        })
-      );
-
-      // Add all replies to the comments array if they're not already there
-      setComments((prevComments) => {
-        const newComments = [...prevComments];
-        newReplies.forEach((reply) => {
-          if (!loadedCommentIds.has(reply.id)) {
-            newComments.push(reply);
-          }
-        });
-        return newComments;
-      });
-
-      // Update the set of loaded comment IDs
-      setLoadedCommentIds((prev) => {
-        const newSet = new Set(prev);
-        newReplies.forEach((reply) => newSet.add(reply.id));
-        return newSet;
-      });
-
-      return newReplies;
-    } catch (error) {
-      console.error("Error loading replies:", error);
-      return [];
     }
   };
 
@@ -1086,97 +703,33 @@ const PostDetail = () => {
 
               {/* Comments List */}
               <div className="space-y-6" role="feed" aria-label="Comments list">
-                {currentThreadId ? (
-                  <>
-                    <button
-                      onClick={handleBackClick}
-                      className={`flex items-center space-x-2 mb-4 text-sm ${
-                        darkMode
-                          ? "text-blue-400 hover:text-blue-300"
-                          : "text-blue-600 hover:text-blue-700"
-                      }`}
-                      aria-label={
-                        threadHistory.length > 0
-                          ? "Back to previous thread"
-                          : "Back to all comments"
-                      }
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                        />
-                      </svg>
-                      <span>
-                        {threadHistory.length > 0
-                          ? "Back to previous thread"
-                          : "Back to all comments"}
-                      </span>
-                    </button>
-                    {/* First show the main comment */}
-                    {comments
-                      .filter((comment) => comment.id === currentThreadId)
-                      .map((comment) => (
-                        <Comment
-                          key={comment.id}
-                          comment={comment}
-                          darkMode={darkMode}
-                          onReply={handleReply}
-                          user={user}
-                          onThreadClick={handleThreadClick}
-                          allComments={comments}
-                          onLoadReplies={loadReplies}
-                          isLoadingReplies={comment.isLoadingReplies}
-                          isInThread={true}
-                          currentThreadId={currentThreadId}
-                        />
-                      ))}
-                    {/* Then show all replies */}
-                    {comments
-                      .filter((comment) => comment.parentId === currentThreadId)
-                      .map((comment) => (
-                        <Comment
-                          key={comment.id}
-                          comment={comment}
-                          darkMode={darkMode}
-                          onReply={handleReply}
-                          user={user}
-                          onThreadClick={handleThreadClick}
-                          allComments={comments}
-                          onLoadReplies={loadReplies}
-                          isLoadingReplies={comment.isLoadingReplies}
-                          isInThread={true}
-                          currentThreadId={currentThreadId}
-                        />
-                      ))}
-                  </>
+                {commentsLoading ? (
+                  <div
+                    className={`text-sm ${
+                      darkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Loading comments...
+                  </div>
+                ) : commentThreads.length === 0 ? (
+                  <p
+                    className={`${
+                      darkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Be the first to comment.
+                  </p>
                 ) : (
-                  // Show top-level comments
-                  comments
-                    .filter((comment) => comment.parentId === null)
-                    .map((comment) => (
-                      <Comment
-                        key={comment.id}
-                        comment={comment}
-                        darkMode={darkMode}
-                        onReply={handleReply}
-                        user={user}
-                        onThreadClick={handleThreadClick}
-                        allComments={comments}
-                        onLoadReplies={loadReplies}
-                        isLoadingReplies={comment.isLoadingReplies}
-                        isInThread={false}
-                        currentThreadId={currentThreadId}
-                      />
-                    ))
+                  commentThreads.map(({ parent, replies }) => (
+                    <CommentThread
+                      key={parent.id}
+                      parentComment={parent}
+                      replies={replies}
+                      darkMode={darkMode}
+                      onReply={handleReply}
+                      currentUser={user}
+                    />
+                  ))
                 )}
               </div>
             </section>
