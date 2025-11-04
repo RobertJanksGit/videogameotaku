@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../config/firebase";
@@ -11,7 +11,6 @@ import {
   doc,
   updateDoc,
   where,
-  startAfter,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
@@ -22,21 +21,46 @@ import OptimizedImage from "../common/OptimizedImage";
 import formatTimeAgo, {
   getTimestampDate,
 } from "../../utils/formatTimeAgo";
+import {
+  FEED_TAB_KEYS,
+  FEED_TAB_CONFIG,
+  getFeedTabs,
+  buildFeedQuery,
+  mergePostsForTab,
+  processPostsForTab,
+} from "../../utils/feedQueries";
+
+const createEmptyTabState = () => ({
+  posts: [],
+  lastVisible: null,
+  hasMore: true,
+  isLoading: false,
+  error: null,
+});
+
+const buildInitialTabData = () =>
+  Object.values(FEED_TAB_KEYS).reduce((acc, key) => {
+    acc[key] = createEmptyTabState();
+    return acc;
+  }, {});
 
 const HomePage = () => {
   const { darkMode } = useTheme();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [featuredPosts, setFeaturedPosts] = useState([]);
-  const [latestPosts, setLatestPosts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedPlatform, setSelectedPlatform] = useState("all");
-  const [lastVisible, setLastVisible] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [activeTab, setActiveTab] = useState(FEED_TAB_KEYS.NEW);
+  const [tabData, setTabData] = useState(() => buildInitialTabData());
+
+  const tabs = useMemo(() => getFeedTabs(), []);
+  const currentTabState = tabData[activeTab] || createEmptyTabState();
+  const postsToRender = currentTabState.posts;
+  const firstPostId = postsToRender[0]?.id;
 
   // Migrate old voting system to new array-based system
-  const migratePost = async (post) => {
+  const migratePost = useCallback(async (post) => {
     if (
       Array.isArray(post.usersThatLiked) &&
       Array.isArray(post.usersThatDisliked)
@@ -72,7 +96,7 @@ const HomePage = () => {
       usersThatDisliked,
       totalVotes: usersThatLiked.length - usersThatDisliked.length,
     };
-  };
+  }, [db]);
 
   // Separate function to fetch featured posts
   const fetchFeaturedPosts = async () => {
@@ -147,79 +171,114 @@ const HomePage = () => {
     }
   };
 
-  // Function to fetch latest posts
-  const fetchLatestPosts = async (isLoadingMore = false) => {
-    try {
-      setIsLoading(true);
+  const fetchPostsForTab = useCallback(
+    async (tabKey, { isLoadMore = false } = {}) => {
+      const existingState = tabData[tabKey] || createEmptyTabState();
+      const effectiveLastVisible = isLoadMore ? existingState.lastVisible : null;
 
-      // Create base query conditions
-      let queryConditions = [
-        where("status", "==", "published"),
-        orderBy("createdAt", "desc"),
-        limit(10),
-      ];
+      setTabData((prev) => {
+        const previous = prev[tabKey] || createEmptyTabState();
+        return {
+          ...prev,
+          [tabKey]: {
+            ...previous,
+            posts: isLoadMore ? previous.posts : [],
+            lastVisible: isLoadMore ? previous.lastVisible : null,
+            hasMore: isLoadMore ? previous.hasMore : true,
+            isLoading: true,
+            error: null,
+          },
+        };
+      });
 
-      // Add category filter if a specific category is selected
-      if (selectedCategory !== "all") {
-        queryConditions.unshift(where("category", "==", selectedCategory));
-      }
+      try {
+        const { queryRef, config } = buildFeedQuery({
+          db,
+          tabKey,
+          selectedCategory,
+          selectedPlatform,
+          lastVisible: effectiveLastVisible,
+        });
 
-      // Add platform filter if a specific platform is selected
-      if (selectedPlatform !== "all") {
-        queryConditions.unshift(
-          where("platforms", "array-contains", selectedPlatform)
+        const postsSnapshot = await getDocs(queryRef);
+
+        const fetchedPosts = await Promise.all(
+          postsSnapshot.docs.map(async (docSnapshot) => {
+            const post = { id: docSnapshot.id, ...docSnapshot.data() };
+            const migratedPost = await migratePost(post);
+            const commentsQuery = query(
+              collection(db, "comments"),
+              where("postId", "==", docSnapshot.id)
+            );
+            const commentsSnapshot = await getDocs(commentsQuery);
+            const commentCount = commentsSnapshot.size;
+
+            return { ...migratedPost, commentCount };
+          })
         );
+
+        const mergedPosts = mergePostsForTab(
+          tabKey,
+          isLoadMore ? existingState.posts : [],
+          fetchedPosts
+        );
+
+        const newLastVisible =
+          postsSnapshot.docs.length > 0
+            ? postsSnapshot.docs[postsSnapshot.docs.length - 1]
+            : effectiveLastVisible;
+
+        const pageSize = config?.pageSize ?? 10;
+
+        setTabData((prev) => {
+          const previous = prev[tabKey] || createEmptyTabState();
+          return {
+            ...prev,
+            [tabKey]: {
+              ...previous,
+              posts: mergedPosts,
+              lastVisible: newLastVisible,
+              hasMore: postsSnapshot.docs.length === pageSize,
+              isLoading: false,
+              error: null,
+            },
+          };
+        });
+      } catch (error) {
+        console.error(`Error fetching ${tabKey} posts:`, error);
+        setTabData((prev) => {
+          const previous = prev[tabKey] || createEmptyTabState();
+          return {
+            ...prev,
+            [tabKey]: {
+              ...previous,
+              isLoading: false,
+              error:
+                "Unable to load posts right now. Please refresh or try again shortly.",
+            },
+          };
+        });
       }
-
-      // Add startAfter if loading more
-      if (isLoadingMore && lastVisible) {
-        queryConditions.push(startAfter(lastVisible));
-      }
-
-      // Create the query with all conditions
-      const postsQuery = query(collection(db, "posts"), ...queryConditions);
-
-      const postsSnapshot = await getDocs(postsQuery);
-
-      // Update lastVisible
-      if (postsSnapshot.docs.length > 0) {
-        setLastVisible(postsSnapshot.docs[postsSnapshot.docs.length - 1]);
-        setHasMore(postsSnapshot.docs.length === 10);
-      } else {
-        setHasMore(false);
-      }
-
-      const newPosts = await Promise.all(
-        postsSnapshot.docs.map(async (doc) => {
-          const post = { id: doc.id, ...doc.data() };
-          const commentsQuery = query(
-            collection(db, "comments"),
-            where("postId", "==", doc.id)
-          );
-          const commentsSnapshot = await getDocs(commentsQuery);
-          const commentCount = commentsSnapshot.size;
-
-          return { ...(await migratePost(post)), commentCount };
-        })
-      );
-
-      // Update posts list
-      setLatestPosts((prev) =>
-        isLoadingMore ? [...prev, ...newPosts] : newPosts
-      );
-    } catch (error) {
-      console.error("Error fetching latest posts:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [db, migratePost, selectedCategory, selectedPlatform, tabData]
+  );
 
   // Effect for initial load and category/platform changes
   useEffect(() => {
-    setLastVisible(null);
-    setHasMore(true);
-    fetchLatestPosts();
+    setTabData(buildInitialTabData());
   }, [selectedCategory, selectedPlatform]);
+
+  useEffect(() => {
+    const state = tabData[activeTab];
+
+    if (!state) {
+      return;
+    }
+
+    if (!state.posts.length && !state.isLoading) {
+      fetchPostsForTab(activeTab);
+    }
+  }, [activeTab, fetchPostsForTab, tabData]);
 
   // Separate effect for featured posts
   useEffect(() => {
@@ -232,8 +291,8 @@ const HomePage = () => {
     const threshold = document.documentElement.scrollHeight - 100; // 100px before bottom
 
     if (scrollPosition >= threshold) {
-      if (hasMore && !isLoading) {
-        fetchLatestPosts(true);
+      if (currentTabState.hasMore && !currentTabState.isLoading) {
+        fetchPostsForTab(activeTab, { isLoadMore: true });
       }
     }
   };
@@ -251,15 +310,38 @@ const HomePage = () => {
       window.removeEventListener("scroll", debouncedScroll);
       clearTimeout(timeoutId);
     };
-  }, [lastVisible, hasMore, isLoading, selectedCategory, selectedPlatform]);
+  }, [activeTab, currentTabState.hasMore, currentTabState.isLoading, fetchPostsForTab]);
 
   const handleVoteChange = (updatedPost) => {
-    // Update latest posts without re-sorting
-    setLatestPosts((posts) =>
-      posts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
-    );
+    setTabData((prev) => {
+      const nextState = {};
 
-    // Update and re-sort featured posts
+      Object.entries(prev).forEach(([key, state]) => {
+        if (!state.posts || state.posts.length === 0) {
+          nextState[key] = state;
+          return;
+        }
+
+        const hasPost = state.posts.some((post) => post.id === updatedPost.id);
+
+        if (!hasPost) {
+          nextState[key] = state;
+          return;
+        }
+
+        const updatedPosts = state.posts.map((post) =>
+          post.id === updatedPost.id ? { ...post, ...updatedPost } : post
+        );
+
+        nextState[key] = {
+          ...state,
+          posts: processPostsForTab(key, updatedPosts),
+        };
+      });
+
+      return nextState;
+    });
+
     setFeaturedPosts((posts) => {
       const updatedPosts = posts.map((post) =>
         post.id === updatedPost.id ? updatedPost : post
@@ -566,16 +648,11 @@ const HomePage = () => {
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         {/* Latest Posts Section */}
         <section className="w-full">
-          <div className="flex flex-col space-y-4 mb-6">
+          <div className="mb-6 flex flex-col gap-4">
             <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
-              Latest Posts
+              Community Feed
             </h2>
-            {/* Filter Section - Adding h3 for filter section */}
-            <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">
-              Filter by Platform and Category
-            </h3>
-            {/* Mobile-optimized filters */}
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
               <select
                 value={selectedPlatform}
                 onChange={(e) => setSelectedPlatform(e.target.value)}
@@ -608,10 +685,25 @@ const HomePage = () => {
                 <option value="guide">Guide</option>
                 <option value="opinion">Opinion</option>
               </select>
+              <select
+                value={activeTab}
+                onChange={(e) => setActiveTab(e.target.value)}
+                className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                  darkMode
+                    ? "bg-[#1C2128] border-gray-700 text-white"
+                    : "border-gray-300"
+                }`}
+              >
+                {[FEED_TAB_KEYS.NEW, ...tabs.map((tab) => tab.key).filter((key) => key !== FEED_TAB_KEYS.NEW)].map((key) => (
+                  <option key={key} value={key}>
+                    {FEED_TAB_CONFIG[key]?.label || key}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="space-y-8">
-            {latestPosts.map((post) => (
+            {postsToRender.map((post) => (
               <article
                 key={post.id}
                 onClick={() => handlePostClick(post.id)}
@@ -629,9 +721,7 @@ const HomePage = () => {
                       alt={post.title}
                       className="w-full h-auto object-contain u-photo"
                       sizes="(min-width: 1024px) 896px, 100vw"
-                      loading={
-                        latestPosts.indexOf(post) === 0 ? "eager" : "lazy"
-                      }
+                      loading={post.id === firstPostId ? "eager" : "lazy"}
                       objectFit="contain"
                     />
                   </div>
@@ -705,8 +795,21 @@ const HomePage = () => {
               </article>
             ))}
 
+            {!currentTabState.isLoading && postsToRender.length === 0 && (
+              <div
+                className={`rounded-lg border p-6 text-center text-sm ${
+                  darkMode
+                    ? "border-gray-700 bg-gray-900 text-gray-300"
+                    : "border-gray-200 bg-gray-50 text-gray-600"
+                }`}
+              >
+                {currentTabState.error ||
+                  "No posts found for this tab yet. Check back soon!"}
+              </div>
+            )}
+
             <div className="flex flex-col items-center py-4 space-y-4">
-              {isLoading && (
+              {currentTabState.isLoading && (
                 <div
                   className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
                     darkMode ? "border-white" : "border-gray-900"
@@ -714,13 +817,13 @@ const HomePage = () => {
                 ></div>
               )}
 
-              {!isLoading && hasMore && (
+              {!currentTabState.isLoading && currentTabState.hasMore && (
                 <div>
                   <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
                     More Content Available
                   </h3>
                   <button
-                    onClick={() => fetchLatestPosts(true)}
+                    onClick={() => fetchPostsForTab(activeTab, { isLoadMore: true })}
                     className={`px-6 py-2 text-sm rounded-md ${
                       darkMode
                         ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
@@ -732,13 +835,23 @@ const HomePage = () => {
                 </div>
               )}
 
-              {!hasMore && latestPosts.length > 0 && (
+              {!currentTabState.hasMore && postsToRender.length > 0 && (
                 <div
                   className={`text-center ${
                     darkMode ? "text-gray-400" : "text-gray-600"
                   }`}
                 >
                   No more posts to load
+                </div>
+              )}
+
+              {currentTabState.error && postsToRender.length > 0 && (
+                <div
+                  className={`text-center text-sm ${
+                    darkMode ? "text-red-400" : "text-red-600"
+                  }`}
+                >
+                  {currentTabState.error}
                 </div>
               )}
             </div>

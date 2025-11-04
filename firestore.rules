@@ -31,6 +31,20 @@ service cloud.firestore {
       return onlyVotingFieldsChanged && validArrays && validVoteCount;
     }
 
+    function isValidCommentCountUpdate(existing, updated) {
+      let onlyCommentCountChanged = updated.diff(existing).affectedKeys()
+        .hasOnly(['commentCount']);
+
+      return onlyCommentCountChanged &&
+             updated.commentCount is number &&
+             updated.commentCount >= 0 &&
+             (
+               updated.commentCount == existing.commentCount + 1 ||
+               updated.commentCount == existing.commentCount - 1 ||
+               updated.commentCount == existing.commentCount
+             );
+    }
+
     // Helper function to validate post data
     function isValidPostData(data) {
       let hasRequiredFields = data.keys().hasAll([
@@ -135,9 +149,14 @@ service cloud.firestore {
                    isWithinRateLimit()) || 
                    (isAdmin() && 
                    isValidPostData(request.resource.data));
-      // Only allow admins to update posts, or users to update vote counts
+      // Only allow admins to update posts, or users to update vote counts/comment counts
       allow update: if isAdmin() || 
-                   (isSignedIn() && isValidVoteUpdate(resource.data, request.resource.data));
+                   (isSignedIn() && 
+                     (
+                       isValidVoteUpdate(resource.data, request.resource.data) ||
+                       isValidCommentCountUpdate(resource.data, request.resource.data)
+                     )
+                   );
       // Allow users to delete their own posts or admins to delete any post
       allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == request.auth.uid);
     }
