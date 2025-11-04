@@ -58,7 +58,7 @@ AdminRoute.propTypes = {
   children: PropTypes.node.isRequired,
 };
 
-const AppRoutes = ({ initialPost }) => {
+const AppRoutes = () => {
   return (
     <Layout>
       {/* Handle redirects from Cloud Function */}
@@ -67,7 +67,7 @@ const AppRoutes = ({ initialPost }) => {
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={<HomePage />} />
-        <Route path="/post/:postId" element={<PostDetail initialPost={initialPost} />} />
+        <Route path="/post/:postId" element={<PostDetail />} />
         <Route path="/guidelines" element={<ContentGuidelines />} />
         <Route path="/terms" element={<TermsOfUse />} />
         <Route path="/:category" element={<HomePage />} />

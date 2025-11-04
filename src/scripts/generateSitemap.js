@@ -1,37 +1,44 @@
 /* eslint-env node */
-import process from "process";
-import { initializeApp, cert } from "firebase-admin/app";
-import admin from "firebase-admin";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+} from "firebase/firestore";
 import { create } from "xmlbuilder2";
-import { Buffer } from "buffer";
+import fs from "fs";
+import path from "path";
 import dotenv from "dotenv";
-import { getStorage } from "firebase-admin/storage";
 
 dotenv.config();
 
-// Initialize Firebase Admin
-const app = initializeApp({
-  credential: cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  }),
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-});
+// Initialize Firebase with your config
+const firebaseConfig = {
+  apiKey: process.env.VITE_FIREBASE_API_KEY,
+  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.VITE_FIREBASE_APP_ID,
+};
 
-const storage = getStorage(app);
-const db = admin.firestore();
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 const SITE_URL = "https://videogameotaku.com";
 
 async function generateSitemap() {
   try {
     // Fetch all published posts ordered by last modified date
-    const postsSnapshot = await db
-      .collection("posts")
-      .where("status", "==", "published")
-      .orderBy("updatedAt", "desc")
-      .get();
+    const postsQuery = query(
+      collection(db, "posts"),
+      where("status", "==", "published"),
+      orderBy("updatedAt", "desc")
+    );
+    const postsSnapshot = await getDocs(postsQuery);
 
     // Create the sitemap object with image namespace
     const sitemap = create({ version: "1.0", encoding: "UTF-8" }).ele(
@@ -63,7 +70,7 @@ async function generateSitemap() {
     staticRoutes.forEach((route) => {
       const url = sitemap.ele("url");
       url.ele("loc").txt(`${SITE_URL}${route.url}`);
-      url.ele("lastmod").txt(new Date().toISOString().slice(0, 10));
+      url.ele("lastmod").txt(new Date().toISOString());
       url.ele("changefreq").txt(route.changefreq);
       url.ele("priority").txt(route.priority);
     });
@@ -72,7 +79,7 @@ async function generateSitemap() {
     categories.forEach((category) => {
       const url = sitemap.ele("url");
       url.ele("loc").txt(`${SITE_URL}/${category.path}`);
-      url.ele("lastmod").txt(new Date().toISOString().slice(0, 10));
+      url.ele("lastmod").txt(new Date().toISOString());
       url.ele("changefreq").txt(category.changefreq);
       url.ele("priority").txt(category.priority);
     });
@@ -84,20 +91,14 @@ async function generateSitemap() {
 
       // Basic URL data
       url.ele("loc").txt(`${SITE_URL}/post/${doc.id}`);
-
-      // Determine last modification date
-      const lastModDate = post.updatedAt?.toDate() || post.createdAt?.toDate();
-      const lastMod = lastModDate.toISOString().slice(0, 10);
-      url.ele("lastmod").txt(lastMod);
-
-      // Determine change frequency and priority based on age
-      const now = new Date();
-      const diffDays = Math.floor((now - lastModDate) / (1000 * 60 * 60 * 24));
-      const changefreq =
-        diffDays <= 7 ? "daily" : diffDays <= 30 ? "weekly" : "monthly";
-      const priority = diffDays <= 7 ? "0.8" : "0.5";
-      url.ele("changefreq").txt(changefreq);
-      url.ele("priority").txt(priority);
+      url
+        .ele("lastmod")
+        .txt(
+          post.updatedAt?.toDate().toISOString() ||
+            post.createdAt?.toDate().toISOString()
+        );
+      url.ele("changefreq").txt("weekly");
+      url.ele("priority").txt("0.8");
 
       // Add image data if available
       if (post.imageUrl) {
@@ -138,27 +139,20 @@ async function generateSitemap() {
     // Convert to XML string with pretty formatting
     const xml = sitemap.end({ prettyPrint: true });
 
-    // Upload sitemap.xml to Firebase Storage
-    const bucket = storage.bucket();
-    const file = bucket.file("public/sitemap.xml");
-    await file.save(Buffer.from(xml), {
-      contentType: "application/xml",
-      metadata: {
-        cacheControl: "public, max-age=300",
-      },
-    });
-    console.log("Sitemap uploaded to Storage successfully!");
+    // Write to file
+    fs.writeFileSync(path.join(process.cwd(), "public", "sitemap.xml"), xml);
+    console.log("Enhanced sitemap generated successfully!");
 
     // Generate sitemap index file
-    await generateSitemapIndex();
+    generateSitemapIndex();
   } catch (error) {
     console.error("Error generating sitemap:", error);
   } finally {
-    // process.exit(); // Removed for Firebase Functions environment
+    process.exit();
   }
 }
 
-async function generateSitemapIndex() {
+function generateSitemapIndex() {
   try {
     // Create the sitemapindex
     const sitemapIndex = create({ version: "1.0", encoding: "UTF-8" }).ele(
@@ -176,16 +170,12 @@ async function generateSitemapIndex() {
     // Convert to XML string
     const xml = sitemapIndex.end({ prettyPrint: true });
 
-    // Upload sitemapindex.xml to Firebase Storage
-    const bucket = storage.bucket();
-    const file = bucket.file("public/sitemapindex.xml");
-    await file.save(Buffer.from(xml), {
-      contentType: "application/xml",
-      metadata: {
-        cacheControl: "public, max-age=300",
-      },
-    });
-    console.log("Sitemap index uploaded to Storage successfully!");
+    // Write to file
+    fs.writeFileSync(
+      path.join(process.cwd(), "public", "sitemapindex.xml"),
+      xml
+    );
+    console.log("Sitemap index generated successfully!");
   } catch (error) {
     console.error("Error generating sitemap index:", error);
   }

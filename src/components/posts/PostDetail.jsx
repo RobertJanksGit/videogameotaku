@@ -293,16 +293,16 @@ Comment.propTypes = {
   currentThreadId: PropTypes.string,
 };
 
-const PostDetail = ({ initialPost }) => {
+const PostDetail = () => {
   const { postId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const { darkMode } = useTheme();
   const { user } = useAuth();
-  const [post, setPost] = useState(initialPost || null);
+  const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState("");
-  const [loading, setLoading] = useState(!initialPost);
+  const [loading, setLoading] = useState(true);
   const hasScrolledToComment = useRef(false);
   const [currentThreadId, setCurrentThreadId] = useState(null);
   const [threadHistory, setThreadHistory] = useState([]);
@@ -383,17 +383,6 @@ const PostDetail = ({ initialPost }) => {
   };
 
   useEffect(() => {
-    // Only fetch if we don't have initial post data from SSR
-    if (initialPost) {
-      setPost(initialPost);
-      setLoading(false);
-      // Set page title for SSR case
-      if (typeof document !== 'undefined') {
-        document.title = `${initialPost.title} | Video Game Otaku`;
-      }
-      return;
-    }
-
     const fetchPost = async () => {
       try {
         const postDoc = await getDoc(doc(db, "posts", postId));
@@ -415,7 +404,7 @@ const PostDetail = ({ initialPost }) => {
     };
 
     fetchPost();
-  }, [postId, navigate, initialPost]);
+  }, [postId, navigate]);
 
   // Add a new useEffect to fetch comments when the post is loaded
   useEffect(() => {
@@ -1196,10 +1185,6 @@ const PostDetail = ({ initialPost }) => {
       </main>
     </>
   );
-};
-
-PostDetail.propTypes = {
-  initialPost: PropTypes.object,
 };
 
 export default PostDetail;

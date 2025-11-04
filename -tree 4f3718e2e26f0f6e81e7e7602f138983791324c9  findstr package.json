@@ -1,0 +1,44 @@
+[33mcommit 4f3718e2e26f0f6e81e7e7602f138983791324c9[m
+Author: Your Name <your.email@example.com>
+Date:   Tue Oct 28 11:04:33 2025 -0500
+
+    feat: Enhance SEO and sitemap functionality
+    
+    - Add site configuration for Firebase hosting in firebase.json.
+    - Implement new Firestore rules for sitemap-related collections to restrict access.
+    - Update sitemap generation logic to include dynamic post URLs and structured data for better indexing.
+    - Enhance social media meta tags for improved visibility on platforms.
+    - Refactor sitemap generation script to utilize Firebase Admin SDK for better performance.
+    - Update package dependencies for improved functionality and security.
+
+ env.example.md                        |    51 [32m+[m
+ firebase.json                         |     5 [32m+[m[31m-[m
+ firestore.rules                       |    17 [32m+[m
+ functions/README.md                   |    89 [32m+[m
+ functions/generateSitemap.js          |   215 [32m+[m
+ functions/generateSitemapScheduled.js |   203 [32m+[m[31m-[m
+ functions/index.js                    |   309 [32m+[m[31m-[m
+ functions/package-lock.json           |     4 [32m+[m[31m-[m
+ functions/package.json                |     8 [32m+[m[31m-[m
+ functions/pingSearchEngines.js        |   192 [32m+[m
+ functions/socialMediaMetaTags.js      |   109 [32m+[m[31m-[m
+ functions/ssr.js                      |    83 [32m+[m
+ functions/utils/normalizeUrl.js       |    23 [32m+[m
+ index.html                            |    52 [32m+[m
+ package-lock.json                     |   693 [32m+[m[31m-[m
+ package.json                          |    11 [32m+[m[31m-[m
+ pages/@category.page.jsx              |    79 [32m+[m
+ pages/guidelines.page.jsx             |    80 [32m+[m
+ pages/index.page.jsx                  |    77 [32m+[m
+ pages/post/@postId.page.jsx           |    79 [32m+[m
+ pages/terms.page.jsx                  |    80 [32m+[m
+ public/google2c6d1bfa6e74c8c0.html    |     1 [32m+[m
+ public/index.html                     |    38 [32m+[m[31m-[m
+ public/sitemap.xml                    | 14256 [32m+++++++++++++++++++++++++[m[31m-------[m
+ public/sitemapindex.xml               |     2 [32m+[m[31m-[m
+ src/main.jsx                          |    53 [32m+[m[31m-[m
+ src/scripts/generateSitemap.js        |   110 [32m+[m[31m-[m
+ storage.rules                         |     8 [32m+[m
+ test.txt                              |     1 [32m+[m
+ vite.config.js                        |     3 [32m+[m[31m-[m
+ 30 files changed, 13458 insertions(+), 3473 deletions(-)
