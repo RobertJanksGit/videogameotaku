@@ -4,17 +4,14 @@ import { useAuth } from "../../contexts/AuthContext";
 import PropTypes from "prop-types";
 import AuthModal from "../auth/AuthModal";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  doc,
-  deleteDoc,
-} from "firebase/firestore";
+import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { db } from "../../config/firebase";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import formatTimeAgo from "../../utils/formatTimeAgo";
+import {
+  getNotificationMessage,
+  markNotificationsAsRead,
+} from "../../utils/notifications";
 
 const SunIcon = () => (
   <svg
@@ -51,10 +48,20 @@ const MoonIcon = () => (
 );
 
 const ProfileIcon = ({ photoURL }) => {
-  if (photoURL) {
+  const normalized = normalizeProfilePhoto(photoURL || "", 64);
+  const normalized2x = normalized
+    ? normalizeProfilePhoto(photoURL || "", 128)
+    : "";
+  const srcSet =
+    normalized && normalized2x && normalized2x !== normalized
+      ? `${normalized2x} 2x`
+      : undefined;
+
+  if (normalized) {
     return (
       <img
-        src={photoURL}
+        src={normalized}
+        srcSet={srcSet}
         alt="Profile"
         className="w-8 h-8 rounded-full object-cover ring-1 ring-gray-700"
       />
@@ -176,27 +183,58 @@ const Layout = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setNotifications([]);
+      setHasUnreadNotifications(false);
+      return;
+    }
 
-    // Subscribe to notifications
-    const q = query(
-      collection(db, "notifications"),
-      where("recipientId", "==", user.uid),
-      orderBy("createdAt", "desc"),
-      limit(10)
+    const notificationsRef = collection(
+      db,
+      "users",
+      user.uid,
+      "notifications"
     );
 
+    const q = query(notificationsRef, orderBy("createdAt", "desc"), limit(10));
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const notificationData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const notificationData = snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data();
+
+        return {
+          id: docSnapshot.id,
+          ...data,
+          isRead:
+            typeof data.isRead === "boolean"
+              ? data.isRead
+              : typeof data.read === "boolean"
+              ? data.read
+              : false,
+        };
+      });
+
       setNotifications(notificationData);
-      setHasUnreadNotifications(notificationData.some((n) => !n.read));
+      setHasUnreadNotifications(notificationData.some((n) => !n.isRead));
     });
 
     return () => unsubscribe();
   }, [user]);
+
+  useEffect(() => {
+    if (!showNotifications || !user) return;
+
+    const unreadIds = notifications
+      .filter((notification) => !notification.isRead)
+      .map((notification) => notification.id);
+
+    if (unreadIds.length === 0) return;
+
+    markNotificationsAsRead({
+      userId: user.uid,
+      notificationIds: unreadIds,
+    });
+  }, [showNotifications, notifications, user]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -235,21 +273,24 @@ const Layout = ({ children }) => {
 
   const handleNotificationClick = async (notification) => {
     try {
-      const notificationRef = doc(db, "notifications", notification.id);
+      if (!user) return;
 
-      // Delete the notification from Firestore
-      await deleteDoc(notificationRef);
+      if (!notification.isRead) {
+        await markNotificationsAsRead({
+          userId: user.uid,
+          notificationIds: [notification.id],
+        });
+      }
 
-      // Remove notification from local state
-      setNotifications(notifications.filter((n) => n.id !== notification.id));
-
-      // Close notifications dropdown
       setShowNotifications(false);
+      setShowDropdown(false);
 
-      // Navigate to the relevant post/comment with the target comment ID
-      navigate(notification.link, {
-        state: { targetCommentId: notification.commentId },
-      });
+      const targetPath = `/post/${notification.postId}`;
+      const navigationOptions = notification.commentId
+        ? { state: { targetCommentId: notification.commentId } }
+        : undefined;
+
+      navigate(targetPath, navigationOptions);
     } catch (error) {
       console.error("Error handling notification click:", error);
     }
@@ -275,9 +316,79 @@ const Layout = ({ children }) => {
                   >
                     Post Your Find
                   </Link>
+                  <div className="relative" ref={notificationsRef}>
+                    <button
+                      onClick={() => {
+                        setShowNotifications((prev) => !prev);
+                        setShowDropdown(false);
+                      }}
+                      className="p-2 rounded-full text-[#7D8590] hover:text-white hover:bg-[#1F242A] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                      aria-label="Notifications"
+                    >
+                      <BellIcon hasUnread={hasUnreadNotifications} />
+                    </button>
+                    {showNotifications && (
+                      <div className="absolute right-0 mt-2 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg z-50">
+                        <div className="px-4 py-2 border-b border-[#373E47]">
+                          <h3 className="text-sm font-medium text-[#ADBAC7]">
+                            Notifications
+                          </h3>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto">
+                          {notifications.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-[#7D8590]">
+                              No notifications
+                            </div>
+                          ) : (
+                            <ul className="divide-y divide-[#1C2128]">
+                              {notifications.map((notification) => {
+                                const description =
+                                  getNotificationMessage({
+                                    type: notification.type,
+                                    postTitle: notification.postTitle,
+                                  }) || "You have a new notification";
+                                const actorName =
+                                  notification.actorDisplayName || "Someone";
+
+                                return (
+                                  <li key={notification.id}>
+                                    <button
+                                      onClick={() =>
+                                        handleNotificationClick(notification)
+                                      }
+                                      className={`w-full flex flex-col items-start px-4 py-3 text-left transition ${
+                                        notification.isRead
+                                          ? "bg-transparent text-[#7D8590] hover:bg-[#316DCA] hover:text-white"
+                                          : "bg-[#1C2128] text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                                      }`}
+                                    >
+                                      <div className="flex w-full items-center justify-between gap-2">
+                                        <span className="text-sm font-semibold">
+                                          {actorName}
+                                        </span>
+                                        <span className="text-xs text-[#768390]">
+                                          {formatTimeAgo(notification.createdAt)}
+                                        </span>
+                                      </div>
+                                      <p className="mt-1 text-sm leading-snug">
+                                        {description}
+                                      </p>
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="relative" ref={dropdownRef}>
                     <button
-                      onClick={() => setShowDropdown(!showDropdown)}
+                      onClick={() => {
+                        setShowDropdown(!showDropdown);
+                        setShowNotifications(false);
+                      }}
                       className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
                     >
                       <ProfileIcon photoURL={user.photoURL} />
@@ -285,9 +396,6 @@ const Layout = ({ children }) => {
                         {user.displayName || user.email}
                       </span>
                       <ChevronDownIcon />
-                      {hasUnreadNotifications && (
-                        <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
-                      )}
                     </button>
 
                     {showDropdown && (
@@ -309,20 +417,6 @@ const Layout = ({ children }) => {
                             My Dashboard
                           </Link>
                         )}
-                        <button
-                          onClick={() => {
-                            setShowDropdown(false);
-                            setShowNotifications(!showNotifications);
-                          }}
-                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>Notifications</span>
-                            {hasUnreadNotifications && (
-                              <span className="h-2 w-2 rounded-full bg-red-500"></span>
-                            )}
-                          </div>
-                        </button>
                         <Link
                           to="/settings"
                           onClick={() => setShowDropdown(false)}
@@ -369,41 +463,6 @@ const Layout = ({ children }) => {
             </nav>
           </div>
         </header>
-
-        {showNotifications && (
-          <div
-            ref={notificationsRef}
-            className="fixed right-4 top-16 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg z-50"
-          >
-            <div className="px-4 py-2 border-b border-[#373E47]">
-              <h3 className="text-sm font-medium text-[#ADBAC7]">
-                Notifications
-              </h3>
-            </div>
-            <div className="max-h-96 overflow-y-auto">
-              {notifications.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-[#7D8590]">
-                  No notifications
-                </div>
-              ) : (
-                notifications.map((notification) => (
-                  <button
-                    key={notification.id}
-                    onClick={() => handleNotificationClick(notification)}
-                    className={`w-full block px-4 py-3 text-left text-sm hover:bg-[#316DCA] ${
-                      notification.read
-                        ? "text-[#7D8590] hover:text-white"
-                        : "text-[#ADBAC7] font-medium"
-                    }`}
-                  >
-                    {notification.message}
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {children}
         </main>

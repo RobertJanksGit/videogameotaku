@@ -8,6 +8,7 @@ import OptimizedImage from "../common/OptimizedImage";
 import { db } from "../../config/firebase";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
 import getRankFromKarma from "../../utils/karma";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import { useAuthorRanks } from "../../hooks/useAuthorRanks";
 
 const CategoryPage = () => {
@@ -169,9 +170,18 @@ const CategoryPage = () => {
             </h2>
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               {posts.map((post) => {
-                const karma = post.authorId
-                  ? authorRanks[post.authorId]?.karma ?? 0
-                  : 0;
+                const authorMeta = post.authorId
+                  ? authorRanks[post.authorId] ?? {}
+                  : {};
+                const karma = authorMeta?.karma ?? 0;
+                const avatarSource =
+                  authorMeta?.avatarUrl || post.authorPhotoURL || "";
+                const avatarUrl = normalizeProfilePhoto(avatarSource, 256);
+                const avatarUrl2x = normalizeProfilePhoto(avatarSource, 512);
+                const avatarSrcSet =
+                  avatarUrl && avatarUrl2x && avatarUrl2x !== avatarUrl
+                    ? `${avatarUrl2x} 2x`
+                    : undefined;
                 const rank = getRankFromKarma(karma);
                 const rankBadge = (
                   <span
@@ -228,9 +238,10 @@ const CategoryPage = () => {
                             aria-label={`View ${post.authorName}'s profile`}
                             className="flex items-center space-x-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
                           >
-                            {post.authorPhotoURL && (
+                            {avatarUrl && (
                               <img
-                                src={post.authorPhotoURL}
+                                src={avatarUrl}
+                                srcSet={avatarSrcSet}
                                 alt={post.authorName}
                                 className="w-8 h-8 rounded-full u-photo"
                               />
@@ -248,9 +259,10 @@ const CategoryPage = () => {
                           </Link>
                         ) : (
                           <div className="flex items-center space-x-3">
-                            {post.authorPhotoURL && (
+                            {avatarUrl && (
                               <img
-                                src={post.authorPhotoURL}
+                                src={avatarUrl}
+                                srcSet={avatarSrcSet}
                                 alt={post.authorName}
                                 className="w-8 h-8 rounded-full u-photo"
                               />

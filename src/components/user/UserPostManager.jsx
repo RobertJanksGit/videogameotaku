@@ -23,6 +23,7 @@ import {
 import { increment } from "firebase/firestore";
 import PropTypes from "prop-types";
 import MarkdownToolbar from "../posts/MarkdownToolbar";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -415,7 +416,7 @@ const UserPostManager = ({ darkMode }) => {
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorEmail: user.email,
-        authorPhotoURL: user.photoURL || null,
+        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         imageUrl: imageData?.url || null,
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),

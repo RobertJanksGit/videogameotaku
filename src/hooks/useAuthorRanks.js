@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
+import normalizeProfilePhoto from "../utils/normalizeProfilePhoto";
 
 const authorCache = new Map();
 
@@ -11,6 +12,9 @@ const fetchAuthorMeta = async (authorId) => {
       const data = profileSnap.data() || {};
       return {
         karma: Number.isFinite(data.karma) ? data.karma : 0,
+        avatarUrl: normalizeProfilePhoto(
+          data.avatarUrl || data.photoURL || ""
+        ),
       };
     }
 
@@ -19,13 +23,14 @@ const fetchAuthorMeta = async (authorId) => {
       const data = userSnap.data() || {};
       return {
         karma: Number.isFinite(data.karma) ? data.karma : 0,
+        avatarUrl: normalizeProfilePhoto(data.photoURL || ""),
       };
     }
   } catch (error) {
     console.error("Failed to fetch author profile for", authorId, error);
   }
 
-  return { karma: 0 };
+  return { karma: 0, avatarUrl: "" };
 };
 
 export const useAuthorRanks = (ids) => {

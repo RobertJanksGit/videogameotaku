@@ -22,6 +22,7 @@ import formatTimeAgo, {
   getTimestampDate,
 } from "../../utils/formatTimeAgo";
 import getRankFromKarma from "../../utils/karma";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import {
   FEED_TAB_KEYS,
   FEED_TAB_CONFIG,
@@ -405,16 +406,20 @@ const HomePage = () => {
     const initials = getAuthorInitials(authorName);
     const publishedAt = getTimestampDate(post.createdAt);
     const relativeTime = formatTimeAgo(post.createdAt);
-    const timeDisplay = relativeTime
-      ? relativeTime === "just now"
-        ? relativeTime
-        : `· ${relativeTime}`
-      : "";
+    const timeDisplay = relativeTime || "";
 
     const TimeElement = publishedAt ? "time" : "span";
     const authorId = post.authorId;
+    const authorMeta = authorId ? authorRanks[authorId] ?? {} : {};
     const profileUrl = authorId ? `/user/${authorId}` : null;
-    const karma = authorId ? authorRanks[authorId]?.karma ?? 0 : 0;
+    const karma = authorMeta?.karma ?? 0;
+    const avatarSource = authorMeta?.avatarUrl || post.authorPhotoURL || "";
+    const avatarUrl = normalizeProfilePhoto(avatarSource, 256);
+    const avatarUrl2x = normalizeProfilePhoto(avatarSource, 512);
+    const avatarSrcSet =
+      avatarUrl && avatarUrl2x && avatarUrl2x !== avatarUrl
+        ? `${avatarUrl2x} 2x`
+        : undefined;
     const rank = getRankFromKarma(karma);
     const rankBadge = (
       <span
@@ -429,9 +434,10 @@ const HomePage = () => {
     const authorContent = (
       <>
         <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 text-sm font-semibold uppercase text-white shadow-sm transition group-hover/author:brightness-110">
-          {post.authorPhotoURL ? (
+          {avatarUrl ? (
             <img
-              src={post.authorPhotoURL}
+              src={avatarUrl}
+              srcSet={avatarSrcSet}
               alt={authorName}
               className="h-full w-full object-cover u-photo"
             />
@@ -439,24 +445,34 @@ const HomePage = () => {
             initials
           )}
         </span>
-        <div className="flex items-center gap-2">
-          <span
-            className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
-              darkMode
-                ? "text-white group-hover/author:text-gray-100"
-                : "text-gray-900 group-hover/author:text-gray-700"
-            }`}
-          >
-            {authorName}
-          </span>
-          {rankBadge}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
+                darkMode
+                  ? "text-white group-hover/author:text-gray-100"
+                  : "text-gray-900 group-hover/author:text-gray-700"
+              }`}
+            >
+              {authorName}
+            </span>
+            {rankBadge}
+          </div>
+          {timeDisplay ? (
+            <TimeElement
+              dateTime={publishedAt ? publishedAt.toISOString() : undefined}
+              className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}
+            >
+              {timeDisplay}
+            </TimeElement>
+          ) : null}
         </div>
       </>
     );
 
     return (
       <div
-        className={`flex items-center justify-between px-5 py-4 border-b ${
+        className={`flex items-center gap-3 px-5 py-4 border-b ${
           darkMode ? "border-gray-700 bg-gray-900/40" : "border-gray-200 bg-gray-50"
         }`}
       >
@@ -474,18 +490,6 @@ const HomePage = () => {
             {authorContent}
           </div>
         )}
-        {timeDisplay ? (
-          <TimeElement
-            dateTime={
-              publishedAt ? publishedAt.toISOString() : undefined
-            }
-            className={`text-xs ${
-              darkMode ? "text-gray-400" : "text-gray-500"
-            }`}
-          >
-            {timeDisplay}
-          </TimeElement>
-        ) : null}
       </div>
     );
   };

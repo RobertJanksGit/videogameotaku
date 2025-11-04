@@ -6,6 +6,7 @@ import { db } from "../../config/firebase";
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 import SEO from "../common/SEO";
 import OptimizedImage from "../common/OptimizedImage";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import VoteButtons from "../posts/VoteButtons";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
 import getRankFromKarma from "../../utils/karma";
@@ -318,6 +319,18 @@ const ProfilePage = () => {
     );
   }
 
+  const avatarSource = profile?.avatarUrl || userData?.photoURL || "";
+  const normalizedAvatar = normalizeProfilePhoto(avatarSource, 224);
+  const normalizedAvatar2x = normalizedAvatar
+    ? normalizeProfilePhoto(avatarSource, 448)
+    : "";
+  const avatarSrcSet =
+    normalizedAvatar &&
+    normalizedAvatar2x &&
+    normalizedAvatar2x !== normalizedAvatar
+      ? `${normalizedAvatar2x} 2x`
+      : undefined;
+
   const seoTitle = profile?.displayName
     ? `${profile.displayName}'s Profile`
     : "User Profile";
@@ -337,7 +350,7 @@ const ProfilePage = () => {
       <SEO
         title={seoTitle}
         description={seoDescription}
-        image={profile?.avatarUrl}
+        image={normalizedAvatar}
         url={`/user/${userId}`}
         type="profile"
       />
@@ -350,15 +363,16 @@ const ProfilePage = () => {
         >
           <div className="flex flex-col items-center gap-6 text-center sm:flex-row sm:text-left">
             <div className="relative">
-              {profile?.avatarUrl ? (
+            {normalizedAvatar ? (
                 <img
-                  src={profile.avatarUrl}
+                  src={normalizedAvatar}
+                  srcSet={avatarSrcSet}
                   alt={profile.displayName}
-                  className="h-28 w-28 rounded-full object-cover ring-4 ring-blue-500/40"
+                  className="h-24 w-24 md:h-28 md:w-28 rounded-full object-cover ring-4 ring-blue-500/40"
                 />
               ) : (
                 <div
-                  className={`h-28 w-28 rounded-full flex items-center justify-center text-3xl font-semibold ring-4 ring-blue-500/40 ${
+                  className={`h-24 w-24 md:h-28 md:w-28 rounded-full flex items-center justify-center text-3xl font-semibold ring-4 ring-blue-500/40 ${
                     darkMode ? "bg-gray-800 text-gray-200" : "bg-gray-100 text-gray-600"
                   }`}
                 >

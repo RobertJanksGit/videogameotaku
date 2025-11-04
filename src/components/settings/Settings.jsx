@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { storage, db, auth } from "../../config/firebase";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import {
@@ -31,6 +32,14 @@ const Settings = () => {
   const [profileExists, setProfileExists] = useState(false);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
+  const userAvatar = normalizeProfilePhoto(user?.photoURL || "", 224);
+  const userAvatar2x = userAvatar
+    ? normalizeProfilePhoto(user?.photoURL || "", 448)
+    : "";
+  const userAvatarSrcSet =
+    userAvatar && userAvatar2x && userAvatar2x !== userAvatar
+      ? `${userAvatar2x} 2x`
+      : undefined;
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState("");
@@ -172,7 +181,7 @@ const Settings = () => {
         }
       }
 
-      let photoURL = user.photoURL;
+      let photoURL = normalizeProfilePhoto(user.photoURL || "");
 
       // Upload new profile image if selected
       if (selectedImage) {
@@ -181,7 +190,7 @@ const Settings = () => {
           `profile-images/${user.uid}/${selectedImage.name}`
         );
         await uploadBytes(imageRef, selectedImage);
-        photoURL = await getDownloadURL(imageRef);
+        photoURL = normalizeProfilePhoto(await getDownloadURL(imageRef));
       }
 
       // Update auth profile
@@ -441,7 +450,7 @@ const Settings = () => {
                       <img
                         src={imagePreview}
                         alt="Preview"
-                        className={`w-32 h-32 rounded-full object-cover ring-4 ${
+                        className={`w-24 h-24 md:w-32 md:h-32 rounded-full object-cover ring-4 ${
                           darkMode ? "ring-gray-700" : "ring-gray-100"
                         }`}
                       />
@@ -449,12 +458,13 @@ const Settings = () => {
                         <span className="text-white text-sm">Change photo</span>
                       </div>
                     </div>
-                  ) : user.photoURL ? (
+                  ) : user?.photoURL ? (
                     <div className="relative group">
                       <img
-                        src={user.photoURL}
+                        src={userAvatar}
+                        srcSet={userAvatarSrcSet}
                         alt="Profile"
-                        className={`w-32 h-32 rounded-full object-cover ring-4 ${
+                        className={`w-24 h-24 md:w-32 md:h-32 rounded-full object-cover ring-4 ${
                           darkMode ? "ring-gray-700" : "ring-gray-100"
                         }`}
                       />
@@ -464,7 +474,7 @@ const Settings = () => {
                     </div>
                   ) : (
                     <div
-                      className={`w-32 h-32 rounded-full flex items-center justify-center ${
+                      className={`w-24 h-24 md:w-32 md:h-32 rounded-full flex items-center justify-center ${
                         darkMode ? "bg-gray-700" : "bg-gray-200"
                       }`}
                     >

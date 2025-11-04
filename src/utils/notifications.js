@@ -1,42 +1,101 @@
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  serverTimestamp,
+  writeBatch,
+} from "firebase/firestore";
 import { db } from "../config/firebase";
 
 export const createNotification = async ({
   recipientId,
-  senderId,
-  senderName,
-  message,
+  actorUserId,
+  actorDisplayName,
   type,
-  link,
   postId,
   commentId,
+  postTitle,
 }) => {
   try {
-    const notificationData = {
+    if (!recipientId || !actorUserId || !type || !postId) {
+      return;
+    }
+
+    const notificationsCollection = collection(
+      db,
+      "users",
       recipientId,
-      senderId,
-      senderName,
-      message,
+      "notifications"
+    );
+
+    const notificationData = {
       type,
-      link,
       postId,
-      commentId,
-      read: false,
+      actorUserId,
       createdAt: serverTimestamp(),
+      isRead: false,
     };
 
-    await addDoc(collection(db, "notifications"), notificationData);
+    if (commentId) {
+      notificationData.commentId = commentId;
+    }
+
+    if (postTitle) {
+      notificationData.postTitle = postTitle;
+    }
+
+    if (actorDisplayName) {
+      notificationData.actorDisplayName = actorDisplayName;
+    }
+
+    await addDoc(notificationsCollection, notificationData);
   } catch (error) {
     console.error("Error creating notification:", error);
   }
 };
 
-export const getNotificationMessage = ({ type, senderName, postTitle }) => {
+export const markNotificationsAsRead = async ({
+  userId,
+  notificationIds,
+}) => {
+  try {
+    if (!userId || !Array.isArray(notificationIds) || notificationIds.length === 0) {
+      return;
+    }
+
+    const batch = writeBatch(db);
+
+    notificationIds.forEach((notificationId) => {
+      const notificationRef = doc(
+        db,
+        "users",
+        userId,
+        "notifications",
+        notificationId
+      );
+      batch.update(notificationRef, { isRead: true });
+    });
+
+    await batch.commit();
+  } catch (error) {
+    console.error("Error marking notifications as read:", error);
+  }
+};
+
+export const getNotificationMessage = ({ type, postTitle }) => {
   switch (type) {
     case "post_comment":
-      return `${senderName} commented on your post "${postTitle}"`;
+      return postTitle
+        ? `commented on your post "${postTitle}"`
+        : "commented on your post";
     case "comment_reply":
-      return `${senderName} replied to your comment`;
+      return postTitle
+        ? `replied to your comment on "${postTitle}"`
+        : "replied to your comment";
+    case "mention":
+      return postTitle
+        ? `mentioned you in "${postTitle}"`
+        : "mentioned you";
     default:
       return "";
   }

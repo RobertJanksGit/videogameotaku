@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Link } from "react-router-dom";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 
 const commentPropType = PropTypes.shape({
   id: PropTypes.string.isRequired,
@@ -25,15 +26,25 @@ const CommentAvatar = ({
 }) => {
   const initial = (authorName || "").charAt(0).toUpperCase() || "A";
 
+  const normalizedPhotoUrl = normalizeProfilePhoto(authorPhotoURL || "", 80);
+  const normalizedPhotoUrl2x = normalizeProfilePhoto(authorPhotoURL || "", 160);
+  const avatarSrcSet =
+    normalizedPhotoUrl &&
+    normalizedPhotoUrl2x &&
+    normalizedPhotoUrl2x !== normalizedPhotoUrl
+      ? `${normalizedPhotoUrl2x} 2x`
+      : undefined;
+
   const avatar = (
     <span
       className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0 ring-2 ${
         darkMode ? "bg-gray-700 ring-gray-600" : "bg-gray-100 ring-gray-200"
       }`}
     >
-      {authorPhotoURL ? (
+      {normalizedPhotoUrl ? (
         <img
-          src={authorPhotoURL}
+          src={normalizedPhotoUrl}
+          srcSet={avatarSrcSet}
           alt={authorName}
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"

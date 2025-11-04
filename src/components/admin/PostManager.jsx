@@ -20,6 +20,7 @@ import {
 } from "firebase/storage";
 import PropTypes from "prop-types";
 import MarkdownToolbar from "../posts/MarkdownToolbar";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 
 const PostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -176,7 +177,7 @@ const PostManager = ({ darkMode }) => {
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
         authorEmail: user.email,
-        authorPhotoURL: user.photoURL,
+        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         imageUrl: imageData?.url || null,
         imagePath: imageData?.path || null,
         createdAt: serverTimestamp(),

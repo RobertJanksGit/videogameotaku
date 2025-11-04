@@ -20,6 +20,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
+import normalizeProfilePhoto from "../utils/normalizeProfilePhoto";
 
 const AuthContext = createContext();
 
@@ -89,7 +90,9 @@ export function AuthProvider({ children }) {
 
       const fallbackProfile = () => ({
         displayName: getPreferredDisplayName(authUser, userData),
-        avatarUrl: userData?.photoURL || authUser.photoURL || "",
+        avatarUrl: normalizeProfilePhoto(
+          userData?.photoURL || authUser.photoURL || ""
+        ),
         bio: userData?.bio || "",
         createdAt: creationTimestamp(),
         updatedAt: userData?.updatedAt || null,
@@ -109,12 +112,20 @@ export function AuthProvider({ children }) {
       }
 
       if (profileSnap.exists()) {
-        return profileSnap.data();
+        const data = profileSnap.data() || {};
+        return {
+          ...data,
+          avatarUrl: normalizeProfilePhoto(
+            data.avatarUrl || data.photoURL || userData?.photoURL || authUser.photoURL || ""
+          ),
+        };
       }
 
       const profilePayload = {
         displayName: getPreferredDisplayName(authUser, userData),
-        avatarUrl: userData?.photoURL || authUser.photoURL || "",
+        avatarUrl: normalizeProfilePhoto(
+          userData?.photoURL || authUser.photoURL || ""
+        ),
         bio: "",
         createdAt: creationTimestamp(),
         updatedAt: serverTimestamp(),
@@ -132,9 +143,16 @@ export function AuthProvider({ children }) {
       }
 
       const createdProfileSnap = await getDoc(profileRef);
-      return createdProfileSnap.exists()
-        ? createdProfileSnap.data()
-        : profilePayload;
+      if (createdProfileSnap.exists()) {
+        const data = createdProfileSnap.data() || {};
+        return {
+          ...data,
+          avatarUrl: normalizeProfilePhoto(
+            data.avatarUrl || data.photoURL || profilePayload.avatarUrl
+          ),
+        };
+      }
+      return profilePayload;
     } catch (error) {
       console.error("Error ensuring profile document:", error);
       return null;
@@ -198,7 +216,7 @@ export function AuthProvider({ children }) {
         uid: newUser.uid,
         email: newUser.email,
         name: displayName,
-        photoURL: newUser.photoURL || "",
+        photoURL: normalizeProfilePhoto(newUser.photoURL || ""),
         role: "user",
         isActive: true,
         createdAt: serverTimestamp(),
@@ -216,7 +234,12 @@ export function AuthProvider({ children }) {
       const profile = await ensureProfileDocument(newUser, userData);
 
       // Return the user with Firestore data
-      return { ...newUser, ...userData, profile };
+      return {
+        ...newUser,
+        ...userData,
+        photoURL: normalizeProfilePhoto(newUser.photoURL || ""),
+        profile,
+      };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -234,7 +257,13 @@ export function AuthProvider({ children }) {
       // Get user data from Firestore
       const userRef = doc(db, "users", currentUser.uid);
       const userDoc = await getDoc(userRef);
-      const userData = userDoc.data();
+      const userDataRaw = userDoc.data() || {};
+      const userData = {
+        ...userDataRaw,
+        photoURL: normalizeProfilePhoto(
+          userDataRaw.photoURL || currentUser.photoURL || ""
+        ),
+      };
 
       // Update last login time
       await setDoc(
@@ -248,7 +277,12 @@ export function AuthProvider({ children }) {
       const profile = await ensureProfileDocument(currentUser, userData);
 
       // Return the user with Firestore data
-      return { ...currentUser, ...userData, profile };
+      return {
+        ...currentUser,
+        ...userData,
+        photoURL: normalizeProfilePhoto(currentUser.photoURL || ""),
+        profile,
+      };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -271,7 +305,13 @@ export function AuthProvider({ children }) {
           // Get user data from Firestore
           const userRef = doc(db, "users", currentUser.uid);
           const userDoc = await getDoc(userRef);
-          const userData = userDoc.data();
+          const userDataRaw = userDoc.data() || {};
+          const userData = {
+            ...userDataRaw,
+            photoURL: normalizeProfilePhoto(
+              userDataRaw.photoURL || currentUser.photoURL || ""
+            ),
+          };
 
           // Update last login time
           await setDoc(
@@ -285,10 +325,18 @@ export function AuthProvider({ children }) {
           const profile = await ensureProfileDocument(currentUser, userData);
 
           // Set user with combined Auth and Firestore data
-          setUser({ ...currentUser, ...userData, profile });
+          setUser({
+            ...currentUser,
+            ...userData,
+            photoURL: normalizeProfilePhoto(currentUser.photoURL || ""),
+            profile,
+          });
         } catch (error) {
           console.error("Error fetching user data:", error);
-          setUser(currentUser);
+          setUser({
+            ...currentUser,
+            photoURL: normalizeProfilePhoto(currentUser.photoURL || ""),
+          });
         }
       } else {
         setUser(null);

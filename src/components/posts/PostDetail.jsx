@@ -19,16 +19,14 @@ import {
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
 import CommentThread from "./CommentThread";
-import {
-  createNotification,
-  getNotificationMessage,
-} from "../../utils/notifications";
+import { createNotification } from "../../utils/notifications";
 import RichContent from "./RichContent";
 import SEO, { createTeaser } from "../common/SEO";
 import StructuredData from "../common/StructuredData";
 import Breadcrumbs from "../common/Breadcrumbs";
 import OptimizedImage from "../common/OptimizedImage";
 import { getTimestampDate } from "../../utils/formatTimeAgo";
+import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 
 const findParentCommentId = (comment) => {
   if (comment.parentCommentId !== undefined && comment.parentCommentId !== null) {
@@ -243,13 +241,15 @@ const PostDetail = () => {
     if (!user) return;
     if (!newComment.trim()) return;
 
+    const actorDisplayName = user.displayName || user.email.split("@")[0];
+
     try {
       const commentRef = await addDoc(collection(db, "comments"), {
         postId,
         content: newComment.trim(),
         authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL || "", // Use empty string as fallback
+        authorName: actorDisplayName,
+        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId: null,
         parentCommentId: null,
         createdAt: serverTimestamp(),
@@ -273,8 +273,8 @@ const PostDetail = () => {
         postId,
         content: newComment.trim(),
         authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL || "",
+        authorName: actorDisplayName,
+        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId: null,
         parentCommentId: null,
         createdAt: new Date(),
@@ -289,17 +289,12 @@ const PostDetail = () => {
         if (authorData?.notificationPrefs?.postComments !== false) {
           await createNotification({
             recipientId: post.authorId,
-            senderId: user.uid,
-            senderName: user.displayName || user.email.split("@")[0],
-            message: getNotificationMessage({
-              type: "post_comment",
-              senderName: user.displayName || user.email.split("@")[0],
-              postTitle: post.title,
-            }),
+            actorUserId: user.uid,
+            actorDisplayName,
             type: "post_comment",
-            link: `/post/${postId}`,
             postId,
             commentId: commentRef.id,
+            postTitle: post.title,
           });
         }
       }
@@ -330,13 +325,15 @@ const PostDetail = () => {
         return;
       }
 
+      const actorDisplayName = user.displayName || user.email.split("@")[0];
+
       // Create the reply data
       const replyData = {
         postId,
         content: trimmedContent,
         authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: user.photoURL || "",
+        authorName: actorDisplayName,
+        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId,
         parentCommentId: parentId,
         createdAt: serverTimestamp(),
@@ -381,16 +378,12 @@ const PostDetail = () => {
         if (authorData?.notificationPrefs?.commentReplies !== false) {
           await createNotification({
             recipientId: parentComment.authorId,
-            senderId: user.uid,
-            senderName: user.displayName || user.email.split("@")[0],
-            message: getNotificationMessage({
-              type: "comment_reply",
-              senderName: user.displayName || user.email.split("@")[0],
-            }),
+            actorUserId: user.uid,
+            actorDisplayName,
             type: "comment_reply",
-            link: `/post/${postId}`,
             postId,
             commentId: replyRef.id,
+            postTitle: post.title,
           });
         }
       }
@@ -457,6 +450,17 @@ const PostDetail = () => {
   }
 
   if (!post) return null;
+
+  const authorAvatar = post.authorPhotoURL
+    ? normalizeProfilePhoto(post.authorPhotoURL, 256)
+    : "";
+  const authorAvatar2x = post.authorPhotoURL
+    ? normalizeProfilePhoto(post.authorPhotoURL, 512)
+    : "";
+  const authorAvatarSrcSet =
+    authorAvatar && authorAvatar2x && authorAvatar2x !== authorAvatar
+      ? `${authorAvatar2x} 2x`
+      : undefined;
 
   return (
     <>
@@ -542,7 +546,8 @@ const PostDetail = () => {
                           >
                             {post.authorPhotoURL ? (
                               <img
-                                src={post.authorPhotoURL}
+                                src={authorAvatar}
+                                srcSet={authorAvatarSrcSet}
                                 alt={post.authorName}
                                 className="w-full h-full object-cover u-photo"
                               />
@@ -583,7 +588,8 @@ const PostDetail = () => {
                           >
                             {post.authorPhotoURL ? (
                               <img
-                                src={post.authorPhotoURL}
+                                src={authorAvatar}
+                                srcSet={authorAvatarSrcSet}
                                 alt={post.authorName}
                                 className="w-full h-full object-cover u-photo"
                               />
