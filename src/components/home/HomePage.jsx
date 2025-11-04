@@ -31,6 +31,7 @@ import {
   processPostsForTab,
 } from "../../utils/feedQueries";
 import { useAuthorRanks } from "../../hooks/useAuthorRanks";
+import CommunityActivityWidget from "../activity/CommunityActivityWidget";
 
 const createEmptyTabState = () => ({
   posts: [],
@@ -693,11 +694,12 @@ const HomePage = () => {
       </section>
 
       {/* Main content with restricted width */}
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        {/* Latest Posts Section */}
-        <section className="w-full">
-          <div className="mb-6 flex flex-col gap-4">
-            <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+      <div className="mx-auto px-4 py-8 md:max-w-6xl">
+        <div className="flex flex-col gap-8 md:flex-row md:items-start">
+          {/* Latest Posts Section */}
+          <section className="w-full md:flex-1">
+            <div className="mb-6 flex flex-col gap-4">
+              <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
               Community Feed
             </h2>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -759,9 +761,9 @@ const HomePage = () => {
                   Post Your Find
                 </button>
               )}
+              </div>
             </div>
-          </div>
-          <div className="space-y-8">
+            <div className="space-y-8">
             {postsToRender.map((post) => (
               <article
                 key={post.id}
@@ -925,8 +927,178 @@ const HomePage = () => {
                 </button>
               </div>
             )}
-          </div>
-        </section>
+            </div>
+            <div className="space-y-8">
+              {postsToRender.map((post) => (
+                <article
+                  key={post.id}
+                  onClick={() => handlePostClick(post.id)}
+                  className={`h-entry group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg cursor-pointer transition-transform hover:scale-[1.01] ${
+                    darkMode
+                      ? "bg-gray-800 border-gray-700"
+                      : "bg-white border-gray-200"
+                  }`}
+                >
+                  {renderAuthorHeader(post)}
+                  {post.imageUrl && (
+                    <div className="w-full aspect-w-16 aspect-h-9 overflow-hidden">
+                      <OptimizedImage
+                        src={post.imageUrl}
+                        alt={post.title}
+                        className="w-full h-auto object-contain u-photo"
+                        sizes="(min-width: 1024px) 896px, 100vw"
+                        loading={post.id === firstPostId ? "eager" : "lazy"}
+                        objectFit="contain"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-1 flex-col p-6">
+                    <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Platform tags */}
+                        {(Array.isArray(post.platforms)
+                          ? post.platforms
+                          : [post.platform]
+                        ).map((platform) => (
+                          <span
+                            key={platform}
+                            className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
+                              darkMode
+                                ? "bg-gray-700 text-gray-300"
+                                : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
+                            {platform}
+                          </span>
+                        ))}
+                        {/* Category tag */}
+                        <span
+                          className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
+                            darkMode
+                              ? "bg-gray-700 text-gray-300"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {post.category}
+                        </span>
+                      </div>
+                      <div
+                        className="flex w-full items-center justify-start gap-3 sm:w-auto sm:justify-end"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <ShareButtons
+                          url={`${window.location.origin}/post/${post.id}`}
+                          title={post.title}
+                          darkMode={darkMode}
+                        />
+                      </div>
+                    </div>
+                    <h3
+                      className={`mb-4 text-2xl font-bold p-name ${
+                        darkMode ? "text-white" : "text-gray-900"
+                      }`}
+                    >
+                      {post.title}
+                    </h3>
+                    <p
+                      className={`mb-4 text-base line-clamp-3 p-summary ${
+                        darkMode ? "text-gray-300" : "text-gray-600"
+                      }`}
+                    >
+                      {getPreviewContent(post.content)}
+                    </p>
+                    <div
+                      className={`mt-auto border-t ${
+                        darkMode ? "border-gray-700" : "border-gray-200"
+                      }`}
+                    >
+                      {renderCardFooter(post)}
+                    </div>
+                    <a href={`/post/${post.id}`} className="u-url hidden">
+                      Permalink
+                    </a>
+                  </div>
+                </article>
+              ))}
+
+              {!currentTabState.isLoading && postsToRender.length === 0 && (
+                <div
+                  className={`rounded-lg border p-6 text-center text-sm ${
+                    darkMode
+                      ? "border-gray-700 bg-gray-900 text-gray-300"
+                      : "border-gray-200 bg-gray-50 text-gray-600"
+                  }`}
+                >
+                  {currentTabState.error ||
+                    "No posts found for this tab yet. Check back soon!"}
+                </div>
+              )}
+
+              <div className="flex flex-col items-center py-4 space-y-4">
+                {currentTabState.isLoading && (
+                  <div
+                    className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
+                      darkMode ? "border-white" : "border-gray-900"
+                    }`}
+                  ></div>
+                )}
+
+                {!currentTabState.isLoading && currentTabState.hasMore && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                      More Content Available
+                    </h3>
+                    <button
+                      onClick={() => fetchPostsForTab(activeTab, { isLoadMore: true })}
+                      className={`px-6 py-2 text-sm rounded-md ${
+                        darkMode
+                          ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
+                          : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+                      }`}
+                    >
+                      Load More
+                    </button>
+                  </div>
+                )}
+
+                {!currentTabState.hasMore && postsToRender.length > 0 && (
+                  <div
+                    className={`text-center ${
+                      darkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    No more posts to load
+                  </div>
+                )}
+
+                {currentTabState.error && postsToRender.length > 0 && (
+                  <div
+                    className={`text-center text-sm ${
+                      darkMode ? "text-red-400" : "text-red-600"
+                    }`}
+                  >
+                    {currentTabState.error}
+                  </div>
+                )}
+              </div>
+              {user && postsToRender.length > 0 && (
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={handleShareYourFind}
+                    className={postCtaClasses}
+                  >
+                    Post Your Find
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside className="hidden md:block md:w-[320px] lg:w-[360px] md:sticky md:top-24 md:h-[calc(100vh-6rem)] md:max-h-[calc(100vh-6rem)] md:pb-6">
+            <CommunityActivityWidget className="h-full" />
+          </aside>
+        </div>
       </div>
     </>
   );

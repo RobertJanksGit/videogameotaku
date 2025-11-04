@@ -84,6 +84,14 @@ const PostDetail = () => {
     () => buildCommentThreads(comments),
     [comments]
   );
+  const targetCommentIdFromState = location.state?.targetCommentId ?? null;
+  const targetCommentIdFromHash = useMemo(() => {
+    if (!location.hash) return null;
+    if (location.hash.startsWith("#comment-")) {
+      return location.hash.replace("#comment-", "");
+    }
+    return null;
+  }, [location.hash]);
 
   const scrollToComment = (commentId) => {
     if (!commentId) return;
@@ -171,18 +179,28 @@ const PostDetail = () => {
       !loading &&
       !commentsLoading &&
       comments.length > 0 &&
-      location.state?.targetCommentId &&
       !hasScrolledToComment.current
     ) {
-      scrollToComment(location.state.targetCommentId);
-      hasScrolledToComment.current = true;
-    }
-  }, [loading, commentsLoading, comments, location.state?.targetCommentId]);
+      const targetCommentId =
+        targetCommentIdFromState || targetCommentIdFromHash;
 
-  // Reset the scroll flag when the postId changes
+      if (targetCommentId) {
+        scrollToComment(targetCommentId);
+        hasScrolledToComment.current = true;
+      }
+    }
+  }, [
+    loading,
+    commentsLoading,
+    comments,
+    targetCommentIdFromState,
+    targetCommentIdFromHash,
+  ]);
+
+  // Reset the scroll flag when the postId or target changes
   useEffect(() => {
     hasScrolledToComment.current = false;
-  }, [postId]);
+  }, [postId, targetCommentIdFromState, targetCommentIdFromHash]);
 
   useEffect(() => {
     // Add styles for comment highlighting
