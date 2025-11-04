@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import SEO from "../common/SEO";
 import StructuredData from "../common/StructuredData";
@@ -198,20 +198,45 @@ const CategoryPage = () => {
                         >
                           Author:
                         </h4>
-                        {post.authorPhotoURL && (
-                          <img
-                            src={post.authorPhotoURL}
-                            alt={post.authorName}
-                            className="w-8 h-8 rounded-full u-photo"
-                          />
+                        {post.authorId ? (
+                          <Link
+                            to={`/user/${post.authorId}`}
+                            aria-label={`View ${post.authorName}'s profile`}
+                            className="flex items-center space-x-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
+                          >
+                            {post.authorPhotoURL && (
+                              <img
+                                src={post.authorPhotoURL}
+                                alt={post.authorName}
+                                className="w-8 h-8 rounded-full u-photo"
+                              />
+                            )}
+                            <span
+                              className={`text-sm p-name transition hover:underline ${
+                                darkMode ? "text-gray-200" : "text-gray-700"
+                              }`}
+                            >
+                              {post.authorName}
+                            </span>
+                          </Link>
+                        ) : (
+                          <div className="flex items-center space-x-2">
+                            {post.authorPhotoURL && (
+                              <img
+                                src={post.authorPhotoURL}
+                                alt={post.authorName}
+                                className="w-8 h-8 rounded-full u-photo"
+                              />
+                            )}
+                            <span
+                              className={`text-sm p-name ${
+                                darkMode ? "text-gray-400" : "text-gray-500"
+                              }`}
+                            >
+                              {post.authorName}
+                            </span>
+                          </div>
                         )}
-                        <span
-                          className={`text-sm p-name ${
-                            darkMode ? "text-gray-400" : "text-gray-500"
-                          }`}
-                        >
-                          {post.authorName}
-                        </span>
                       </div>
                       <div>
                         <h4

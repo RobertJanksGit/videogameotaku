@@ -3,7 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { storage, db, auth } from "../../config/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { doc, updateDoc, getDoc } from "firebase/firestore";
+import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import {
   updateProfile,
   updatePassword,
@@ -27,6 +27,8 @@ const Settings = () => {
     postComments: true,
     commentReplies: true,
   });
+  const [bio, setBio] = useState("");
+  const [profileExists, setProfileExists] = useState(false);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
 
@@ -50,6 +52,16 @@ const Settings = () => {
           postComments: userData?.notificationPrefs?.postComments ?? true,
           commentReplies: userData?.notificationPrefs?.commentReplies ?? true,
         });
+
+        const profileDoc = await getDoc(doc(db, "profiles", user.uid));
+        if (profileDoc.exists()) {
+          const profileData = profileDoc.data();
+          setBio(profileData?.bio || "");
+          setProfileExists(true);
+        } else {
+          setBio("");
+          setProfileExists(false);
+        }
       } catch (error) {
         console.error("Error fetching user data:", error);
       }
@@ -188,6 +200,22 @@ const Settings = () => {
         photoURL,
         notificationPrefs,
       });
+
+      const profileRef = doc(db, "profiles", user.uid);
+      const profileData = {
+        displayName,
+        avatarUrl: photoURL || "",
+        bio: bio.trim(),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (!profileExists) {
+        profileData.createdAt = serverTimestamp();
+      }
+
+      await setDoc(profileRef, profileData, { merge: true });
+
+      setProfileExists(true);
 
       setSuccess("Profile updated successfully!");
       clearImage(); // Clear selected image after successful update
@@ -510,6 +538,37 @@ const Settings = () => {
                   </p>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="bio"
+                className={`block text-sm font-medium ${
+                  darkMode ? "text-[#ADBAC7]" : "text-gray-700"
+                }`}
+              >
+                Bio <span className="text-xs text-gray-500">(optional)</span>
+              </label>
+              <textarea
+                id="bio"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                rows="3"
+                maxLength={280}
+                placeholder="Share a short description about yourself"
+                className={`w-full px-3 py-2 text-sm rounded-md focus:ring-2 focus:ring-[#316DCA] focus:border-transparent resize-none ${
+                  darkMode
+                    ? "bg-[#1C2128] border-[#373E47] text-[#ADBAC7]"
+                    : "bg-white border-gray-300 text-gray-900"
+                }`}
+              />
+              <p
+                className={`text-xs ${
+                  darkMode ? "text-gray-500" : "text-gray-400"
+                }`}
+              >
+                {bio.length}/280 characters
+              </p>
             </div>
 
             <button

@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import { Link } from "react-router-dom";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
 
 const commentPropType = PropTypes.shape({
   id: PropTypes.string.isRequired,
   content: PropTypes.string.isRequired,
+  authorId: PropTypes.string,
   authorName: PropTypes.string,
   authorPhotoURL: PropTypes.string,
   createdAt: PropTypes.oneOfType([
@@ -15,11 +17,16 @@ const commentPropType = PropTypes.shape({
   ]),
 });
 
-const CommentAvatar = ({ authorName = "Anonymous", authorPhotoURL, darkMode }) => {
+const CommentAvatar = ({
+  authorId,
+  authorName = "Anonymous",
+  authorPhotoURL,
+  darkMode,
+}) => {
   const initial = (authorName || "").charAt(0).toUpperCase() || "A";
 
-  return (
-    <div
+  const avatar = (
+    <span
       className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0 ring-2 ${
         darkMode ? "bg-gray-700 ring-gray-600" : "bg-gray-100 ring-gray-200"
       }`}
@@ -40,11 +47,26 @@ const CommentAvatar = ({ authorName = "Anonymous", authorPhotoURL, darkMode }) =
           {initial}
         </span>
       )}
-    </div>
+    </span>
   );
+
+  if (authorId) {
+    return (
+      <Link
+        to={`/user/${authorId}`}
+        aria-label={`View ${authorName}'s profile`}
+        className="inline-flex focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
+      >
+        {avatar}
+      </Link>
+    );
+  }
+
+  return avatar;
 };
 
 CommentAvatar.propTypes = {
+  authorId: PropTypes.string,
   authorName: PropTypes.string,
   authorPhotoURL: PropTypes.string,
   darkMode: PropTypes.bool.isRequired,
@@ -74,19 +96,31 @@ const CommentItem = ({
       aria-label={`Comment by ${comment.authorName || "anonymous"}`}
     >
       <CommentAvatar
+        authorId={comment.authorId}
         authorName={comment.authorName}
         authorPhotoURL={comment.authorPhotoURL}
         darkMode={darkMode}
       />
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            className={`font-semibold ${
-              darkMode ? "text-white" : "text-gray-900"
-            }`}
-          >
-            {comment.authorName || "Anonymous"}
-          </span>
+          {comment.authorId ? (
+            <Link
+              to={`/user/${comment.authorId}`}
+              className={`font-semibold transition hover:underline ${
+                darkMode ? "text-white hover:text-gray-200" : "text-gray-900 hover:text-gray-700"
+              }`}
+            >
+              {comment.authorName || "Anonymous"}
+            </Link>
+          ) : (
+            <span
+              className={`font-semibold ${
+                darkMode ? "text-white" : "text-gray-900"
+              }`}
+            >
+              {comment.authorName || "Anonymous"}
+            </span>
+          )}
           {relativeTime && (
             <time
               className={`text-xs ${

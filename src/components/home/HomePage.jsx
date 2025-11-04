@@ -12,7 +12,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
 import ShareButtons from "../common/ShareButtons";
 import SEO from "../common/SEO";
@@ -389,6 +389,33 @@ const HomePage = () => {
       : "";
 
     const TimeElement = publishedAt ? "time" : "span";
+    const authorId = post.authorId;
+    const profileUrl = authorId ? `/user/${authorId}` : null;
+
+    const authorContent = (
+      <>
+        <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 text-sm font-semibold uppercase text-white shadow-sm transition group-hover/author:brightness-110">
+          {post.authorPhotoURL ? (
+            <img
+              src={post.authorPhotoURL}
+              alt={authorName}
+              className="h-full w-full object-cover u-photo"
+            />
+          ) : (
+            initials
+          )}
+        </span>
+        <span
+          className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
+            darkMode
+              ? "text-white group-hover/author:text-gray-100"
+              : "text-gray-900 group-hover/author:text-gray-700"
+          }`}
+        >
+          {authorName}
+        </span>
+      </>
+    );
 
     return (
       <div
@@ -396,35 +423,20 @@ const HomePage = () => {
           darkMode ? "border-gray-700 bg-gray-900/40" : "border-gray-200 bg-gray-50"
         }`}
       >
-        <button
-          type="button"
-          className="group/author flex items-center gap-3 text-left h-card p-author bg-transparent p-0 border-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
-          onClick={(event) => {
-            event.stopPropagation();
-            // TODO: Navigate to author profile when route is available
-          }}
-        >
-          <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 text-sm font-semibold uppercase text-white shadow-sm transition group-hover/author:brightness-110">
-            {post.authorPhotoURL ? (
-              <img
-                src={post.authorPhotoURL}
-                alt={authorName}
-                className="h-full w-full object-cover u-photo"
-              />
-            ) : (
-              initials
-            )}
-          </span>
-          <span
-            className={`p-name text-sm font-semibold leading-tight transition group-hover/author:underline ${
-              darkMode
-                ? "text-white group-hover/author:text-gray-100"
-                : "text-gray-900 group-hover/author:text-gray-700"
-            }`}
+        {profileUrl ? (
+          <Link
+            to={profileUrl}
+            aria-label={`View ${authorName}'s profile`}
+            className="group/author flex items-center gap-3 text-left h-card p-author focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+            onClick={(event) => event.stopPropagation()}
           >
-            {authorName}
-          </span>
-        </button>
+            {authorContent}
+          </Link>
+        ) : (
+          <div className="group/author flex items-center gap-3 text-left h-card p-author">
+            {authorContent}
+          </div>
+        )}
         {timeDisplay ? (
           <TimeElement
             dateTime={

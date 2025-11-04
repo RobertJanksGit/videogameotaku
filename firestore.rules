@@ -183,7 +183,7 @@ service cloud.firestore {
     match /users/{userId} {
       // Allow reading usernames for availability check and signed-in users
       allow list: if true;  // Allow listing users for username checks
-      allow get: if isSignedIn();  // Require auth for getting specific user docs
+      allow get: if true;  // Allow public read of user profiles
       
       // Allow user creation during signup
       allow create: if request.auth != null && 
@@ -201,6 +201,18 @@ service cloud.firestore {
                    (request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['role', 'isActive']));
       allow delete: if isAdmin();
+    }
+
+    // Profiles collection rules
+    match /profiles/{userId} {
+      // Anyone can view user profiles
+      allow read: if true;
+
+      // Users can create or update only their own profile document
+      allow create, update: if isOwner(userId);
+
+      // Prevent deletion for now (could enable admin later if needed)
+      allow delete: if false;
     }
 
     // Votes collection

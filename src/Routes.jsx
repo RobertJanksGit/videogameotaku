@@ -17,6 +17,7 @@ import Settings from "./components/settings/Settings";
 import AdminPage from "./components/admin/AdminPage";
 import UserDashboard from "./components/user/UserDashboard";
 import NotFound from "./components/common/NotFound";
+import ProfilePage from "./components/user/ProfilePage";
 
 // PrivateRoute component to protect routes that require authentication
 const PrivateRoute = ({ children }) => {
@@ -68,6 +69,7 @@ const AppRoutes = () => {
         {/* Public Routes */}
         <Route path="/" element={<HomePage />} />
         <Route path="/post/:postId" element={<PostDetail />} />
+        <Route path="/user/:userId" element={<ProfilePage />} />
         <Route path="/guidelines" element={<ContentGuidelines />} />
         <Route path="/terms" element={<TermsOfUse />} />
         <Route path="/:category" element={<HomePage />} />

@@ -129,7 +129,7 @@ const OptimizedImage = ({
           srcSet={generateSrcSet()}
           sizes={sizes}
           decoding="async"
-          fetchPriority={loading === "eager" ? "high" : "auto"}
+          {...(loading === "eager" ? { fetchpriority: "high" } : {})}
         />
       )}
     </div>

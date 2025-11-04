@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../config/firebase";
@@ -510,46 +510,95 @@ const PostDetail = () => {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-4">
-                    <address className="flex items-center not-italic h-card p-author">
-                      <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
-                          darkMode ? "bg-gray-700" : "bg-gray-100"
-                        }`}
-                      >
-                        {post.authorPhotoURL ? (
-                          <img
-                            src={post.authorPhotoURL}
-                            alt={post.authorName}
-                            className="w-full h-full object-cover u-photo"
-                          />
-                        ) : (
+                    <div className="flex items-center not-italic h-card p-author">
+                      {post.authorId ? (
+                        <Link
+                          to={`/user/${post.authorId}`}
+                          aria-label={`View ${post.authorName}'s profile`}
+                          className="flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2"
+                        >
                           <span
-                            className={`text-lg font-medium ${
-                              darkMode ? "text-gray-300" : "text-gray-600"
+                            className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
+                              darkMode ? "bg-gray-700" : "bg-gray-100"
                             }`}
                           >
-                            {post.authorName[0].toUpperCase()}
+                            {post.authorPhotoURL ? (
+                              <img
+                                src={post.authorPhotoURL}
+                                alt={post.authorName}
+                                className="w-full h-full object-cover u-photo"
+                              />
+                            ) : (
+                              <span
+                                className={`text-lg font-medium ${
+                                  darkMode ? "text-gray-300" : "text-gray-600"
+                                }`}
+                              >
+                                {post.authorName[0].toUpperCase()}
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </div>
-                      <div className="ml-3">
-                        <p
-                          className={`text-sm font-medium p-name ${
-                            darkMode ? "text-gray-200" : "text-gray-900"
-                          }`}
-                        >
-                          {post.authorName}
-                        </p>
-                        <time
-                          dateTime={post.createdAt?.toDate().toISOString()}
-                          className={`text-xs dt-published ${
-                            darkMode ? "text-gray-400" : "text-gray-500"
-                          }`}
-                        >
-                          {post.createdAt?.toDate().toLocaleDateString()}
-                        </time>
-                      </div>
-                    </address>
+                          <span className="ml-3 text-left">
+                            <span
+                              className={`block text-sm font-medium p-name ${
+                                darkMode ? "text-gray-200" : "text-gray-900"
+                              }`}
+                            >
+                              {post.authorName}
+                            </span>
+                            <time
+                              dateTime={post.createdAt?.toDate().toISOString()}
+                              className={`text-xs dt-published ${
+                                darkMode ? "text-gray-400" : "text-gray-500"
+                              }`}
+                            >
+                              {post.createdAt?.toDate().toLocaleDateString()}
+                            </time>
+                          </span>
+                        </Link>
+                      ) : (
+                        <div className="flex items-center">
+                          <span
+                            className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
+                              darkMode ? "bg-gray-700" : "bg-gray-100"
+                            }`}
+                          >
+                            {post.authorPhotoURL ? (
+                              <img
+                                src={post.authorPhotoURL}
+                                alt={post.authorName}
+                                className="w-full h-full object-cover u-photo"
+                              />
+                            ) : (
+                              <span
+                                className={`text-lg font-medium ${
+                                  darkMode ? "text-gray-300" : "text-gray-600"
+                                }`}
+                              >
+                                {post.authorName[0].toUpperCase()}
+                              </span>
+                            )}
+                          </span>
+                          <div className="ml-3">
+                            <p
+                              className={`text-sm font-medium p-name ${
+                                darkMode ? "text-gray-200" : "text-gray-900"
+                              }`}
+                            >
+                              {post.authorName}
+                            </p>
+                            <time
+                              dateTime={post.createdAt?.toDate().toISOString()}
+                              className={`text-xs dt-published ${
+                                darkMode ? "text-gray-400" : "text-gray-500"
+                              }`}
+                            >
+                              {post.createdAt?.toDate().toLocaleDateString()}
+                            </time>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <div
                       className="flex items-center space-x-2"
                       role="list"

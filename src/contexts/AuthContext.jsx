@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   createUserWithEmailAndPassword,
@@ -12,6 +12,7 @@ import {
   setDoc,
   getDoc,
   serverTimestamp,
+  Timestamp,
   collection,
   query,
   where,
@@ -46,9 +47,97 @@ const formatAuthError = (error) => {
   }
 };
 
+const getPreferredDisplayName = (authUser, userData = {}) => {
+  if (userData?.name) return userData.name;
+  if (authUser?.displayName) return authUser.displayName;
+  const email = authUser?.email || userData?.email;
+  if (email) {
+    return email.split("@")[0];
+  }
+  return "Community Member";
+};
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const ensureProfileDocument = useCallback(async (authUser, userData = {}) => {
+    if (!authUser) {
+      return null;
+    }
+
+    try {
+      const profileRef = doc(db, "profiles", authUser.uid);
+      const creationTimestamp = () => {
+        if (userData?.createdAt) {
+          return userData.createdAt;
+        }
+
+        if (authUser?.metadata?.creationTime) {
+          try {
+            const createdDate = new Date(authUser.metadata.creationTime);
+            if (!Number.isNaN(createdDate.getTime())) {
+              return Timestamp.fromDate(createdDate);
+            }
+          } catch (dateError) {
+            console.warn("Unable to parse auth creation time", dateError);
+          }
+        }
+
+        return Timestamp.now();
+      };
+
+      const fallbackProfile = () => ({
+        displayName: getPreferredDisplayName(authUser, userData),
+        avatarUrl: userData?.photoURL || authUser.photoURL || "",
+        bio: userData?.bio || "",
+        createdAt: creationTimestamp(),
+        updatedAt: userData?.updatedAt || null,
+      });
+
+      let profileSnap;
+
+      try {
+        profileSnap = await getDoc(profileRef);
+      } catch (readError) {
+        if (readError.code === "permission-denied") {
+          console.warn("Profiles read permission denied; using fallback data.");
+          return fallbackProfile();
+        }
+        throw readError;
+      }
+
+      if (profileSnap.exists()) {
+        return profileSnap.data();
+      }
+
+      const profilePayload = {
+        displayName: getPreferredDisplayName(authUser, userData),
+        avatarUrl: userData?.photoURL || authUser.photoURL || "",
+        bio: "",
+        createdAt: creationTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      try {
+        await setDoc(profileRef, profilePayload);
+      } catch (writeError) {
+        if (writeError.code === "permission-denied") {
+          console.warn("Profiles write permission denied; using fallback data.");
+          return fallbackProfile();
+        }
+        throw writeError;
+      }
+
+      const createdProfileSnap = await getDoc(profileRef);
+      return createdProfileSnap.exists()
+        ? createdProfileSnap.data()
+        : profilePayload;
+    } catch (error) {
+      console.error("Error ensuring profile document:", error);
+      return null;
+    }
+  }, []);
 
   // Check if username is already taken
   async function isUsernameTaken(username, excludeUserId = null) {
@@ -75,7 +164,7 @@ export function AuthProvider({ children }) {
       }
 
       return true;
-    } catch (error) {
+    } catch {
       // Instead of failing, assume username is available and let other validations catch issues
       return false;
     }
@@ -122,8 +211,10 @@ export function AuthProvider({ children }) {
         throw firestoreError;
       }
 
+      const profile = await ensureProfileDocument(newUser, userData);
+
       // Return the user with Firestore data
-      return { ...newUser, ...userData };
+      return { ...newUser, ...userData, profile };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -152,8 +243,10 @@ export function AuthProvider({ children }) {
         { merge: true }
       );
 
+      const profile = await ensureProfileDocument(currentUser, userData);
+
       // Return the user with Firestore data
-      return { ...currentUser, ...userData };
+      return { ...currentUser, ...userData, profile };
     } catch (error) {
       throw new Error(formatAuthError(error));
     }
@@ -187,8 +280,10 @@ export function AuthProvider({ children }) {
             { merge: true }
           );
 
+          const profile = await ensureProfileDocument(currentUser, userData);
+
           // Set user with combined Auth and Firestore data
-          setUser({ ...currentUser, ...userData });
+          setUser({ ...currentUser, ...userData, profile });
         } catch (error) {
           console.error("Error fetching user data:", error);
           setUser(currentUser);
@@ -200,7 +295,7 @@ export function AuthProvider({ children }) {
     });
 
     return unsubscribe;
-  }, []);
+  }, [ensureProfileDocument]);
 
   const value = {
     user,
