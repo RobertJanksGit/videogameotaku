@@ -8,6 +8,7 @@ import {
   limit,
   orderBy,
   query,
+  where,
 } from "firebase/firestore";
 import { db } from "../../config/firebase";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -71,7 +72,7 @@ const buildActivityLabel = ({ type, authorName, postTitle }) => {
   return `${formattedAuthor} contributed to "${safeTitle}"`;
 };
 
-const CommunityActivityWidget = ({ className = "" }) => {
+const CommunityActivityWidget = ({ className = "", userId = null }) => {
   const { darkMode } = useTheme();
   const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
   const [activityItems, setActivityItems] = useState([]);
@@ -89,19 +90,29 @@ const CommunityActivityWidget = ({ className = "" }) => {
     const fetchActivity = async () => {
       setIsLoading(true);
       setError(null);
+      setActivityItems([]);
 
       try {
-        const postsQuery = query(
-          collection(db, "posts"),
-          orderBy("createdAt", "desc"),
-          limit(MAX_ITEMS)
-        );
+        const postsCollection = collection(db, "posts");
+        const commentsCollection = collection(db, "comments");
 
-        const commentsQuery = query(
-          collection(db, "comments"),
-          orderBy("createdAt", "desc"),
-          limit(MAX_ITEMS)
-        );
+        const postsQuery = userId
+          ? query(
+              postsCollection,
+              where("authorId", "==", userId),
+              orderBy("createdAt", "desc"),
+              limit(MAX_ITEMS)
+            )
+          : query(postsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
+
+        const commentsQuery = userId
+          ? query(
+              commentsCollection,
+              where("authorId", "==", userId),
+              orderBy("createdAt", "desc"),
+              limit(MAX_ITEMS)
+            )
+          : query(commentsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
 
         const [postsSnapshot, commentsSnapshot] = await Promise.all([
           getDocs(postsQuery),
@@ -191,7 +202,7 @@ const CommunityActivityWidget = ({ className = "" }) => {
     return () => {
       isCancelled = true;
     };
-  }, [isDesktop]);
+  }, [isDesktop, userId]);
 
   const displayItems = useMemo(
     () =>
