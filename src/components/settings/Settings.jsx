@@ -15,6 +15,7 @@ import ContributionGraph from "../activity/ContributionGraph";
 
 const MIN_PROFILE_IMAGE_DIMENSION = 256;
 const INVALID_FILE_MESSAGE = "Please select a valid image file (PNG, JPG, GIF) up to 5MB";
+const ACTIVITY_BREAKPOINT = 773;
 
 const loadImageDimensions = (file) =>
   new Promise((resolve, reject) => {
@@ -48,6 +49,12 @@ const Settings = () => {
     commentReplies: true,
   });
   const [bio, setBio] = useState("");
+  const [isWideScreen, setIsWideScreen] = useState(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    return window.innerWidth >= ACTIVITY_BREAKPOINT;
+  });
   const [profileExists, setProfileExists] = useState(false);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
@@ -105,6 +112,24 @@ const Settings = () => {
     };
     reader.readAsDataURL(file);
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleResize = () => {
+      setIsWideScreen(window.innerWidth >= ACTIVITY_BREAKPOINT);
+    };
+
+    handleResize();
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
   const setImageSelectionError = (message) => {
     setSelectedImage(null);
@@ -742,20 +767,22 @@ const Settings = () => {
           </form>
         </div>
 
-        <div
-          className={`rounded-lg shadow p-6 ${
-            darkMode ? "bg-[#2D333B]" : "bg-white border border-gray-200"
-          }`}
-        >
-          <h2
-            className={`text-lg font-semibold mb-4 ${
-              darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+        {isWideScreen && (
+          <div
+            className={`rounded-lg shadow p-6 ${
+              darkMode ? "bg-[#2D333B]" : "bg-white border border-gray-200"
             }`}
           >
-            Activity
-          </h2>
-          <ContributionGraph contributions={contributions} />
-        </div>
+            <h2
+              className={`text-lg font-semibold mb-4 ${
+                darkMode ? "text-[#ADBAC7]" : "text-gray-900"
+              }`}
+            >
+              Activity
+            </h2>
+            <ContributionGraph contributions={contributions} />
+          </div>
+        )}
       </div>
     </div>
   );

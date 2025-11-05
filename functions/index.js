@@ -531,8 +531,8 @@ export const validatePost = onDocumentCreated(
       const updateData = {
         status: "published",
         moderationMessage: "Auto-published - no validation required",
-        updatedAt: db.FieldValue.serverTimestamp(),
-        validatedAt: db.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        validatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
       // Log the update data for debugging
@@ -594,8 +594,8 @@ export const validatePost = onDocumentCreated(
         status: "error",
         moderationMessage:
           error.message || "Validation error. Please try again.",
-        updatedAt: db.FieldValue.serverTimestamp(),
-        validatedAt: db.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        validatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
       await db.collection("posts").doc(postId).update(errorUpdate);
