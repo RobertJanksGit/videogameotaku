@@ -408,6 +408,125 @@ const sanitizeContent = (content) => {
     .replace(/vbscript:/gi, ""); // Remove vbscript: protocols
 };
 
+const safeParseJson = (value) => {
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    console.warn("Failed to parse JSON string from moderation service", {
+      error: error.message,
+      value,
+    });
+    return null;
+  }
+};
+
+const toBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  if (typeof value === "number") {
+    if (value === 0) return false;
+    if (value === 1) return true;
+  }
+  return null;
+};
+
+const extractModerationDecision = (result) => {
+  const candidateObjects = [];
+  const addCandidate = (candidate) => {
+    if (!candidate) return;
+    if (typeof candidate === "string") {
+      const parsed = safeParseJson(candidate);
+      if (parsed && typeof parsed === "object") {
+        candidateObjects.push(parsed);
+      }
+      return;
+    }
+    if (typeof candidate === "object") {
+      candidateObjects.push(candidate);
+    }
+  };
+
+  addCandidate(result);
+  addCandidate(result?.details);
+  addCandidate(result?.details?.analysis);
+  addCandidate(result?.message);
+
+  let decision = typeof result?.isValid === "boolean" ? result.isValid : null;
+  let reason = typeof result?.message === "string" ? result.message : null;
+  let structuredReason = null;
+  let aggregatedDetails = null;
+
+  const decisionKeys = [
+    "isValid",
+    "isvalid",
+    "valid",
+    "approved",
+    "isApproved",
+    "allow",
+    "allowed",
+  ];
+
+  for (const candidate of candidateObjects) {
+    if (!candidate || typeof candidate !== "object") continue;
+
+    for (const key of decisionKeys) {
+      if (!Object.prototype.hasOwnProperty.call(candidate, key)) continue;
+      const candidateDecision = toBoolean(candidate[key]);
+      if (candidateDecision === null) continue;
+
+      if (decision === null) {
+        decision = candidateDecision;
+      } else if (decision !== candidateDecision) {
+        console.warn("Conflicting moderation decisions detected", {
+          previousDecision: decision,
+          overridingDecision: candidateDecision,
+          candidate,
+        });
+        // Prefer the safest option (reject if any signal says false)
+        decision = decision && candidateDecision;
+      }
+      break;
+    }
+
+    if (!reason && typeof candidate.message === "string") {
+      reason = candidate.message;
+    }
+
+    if (!reason && typeof candidate.reason === "string") {
+      reason = candidate.reason;
+    }
+
+    if (
+      !structuredReason &&
+      typeof candidate === "object" &&
+      (candidate.message || candidate.reason)
+    ) {
+      structuredReason = candidate;
+    }
+
+    if (!aggregatedDetails) {
+      aggregatedDetails = candidate;
+    } else if (typeof aggregatedDetails !== "object") {
+      aggregatedDetails = {
+        value: aggregatedDetails,
+        additional: candidate,
+      };
+    }
+  }
+
+  return {
+    decision,
+    reason,
+    structuredReason,
+    aggregatedDetails,
+  };
+};
+
 // Helper function to validate content
 function validateContent(title, content) {
   if (
@@ -527,78 +646,226 @@ export const validatePost = onDocumentCreated(
       // Log the original post data for debugging
       console.log("Original post data:", JSON.stringify(data, null, 2));
 
-      // Auto-publish posts since we don't have a validation endpoint
-      const updateData = {
-        status: "published",
-        moderationMessage: "Auto-published - no validation required",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        validatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const apiUrl = validationApiUrl.value();
+      const prompt = validationPrompt.value();
+
+      if (!apiUrl) {
+        console.warn(
+          "VALIDATION_API_URL is not configured. Leaving post pending for manual review."
+        );
+
+        await db
+          .collection("posts")
+          .doc(postId)
+          .update({
+            status: "pending",
+            moderationMessage:
+              "Awaiting manual moderation. AI validation service not configured.",
+            moderationDetails: {
+              reason: "validation_service_not_configured",
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        return;
+      }
+
+      const payload = {
+        prompt,
+        title: data.title,
+        content: data.content,
       };
 
-      // Log the update data for debugging
-      console.log("Update data:", JSON.stringify(updateData, null, 2));
+      if (data.imageUrl && typeof data.imageUrl === "string") {
+        try {
+          const imageResponse = await fetchWithTimeout(data.imageUrl, {}, 10000);
 
-      await db.collection("posts").doc(postId).update(updateData);
-
-      // Verify the update preserved author information
-      const updatedPost = await db.collection("posts").doc(postId).get();
-      const updatedData = updatedPost.data();
-      console.log("Updated post data:", JSON.stringify(updatedData, null, 2));
-
-      // Verify author information was preserved
-      if (
-        updatedData.authorId !== data.authorId ||
-        updatedData.authorEmail !== data.authorEmail ||
-        updatedData.authorName !== data.authorName ||
-        updatedData.authorPhotoURL !== data.authorPhotoURL
-      ) {
-        console.error(
-          "Author information changed during validation!",
-          "Original:",
-          {
-            id: data.authorId,
-            email: data.authorEmail,
-            name: data.authorName,
-            photoURL: data.authorPhotoURL,
-          },
-          "Updated:",
-          {
-            id: updatedData.authorId,
-            email: updatedData.authorEmail,
-            name: updatedData.authorName,
-            photoURL: updatedData.authorPhotoURL,
+          if (imageResponse.ok) {
+            const contentType =
+              imageResponse.headers.get("content-type") || "image/jpeg";
+            const buffer = Buffer.from(await imageResponse.arrayBuffer());
+            payload.image = `data:${contentType};base64,${buffer.toString(
+              "base64"
+            )}`;
+          } else {
+            console.warn(
+              `Unable to fetch image for moderation. Status: ${imageResponse.status} ${imageResponse.statusText}`
+            );
           }
+        } catch (imageError) {
+          console.error("Error fetching image for moderation:", imageError);
+        }
+      }
+
+      console.log("Sending payload to validation service");
+
+      const response = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+        requestTimeout.value()
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(
+          `Validation service responded with ${response.status}: ${errorBody}`
         );
       }
 
+      const result = await response.json();
+      console.log("Validation response:", JSON.stringify(result, null, 2));
+
+      const {
+        decision,
+        reason,
+        structuredReason,
+        aggregatedDetails,
+      } = extractModerationDecision(result);
+
+      if (decision === null) {
+        throw new Error("Validation service did not provide a clear decision");
+      }
+
+      let parsedStructuredReason = null;
+      let moderationMessage = null;
+
+      if (typeof reason === "string" && reason.trim()) {
+        const parsedReason = safeParseJson(reason.trim());
+        if (parsedReason && typeof parsedReason === "object") {
+          parsedStructuredReason = parsedReason;
+          if (typeof parsedReason.message === "string") {
+            moderationMessage = parsedReason.message.trim();
+          } else if (typeof parsedReason.reason === "string") {
+            moderationMessage = parsedReason.reason.trim();
+          } else {
+            moderationMessage = JSON.stringify(parsedReason);
+          }
+        } else {
+          moderationMessage = reason.trim();
+        }
+      }
+
+      if (!moderationMessage && structuredReason) {
+        parsedStructuredReason =
+          parsedStructuredReason ||
+          (typeof structuredReason === "object" ? structuredReason : null);
+
+        const structuredMessage =
+          typeof structuredReason?.message === "string"
+            ? structuredReason.message
+            : typeof structuredReason?.reason === "string"
+            ? structuredReason.reason
+            : null;
+
+        if (structuredMessage && structuredMessage.trim()) {
+          moderationMessage = structuredMessage.trim();
+        }
+      }
+
+      const isApproved = decision === true;
+
+      if (!moderationMessage) {
+        moderationMessage = isApproved
+          ? "Approved by automated moderation."
+          : "Rejected by automated moderation.";
+      }
+
+      const detailCandidates = [];
+
+      if (parsedStructuredReason && typeof parsedStructuredReason === "object") {
+        detailCandidates.push(parsedStructuredReason);
+      }
+
+      if (
+        aggregatedDetails &&
+        typeof aggregatedDetails === "object" &&
+        Object.keys(aggregatedDetails).length > 0
+      ) {
+        detailCandidates.push(aggregatedDetails);
+      } else if (typeof aggregatedDetails === "string") {
+        const parsedAggregated = safeParseJson(aggregatedDetails);
+        if (parsedAggregated) {
+          detailCandidates.push(parsedAggregated);
+        } else {
+          detailCandidates.push({ summary: aggregatedDetails });
+        }
+      }
+
+      const mergedDetails = detailCandidates.reduce((acc, candidate) => {
+        if (!candidate || typeof candidate !== "object") return acc;
+        for (const [key, value] of Object.entries(candidate)) {
+          if (value === undefined) continue;
+          if (acc[key] === undefined) {
+            acc[key] = value;
+          }
+        }
+        return acc;
+      }, {});
+
+      mergedDetails.rawResponse = result;
+
+      const moderationUpdate = {
+        status: isApproved ? "published" : "rejected",
+        moderationMessage,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        validatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        moderationSource: "ai",
+      };
+
+      if (Object.keys(mergedDetails).length > 0) {
+        moderationUpdate.moderationDetails = mergedDetails;
+      } else {
+        moderationUpdate.moderationDetails =
+          admin.firestore.FieldValue.delete();
+      }
+
+      if (!isApproved) {
+        console.log("Post rejected by automated moderation", {
+          postId,
+          moderationMessage,
+        });
+      }
+
+      await db.collection("posts").doc(postId).update(moderationUpdate);
+
       console.log(
-        `Post ${postId} validation complete. Status: ${updatedData.status}`
+        `Post ${postId} validation complete. Status: ${moderationUpdate.status}`
       );
 
-      // After post is published, regenerate sitemap with debouncing
-      await regenerateSitemapWithDebounce();
+      if (isApproved) {
+        // After post is published, regenerate sitemap with debouncing
+        await regenerateSitemapWithDebounce();
 
-      // Ping search engines after sitemap is updated
-      try {
-        const websiteUrl = normalizeUrl(WEBSITE_URL.value());
-        await pingGoogle(`${websiteUrl}/sitemap.xml`);
-        console.log("Successfully pinged Google with updated sitemap");
-      } catch (pingError) {
-        console.error("Error pinging search engines:", pingError);
+        // Ping search engines after sitemap is updated
+        try {
+          const websiteUrl = normalizeUrl(WEBSITE_URL.value());
+          await pingGoogle(`${websiteUrl}/sitemap.xml`);
+          console.log("Successfully pinged Google with updated sitemap");
+        } catch (pingError) {
+          console.error("Error pinging search engines:", pingError);
+        }
       }
     } catch (error) {
       console.error("Error validating post:", error);
 
-      // Only update error-related fields
-      const errorUpdate = {
-        status: "error",
+      const errorDetails = {
+        status: "pending",
         moderationMessage:
-          error.message || "Validation error. Please try again.",
+          "Pending manual review due to validation error. Our team has been notified.",
+        moderationDetails: {
+          reason: "validation_error",
+          error: error.message,
+        },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        validatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        validatedAt: admin.firestore.FieldValue.delete(),
       };
 
-      await db.collection("posts").doc(postId).update(errorUpdate);
+      await db.collection("posts").doc(postId).update(errorDetails);
     }
   }
 );
