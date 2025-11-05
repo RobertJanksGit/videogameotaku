@@ -1,17 +1,26 @@
 import { useTheme } from "../../contexts/ThemeContext";
+import SEO from "../common/SEO";
 
 const TermsOfUse = () => {
   const { darkMode } = useTheme();
 
   return (
-    <div className="w-full">
-      <div
-        className={`w-full p-4 rounded-lg ${
-          darkMode
-            ? "bg-gray-800 text-gray-200 border-gray-700"
-            : "bg-white text-gray-900 border-gray-200"
-        } border`}
-      >
+    <>
+      <SEO
+        title="Terms of Use"
+        description="Review the Video Game Otaku Terms of Use covering eligibility, user content, intellectual property, and community guidelines."
+        url="/terms"
+        type="website"
+        keywords="terms of use, videogame otaku terms, gaming community terms"
+      />
+      <div className="w-full">
+        <div
+          className={`w-full p-4 rounded-lg ${
+            darkMode
+              ? "bg-gray-800 text-gray-200 border-gray-700"
+              : "bg-white text-gray-900 border-gray-200"
+          } border`}
+        >
         <h1
           className={`text-2xl font-bold mb-6 ${
             darkMode ? "text-white" : "text-gray-900"
@@ -234,8 +243,9 @@ const TermsOfUse = () => {
             </p>
           </section>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

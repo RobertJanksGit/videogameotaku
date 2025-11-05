@@ -1,5 +1,6 @@
 import { Helmet } from "react-helmet-async";
 import PropTypes from "prop-types";
+import { useLocation } from "react-router-dom";
 
 /**
  * Creates a teaser from content by extracting the first 100 words
@@ -23,6 +24,8 @@ export const createTeaser = (content = "", wordLimit = 100) => {
   return words.length > wordLimit ? `${teaser}...` : teaser;
 };
 
+const DEFAULT_SITE_URL = "https://videogameotaku.com";
+
 const SEO = ({
   title,
   description,
@@ -35,7 +38,9 @@ const SEO = ({
   modifiedTime,
   section = "Gaming",
   tags = [],
+  shouldIndex = true,
 }) => {
+  const location = useLocation();
   const siteUrl = import.meta.env.VITE_APP_URL || "https://videogameotaku.com";
   const defaultImage = `${siteUrl}/logo.svg`;
   const fullTitle = `${title} | Video Game Otaku`;
@@ -48,7 +53,24 @@ const SEO = ({
     : "Video Game Otaku - Latest gaming news, reviews, and community discussions";
 
   // Ensure URL is absolute
-  const absoluteUrl = url?.startsWith("http") ? url : `${siteUrl}${url || ""}`;
+  const resolvedPath = (() => {
+    if (url) return url;
+    if (location?.pathname) return location.pathname;
+    return "/";
+  })();
+
+  const absoluteUrl = (() => {
+    try {
+      const base = siteUrl || DEFAULT_SITE_URL;
+      return new URL(resolvedPath, base).toString();
+    } catch (error) {
+      return `${DEFAULT_SITE_URL}${resolvedPath}`;
+    }
+  })();
+
+  const robotsContent = shouldIndex
+    ? "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    : "noindex, nofollow";
 
   return (
     <Helmet>
@@ -57,10 +79,7 @@ const SEO = ({
       <meta name="description" content={formattedDescription} />
       {keywords && <meta name="keywords" content={keywords} />}
       <meta name="author" content={author} />
-      <meta
-        name="robots"
-        content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
-      />
+      <meta name="robots" content={robotsContent} />
 
       {/* Open Graph Meta Tags */}
       <meta property="og:title" content={title} />
@@ -130,6 +149,7 @@ SEO.propTypes = {
   modifiedTime: PropTypes.string,
   section: PropTypes.string,
   tags: PropTypes.arrayOf(PropTypes.string),
+  shouldIndex: PropTypes.bool,
 };
 
 export default SEO;

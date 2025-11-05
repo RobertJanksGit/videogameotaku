@@ -159,6 +159,68 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const loadUserData = useCallback(
+    async (authUser, { shouldUpdateLastLogin = false } = {}) => {
+      if (!authUser) {
+        return null;
+      }
+
+      try {
+        const userRef = doc(db, "users", authUser.uid);
+        const userDoc = await getDoc(userRef);
+        const userDataRaw = userDoc.data() || {};
+        const userData = {
+          ...userDataRaw,
+          photoURL: normalizeProfilePhoto(
+            userDataRaw.photoURL || authUser.photoURL || ""
+          ),
+        };
+
+        if (shouldUpdateLastLogin) {
+          await setDoc(
+            userRef,
+            {
+              lastLogin: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+
+        const profile = await ensureProfileDocument(authUser, userData);
+
+        return {
+          ...authUser,
+          ...userData,
+          photoURL: normalizeProfilePhoto(authUser.photoURL || ""),
+          profile,
+        };
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        return {
+          ...authUser,
+          photoURL: normalizeProfilePhoto(authUser.photoURL || ""),
+        };
+      }
+    },
+    [ensureProfileDocument]
+  );
+
+  const refreshUser = useCallback(async () => {
+    const authUser = auth.currentUser;
+
+    if (!authUser) {
+      return null;
+    }
+
+    const updatedUser = await loadUserData(authUser);
+
+    if (updatedUser) {
+      setUser(updatedUser);
+    }
+
+    return updatedUser;
+  }, [loadUserData]);
+
   // Check if username is already taken
   async function isUsernameTaken(username, excludeUserId = null) {
     try {
@@ -301,43 +363,11 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        try {
-          // Get user data from Firestore
-          const userRef = doc(db, "users", currentUser.uid);
-          const userDoc = await getDoc(userRef);
-          const userDataRaw = userDoc.data() || {};
-          const userData = {
-            ...userDataRaw,
-            photoURL: normalizeProfilePhoto(
-              userDataRaw.photoURL || currentUser.photoURL || ""
-            ),
-          };
+        const loadedUser = await loadUserData(currentUser, {
+          shouldUpdateLastLogin: true,
+        });
 
-          // Update last login time
-          await setDoc(
-            userRef,
-            {
-              lastLogin: serverTimestamp(),
-            },
-            { merge: true }
-          );
-
-          const profile = await ensureProfileDocument(currentUser, userData);
-
-          // Set user with combined Auth and Firestore data
-          setUser({
-            ...currentUser,
-            ...userData,
-            photoURL: normalizeProfilePhoto(currentUser.photoURL || ""),
-            profile,
-          });
-        } catch (error) {
-          console.error("Error fetching user data:", error);
-          setUser({
-            ...currentUser,
-            photoURL: normalizeProfilePhoto(currentUser.photoURL || ""),
-          });
-        }
+        setUser(loadedUser);
       } else {
         setUser(null);
       }
@@ -345,7 +375,7 @@ export function AuthProvider({ children }) {
     });
 
     return unsubscribe;
-  }, [ensureProfileDocument]);
+  }, [loadUserData]);
 
   const value = {
     user,
@@ -354,6 +384,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     isUsernameTaken,
+    refreshUser,
   };
 
   return (

@@ -33,7 +33,7 @@ const loadImageDimensions = (file) =>
   });
 
 const Settings = () => {
-  const { user, isUsernameTaken } = useAuth();
+  const { user, isUsernameTaken, refreshUser } = useAuth();
   const { darkMode } = useTheme();
   const [displayName, setDisplayName] = useState(user?.displayName || "");
   const [selectedImage, setSelectedImage] = useState(null);
@@ -263,6 +263,11 @@ const Settings = () => {
       await setDoc(profileRef, profileData, { merge: true });
 
       setProfileExists(true);
+
+      const updatedUser = await (refreshUser?.() ?? Promise.resolve(null));
+      if (updatedUser) {
+        setDisplayName(updatedUser?.name || updatedUser?.displayName || "");
+      }
 
       setSuccess("Profile updated successfully!");
       clearImage(); // Clear selected image after successful update

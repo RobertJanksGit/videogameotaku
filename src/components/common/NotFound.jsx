@@ -52,6 +52,7 @@ const NotFound = () => {
         title="Page Not Found"
         description="The page you're looking for cannot be found. Explore our popular gaming content instead."
         type="website"
+        shouldIndex={false}
       />
       <StructuredData
         type="BreadcrumbList"
