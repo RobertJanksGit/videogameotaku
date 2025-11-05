@@ -33,6 +33,7 @@ import {
 } from "../../utils/feedQueries";
 import { useAuthorRanks } from "../../hooks/useAuthorRanks";
 import CommunityActivityWidget from "../activity/CommunityActivityWidget";
+import StarterPackCard from "./StarterPackCard";
 
 const createEmptyTabState = () => ({
   posts: [],
@@ -709,6 +710,7 @@ const HomePage = () => {
         <div className="flex flex-col gap-8 md:flex-row md:items-start">
           {/* Latest Posts Section */}
           <section className="w-full md:flex-1">
+            {user ? <StarterPackCard userId={user.uid} className="mb-6" /> : null}
             <div className="mb-6 flex flex-col gap-4">
               <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
               Community Feed

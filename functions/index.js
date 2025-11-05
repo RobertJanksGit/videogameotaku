@@ -636,6 +636,8 @@ export const validatePost = onDocumentCreated(
 
     const postId = event.params.postId;
     const data = snapshot.data();
+    let statusUpdated = false;
+    let finalStatus = data?.status ?? "pending";
 
     // Skip validation for already published posts
     if (data.status === "published") {
@@ -684,9 +686,8 @@ export const validatePost = onDocumentCreated(
             const contentType =
               imageResponse.headers.get("content-type") || "image/jpeg";
             const buffer = Buffer.from(await imageResponse.arrayBuffer());
-            payload.image = `data:${contentType};base64,${buffer.toString(
-              "base64"
-            )}`;
+            payload.image = buffer.toString("base64");
+            payload.imageContentType = contentType;
           } else {
             console.warn(
               `Unable to fetch image for moderation. Status: ${imageResponse.status} ${imageResponse.statusText}`
@@ -833,6 +834,8 @@ export const validatePost = onDocumentCreated(
       }
 
       await db.collection("posts").doc(postId).update(moderationUpdate);
+      statusUpdated = true;
+      finalStatus = moderationUpdate.status;
 
       console.log(
         `Post ${postId} validation complete. Status: ${moderationUpdate.status}`
@@ -840,7 +843,11 @@ export const validatePost = onDocumentCreated(
 
       if (isApproved) {
         // After post is published, regenerate sitemap with debouncing
-        await regenerateSitemapWithDebounce();
+        try {
+          await regenerateSitemapWithDebounce();
+        } catch (sitemapError) {
+          console.error("Error regenerating sitemap after moderation:", sitemapError);
+        }
 
         // Ping search engines after sitemap is updated
         try {
@@ -853,6 +860,13 @@ export const validatePost = onDocumentCreated(
       }
     } catch (error) {
       console.error("Error validating post:", error);
+
+      if (statusUpdated) {
+        console.error(
+          `Post ${postId} moderation status already set to ${finalStatus}. Skipping rollback to pending.`
+        );
+        return;
+      }
 
       const errorDetails = {
         status: "pending",

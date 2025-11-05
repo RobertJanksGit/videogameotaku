@@ -24,6 +24,7 @@ import { increment } from "firebase/firestore";
 import PropTypes from "prop-types";
 import MarkdownToolbar from "../posts/MarkdownToolbar";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import { markStarterPackPosted } from "../../utils/starterPackStorage";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -429,6 +430,8 @@ const UserPostManager = ({ darkMode }) => {
 
       // Create the post
       await addDoc(postsCollection, newPost);
+
+      markStarterPackPosted(user.uid);
 
       // Update rate limit after successful post creation
       await updateDoc(rateLimitRef, {

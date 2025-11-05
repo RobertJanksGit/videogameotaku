@@ -31,6 +31,7 @@ import Breadcrumbs from "../common/Breadcrumbs";
 import OptimizedImage from "../common/OptimizedImage";
 import { getTimestampDate } from "../../utils/formatTimeAgo";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import { markStarterPackCommented } from "../../utils/starterPackStorage";
 
 const findParentCommentId = (comment) => {
   if (comment.parentCommentId !== undefined && comment.parentCommentId !== null) {
@@ -298,6 +299,8 @@ const PostDetail = () => {
         };
       });
 
+      markStarterPackCommented(user.uid);
+
       if (post.authorId !== user.uid) {
         try {
           const authorDoc = await getDoc(doc(db, "users", post.authorId));
@@ -382,6 +385,8 @@ const PostDetail = () => {
         ...prevPost,
         commentCount: (prevPost.commentCount || 0) + 1,
       }));
+
+      markStarterPackCommented(user.uid);
 
       // Create the reply object for local state
       const newReply = {

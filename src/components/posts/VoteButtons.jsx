@@ -4,6 +4,7 @@ import { useToast } from "../../contexts/ToastContext";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../../config/firebase";
 import PropTypes from "prop-types";
+import { incrementStarterPackUpvotes } from "../../utils/starterPackStorage";
 
 const VoteButtons = ({ post, darkMode, onVoteChange }) => {
   const { user } = useAuth();
@@ -29,20 +30,25 @@ const VoteButtons = ({ post, darkMode, onVoteChange }) => {
       const postRef = doc(db, "posts", post.id);
       const usersThatLiked = [...(post.usersThatLiked || [])];
       const usersThatDisliked = [...(post.usersThatDisliked || [])];
+      const hadLiked = usersThatLiked.includes(user.uid);
+      const hadDisliked = usersThatDisliked.includes(user.uid);
+      let addedUpvote = false;
 
       if (voteType === "upvote") {
-        const isLiked = usersThatLiked.includes(user.uid);
-        if (isLiked) {
+        if (hadLiked) {
           // Remove like
           const index = usersThatLiked.indexOf(user.uid);
           usersThatLiked.splice(index, 1);
         } else {
           // Add like and remove dislike if exists
           usersThatLiked.push(user.uid);
-          const dislikeIndex = usersThatDisliked.indexOf(user.uid);
-          if (dislikeIndex !== -1) {
-            usersThatDisliked.splice(dislikeIndex, 1);
+          if (hadDisliked) {
+            const dislikeIndex = usersThatDisliked.indexOf(user.uid);
+            if (dislikeIndex !== -1) {
+              usersThatDisliked.splice(dislikeIndex, 1);
+            }
           }
+          addedUpvote = true;
         }
       } else {
         const isDisliked = usersThatDisliked.includes(user.uid);
@@ -76,6 +82,10 @@ const VoteButtons = ({ post, darkMode, onVoteChange }) => {
           usersThatDisliked,
           totalVotes: newTotalVotes,
         });
+      }
+
+      if (addedUpvote) {
+        incrementStarterPackUpvotes(user.uid);
       }
     } catch (error) {
       console.error("Error voting:", error);
