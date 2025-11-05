@@ -9,6 +9,10 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
+        "source": "/robots.txt",
+        "destination": "/robots.txt"
+      },
+      {
         "source": "/sitemap.xml",
         "destination": "/sitemap.xml"
       },
@@ -48,7 +52,7 @@
         ]
       },
       {
-        "source": "/@(manifest.json|sitemap.xml|sitemapindex.xml|robots.txt)",
+        "source": "/@(sitemap.xml|sitemapindex.xml)",
         "headers": [
           {
             "key": "Cache-Control",
@@ -57,6 +61,19 @@
           {
             "key": "Content-Type",
             "value": "application/xml"
+          }
+        ]
+      },
+      {
+        "source": "/robots.txt",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          },
+          {
+            "key": "Content-Type",
+            "value": "text/plain; charset=utf-8"
           }
         ]
       },
