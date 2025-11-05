@@ -19,7 +19,10 @@ import {
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
 import CommentThread from "./CommentThread";
-import { createNotification } from "../../utils/notifications";
+import {
+  createNotification,
+  getNotificationMessage,
+} from "../../utils/notifications";
 import RichContent from "./RichContent";
 import SEO, { createTeaser } from "../common/SEO";
 import StructuredData from "../common/StructuredData";
@@ -241,14 +244,12 @@ const PostDetail = () => {
     if (!user) return;
     if (!newComment.trim()) return;
 
-    const actorDisplayName = user.displayName || user.email.split("@")[0];
-
     try {
       const commentRef = await addDoc(collection(db, "comments"), {
         postId,
         content: newComment.trim(),
         authorId: user.uid,
-        authorName: actorDisplayName,
+        authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId: null,
         parentCommentId: null,
@@ -273,7 +274,7 @@ const PostDetail = () => {
         postId,
         content: newComment.trim(),
         authorId: user.uid,
-        authorName: actorDisplayName,
+        authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId: null,
         parentCommentId: null,
@@ -289,12 +290,17 @@ const PostDetail = () => {
         if (authorData?.notificationPrefs?.postComments !== false) {
           await createNotification({
             recipientId: post.authorId,
-            actorUserId: user.uid,
-            actorDisplayName,
+            senderId: user.uid,
+            senderName: user.displayName || user.email.split("@")[0],
+            message: getNotificationMessage({
+              type: "post_comment",
+              senderName: user.displayName || user.email.split("@")[0],
+              postTitle: post.title,
+            }),
             type: "post_comment",
+            link: `/post/${postId}`,
             postId,
             commentId: commentRef.id,
-            postTitle: post.title,
           });
         }
       }
@@ -325,14 +331,12 @@ const PostDetail = () => {
         return;
       }
 
-      const actorDisplayName = user.displayName || user.email.split("@")[0];
-
       // Create the reply data
       const replyData = {
         postId,
         content: trimmedContent,
         authorId: user.uid,
-        authorName: actorDisplayName,
+        authorName: user.displayName || user.email.split("@")[0],
         authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
         parentId,
         parentCommentId: parentId,
@@ -378,12 +382,16 @@ const PostDetail = () => {
         if (authorData?.notificationPrefs?.commentReplies !== false) {
           await createNotification({
             recipientId: parentComment.authorId,
-            actorUserId: user.uid,
-            actorDisplayName,
+            senderId: user.uid,
+            senderName: user.displayName || user.email.split("@")[0],
+            message: getNotificationMessage({
+              type: "comment_reply",
+              senderName: user.displayName || user.email.split("@")[0],
+            }),
             type: "comment_reply",
+            link: `/post/${postId}`,
             postId,
             commentId: replyRef.id,
-            postTitle: post.title,
           });
         }
       }
@@ -450,17 +458,6 @@ const PostDetail = () => {
   }
 
   if (!post) return null;
-
-  const authorAvatar = post.authorPhotoURL
-    ? normalizeProfilePhoto(post.authorPhotoURL, 256)
-    : "";
-  const authorAvatar2x = post.authorPhotoURL
-    ? normalizeProfilePhoto(post.authorPhotoURL, 512)
-    : "";
-  const authorAvatarSrcSet =
-    authorAvatar && authorAvatar2x && authorAvatar2x !== authorAvatar
-      ? `${authorAvatar2x} 2x`
-      : undefined;
 
   return (
     <>
@@ -546,8 +543,7 @@ const PostDetail = () => {
                           >
                             {post.authorPhotoURL ? (
                               <img
-                                src={authorAvatar}
-                                srcSet={authorAvatarSrcSet}
+                                src={post.authorPhotoURL}
                                 alt={post.authorName}
                                 className="w-full h-full object-cover u-photo"
                               />
@@ -588,8 +584,7 @@ const PostDetail = () => {
                           >
                             {post.authorPhotoURL ? (
                               <img
-                                src={authorAvatar}
-                                srcSet={authorAvatarSrcSet}
+                                src={post.authorPhotoURL}
                                 alt={post.authorName}
                                 className="w-full h-full object-cover u-photo"
                               />

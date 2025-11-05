@@ -414,8 +414,9 @@ const HomePage = () => {
     const profileUrl = authorId ? `/user/${authorId}` : null;
     const karma = authorMeta?.karma ?? 0;
     const avatarSource = authorMeta?.avatarUrl || post.authorPhotoURL || "";
-    const avatarUrl = normalizeProfilePhoto(avatarSource, 256);
-    const avatarUrl2x = normalizeProfilePhoto(avatarSource, 512);
+    const avatarBaseSize = 80;
+    const avatarUrl = normalizeProfilePhoto(avatarSource, avatarBaseSize);
+    const avatarUrl2x = normalizeProfilePhoto(avatarSource, avatarBaseSize * 2);
     const avatarSrcSet =
       avatarUrl && avatarUrl2x && avatarUrl2x !== avatarUrl
         ? `${avatarUrl2x} 2x`

@@ -13,6 +13,25 @@ import {
 } from "firebase/auth";
 import ContributionGraph from "../activity/ContributionGraph";
 
+const MIN_PROFILE_IMAGE_DIMENSION = 256;
+const INVALID_FILE_MESSAGE = "Please select a valid image file (PNG, JPG, GIF) up to 5MB";
+
+const loadImageDimensions = (file) =>
+  new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const { naturalWidth, naturalHeight } = img;
+      URL.revokeObjectURL(objectUrl);
+      resolve({ width: naturalWidth, height: naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = objectUrl;
+  });
+
 const Settings = () => {
   const { user, isUsernameTaken } = useAuth();
   const { darkMode } = useTheme();
@@ -87,17 +106,43 @@ const Settings = () => {
     reader.readAsDataURL(file);
   };
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file && isValidImageFile(file)) {
+  const setImageSelectionError = (message) => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    setError(message);
+  };
+
+  const validateAndSetImage = async (file) => {
+    if (!file) return;
+
+    if (!isValidImageFile(file)) {
+      setImageSelectionError(INVALID_FILE_MESSAGE);
+      return;
+    }
+
+    try {
+      const { width, height } = await loadImageDimensions(file);
+      const shortestSide = Math.min(width, height);
+
+      if (shortestSide < MIN_PROFILE_IMAGE_DIMENSION) {
+        setImageSelectionError(
+          `Profile image must be at least ${MIN_PROFILE_IMAGE_DIMENSION}px on the shortest side`
+        );
+        return;
+      }
+
       setSelectedImage(file);
       createImagePreview(file);
       setError("");
-    } else if (file) {
-      setError("Please select a valid image file (PNG, JPG, GIF) up to 5MB");
-      setSelectedImage(null);
-      setImagePreview(null);
+    } catch (dimensionError) {
+      console.error("Unable to read image dimensions:", dimensionError);
+      setImageSelectionError("Unable to process image. Please try another file.");
     }
+  };
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files[0];
+    await validateAndSetImage(file);
   };
 
   const isValidImageFile = (file) => {
@@ -126,21 +171,13 @@ const Settings = () => {
     setIsDragging(true);
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
 
     const file = e.dataTransfer.files[0];
-    if (file && isValidImageFile(file)) {
-      setSelectedImage(file);
-      createImagePreview(file);
-      setError("");
-    } else if (file) {
-      setError("Please select a valid image file (PNG, JPG, GIF) up to 5MB");
-      setSelectedImage(null);
-      setImagePreview(null);
-    }
+    await validateAndSetImage(file);
   };
 
   const clearImage = () => {
