@@ -406,10 +406,10 @@ const Layout = ({ children }) => {
                   <button
                     key={notification.id}
                     onClick={() => handleNotificationClick(notification)}
-                    className={`w-full block px-4 py-3 text-left text-sm hover:bg-[#316DCA] ${
+                    className={`w-full block px-4 py-3 text-left text-sm border-0 rounded-none bg-[#2D333B] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#316DCA]/60 hover:bg-[#316DCA] ${
                       notification.read
                         ? "text-[#7D8590] hover:text-white"
-                        : "text-[#ADBAC7] font-medium"
+                        : "text-[#ADBAC7] font-medium hover:text-white"
                     }`}
                   >
                     {notification.message}
