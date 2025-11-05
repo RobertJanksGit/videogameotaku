@@ -1,7 +1,8 @@
 const RANKS = [
-  { max: 9, label: "New Scout", emoji: "✨" },
-  { max: 49, label: "Info Hunter", emoji: "🧩" },
-  { max: 199, label: "Top Scout", emoji: "🔥" },
+  { max: 90, label: "New Scout", emoji: "✨" },
+  { max: 490, label: "Info Hunter", emoji: "🧩" },
+  { max: 1990, label: "Top Scout", emoji: "🔥" },
+  { max: 9990, label: "News Ronin", emoji: "🗡️" },
   { max: Infinity, label: "Legendary Otaku", emoji: "👑" },
 ];
 

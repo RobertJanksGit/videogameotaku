@@ -187,7 +187,7 @@ const CategoryPage = () => {
                 const rankBadge = (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-slate-700/70 px-2 py-0.5 text-xs font-medium text-white"
-                    title="Rank based on total upvotes across posts"
+                    title="Rank based on XP (10x total upvotes across posts)"
                   >
                     <span aria-hidden="true">{rank.emoji}</span>
                     <span>{rank.label}</span>

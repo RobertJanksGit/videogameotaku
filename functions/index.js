@@ -43,6 +43,7 @@ const systemUserId = defineSecret("SYSTEM_USER_ID");
 const WEBSITE_URL = defineSecret("WEBSITE_URL");
 const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
 const SITEMAP_API_KEY = defineSecret("SITEMAP_API_KEY");
+const KARMA_SYNC_TOKEN = defineSecret("KARMA_SYNC_TOKEN");
 
 // Import sitemap generation function
 import { generateSitemapScheduled } from "./generateSitemapScheduled.js";
@@ -1074,7 +1075,8 @@ export const syncAuthorKarma = onDocumentWritten(
             totalUpvotes += computePostUpvotes(postData);
           });
 
-          totalUpvotes = Math.max(Number(totalUpvotes) || 0, 0);
+          const safeUpvotes = Math.max(Number(totalUpvotes) || 0, 0);
+          const totalXp = safeUpvotes * 10;
 
           const profileRef = db.collection("profiles").doc(authorId);
           const profileSnap = await profileRef.get();
@@ -1085,8 +1087,8 @@ export const syncAuthorKarma = onDocumentWritten(
               ? profileData.karma
               : 0;
 
-            if (currentKarma !== totalUpvotes) {
-              await profileRef.update({ karma: totalUpvotes });
+            if (currentKarma !== totalXp) {
+              await profileRef.update({ karma: totalXp });
             }
           }
 
@@ -1099,14 +1101,15 @@ export const syncAuthorKarma = onDocumentWritten(
               ? userData.karma
               : 0;
 
-            if (currentUserKarma !== totalUpvotes) {
-              await userRef.update({ karma: totalUpvotes });
+            if (currentUserKarma !== totalXp) {
+              await userRef.update({ karma: totalXp });
             }
           }
 
           console.log("syncAuthorKarma: Updated karma", {
             authorId,
-            totalUpvotes,
+            totalUpvotes: safeUpvotes,
+            totalXp,
           });
         } catch (error) {
           console.error(
@@ -1116,6 +1119,85 @@ export const syncAuthorKarma = onDocumentWritten(
         }
       })
     );
+  }
+);
+
+export const recalculateAllKarma = onRequest(
+  {
+    maxInstances: 1,
+    timeoutSeconds: 540,
+    memory: "1GiB",
+    secrets: [KARMA_SYNC_TOKEN],
+  },
+  async (req, res) => {
+    const authHeader = req.get("authorization") || "";
+    const providedToken = authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : null;
+    const expectedToken = KARMA_SYNC_TOKEN.value();
+
+    if (!expectedToken) {
+      res.status(500).json({ error: "KARMA_SYNC_TOKEN is not configured" });
+      return;
+    }
+
+    if (!providedToken || providedToken !== expectedToken) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const postsSnapshot = await db.collection("posts").get();
+      const authorUpvotes = new Map();
+
+      postsSnapshot.forEach((docSnap) => {
+        const data = docSnap.data() || {};
+        const status = data.status ?? "published";
+        const authorId = data.authorId;
+
+        if (status !== "published" || !authorId) {
+          return;
+        }
+
+        const upvotes = computePostUpvotes(data);
+        const current = authorUpvotes.get(authorId) || 0;
+        authorUpvotes.set(authorId, current + upvotes);
+      });
+
+      let profilesUpdated = 0;
+      let usersUpdated = 0;
+
+      for (const [authorId, upvotes] of authorUpvotes.entries()) {
+        const safeUpvotes = Math.max(Number(upvotes) || 0, 0);
+        const totalXp = safeUpvotes * 10;
+
+        const profileRef = db.collection("profiles").doc(authorId);
+        await profileRef.set({ karma: totalXp }, { merge: true });
+        profilesUpdated += 1;
+
+        const userRef = db.collection("users").doc(authorId);
+        const userSnap = await userRef.get();
+        if (userSnap.exists) {
+          await userRef.update({ karma: totalXp });
+          usersUpdated += 1;
+        }
+
+        console.log("recalculateAllKarma: Updated author", {
+          authorId,
+          upvotes: safeUpvotes,
+          xp: totalXp,
+        });
+      }
+
+      res.json({
+        authorsProcessed: authorUpvotes.size,
+        profilesUpdated,
+        usersUpdated,
+      });
+    } catch (error) {
+      console.error("recalculateAllKarma failed", error);
+      res.status(500).json({ error: error.message });
+    }
   }
 );
 

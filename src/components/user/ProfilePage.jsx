@@ -268,8 +268,9 @@ const ProfilePage = () => {
       const previousUpvotes = previousPost ? computeUpvotes(previousPost) : 0;
       const nextUpvotes = computeUpvotes(updatedPost);
       const upvoteDelta = nextUpvotes - previousUpvotes;
+      const xpDelta = upvoteDelta * 10;
 
-      if (upvoteDelta !== 0) {
+      if (xpDelta !== 0) {
         setStats((statsState) => ({
           totalPosts: statsState.totalPosts,
           totalUpvotes: Math.max(0, statsState.totalUpvotes + upvoteDelta),
@@ -286,7 +287,7 @@ const ProfilePage = () => {
 
           return {
             ...prevProfile,
-            karma: Math.max(0, currentKarma + upvoteDelta),
+            karma: Math.max(0, currentKarma + xpDelta),
           };
         });
 
@@ -301,7 +302,7 @@ const ProfilePage = () => {
 
           return {
             ...prevUserData,
-            karma: Math.max(0, currentKarma + upvoteDelta),
+            karma: Math.max(0, currentKarma + xpDelta),
           };
         });
       }
@@ -424,7 +425,7 @@ const ProfilePage = () => {
                   </h1>
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-slate-700/70 px-2 py-0.5 text-xs font-medium text-white"
-                    title="Rank based on total upvotes across posts"
+                    title="Rank based on XP (10x total upvotes across posts)"
                   >
                     <span aria-hidden="true">{rank.emoji}</span>
                     <span>{rank.label}</span>
