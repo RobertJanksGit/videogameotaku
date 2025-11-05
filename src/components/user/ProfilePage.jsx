@@ -344,6 +344,9 @@ const ProfilePage = () => {
     ? userData.karma
     : 0;
   const rank = getRankFromKarma(karma);
+  const activityTitle = profile?.displayName
+    ? `${profile.displayName}'s Activity`
+    : "Community Activity";
 
   return (
     <>
@@ -611,7 +614,7 @@ const ProfilePage = () => {
           </section>
 
           <aside className="hidden md:block md:w-[320px] lg:w-[360px] md:sticky md:top-24 md:h-[calc(100vh-6rem)] md:max-h-[calc(100vh-6rem)] md:pb-6">
-            <CommunityActivityWidget className="h-full" userId={userId} />
+            <CommunityActivityWidget className="h-full" userId={userId} title={activityTitle} />
           </aside>
         </div>
       </main>

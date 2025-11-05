@@ -72,7 +72,7 @@ const buildActivityLabel = ({ type, authorName, postTitle }) => {
   return `${formattedAuthor} contributed to "${safeTitle}"`;
 };
 
-const CommunityActivityWidget = ({ className = "", userId = null }) => {
+const CommunityActivityWidget = ({ className = "", userId = null, title = "Community Activity" }) => {
   const { darkMode } = useTheme();
   const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
   const [activityItems, setActivityItems] = useState([]);
@@ -251,7 +251,7 @@ const CommunityActivityWidget = ({ className = "", userId = null }) => {
           darkMode ? "border-gray-800 text-white" : "border-gray-200 text-gray-900"
         }`}
       >
-        Community Activity
+        {title}
       </div>
       <div className="activity-scroll flex-1 overflow-y-auto px-5 py-4 pr-2">
         {isLoading ? (
