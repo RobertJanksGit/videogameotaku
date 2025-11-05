@@ -267,14 +267,44 @@ const ProfilePage = () => {
       const previousPost = prev.find((post) => post.id === updatedPost.id);
       const previousUpvotes = previousPost ? computeUpvotes(previousPost) : 0;
       const nextUpvotes = computeUpvotes(updatedPost);
+      const upvoteDelta = nextUpvotes - previousUpvotes;
 
-      setStats((statsState) => ({
-        totalPosts: statsState.totalPosts,
-        totalUpvotes: Math.max(
-          0,
-          statsState.totalUpvotes - previousUpvotes + nextUpvotes
-        ),
-      }));
+      if (upvoteDelta !== 0) {
+        setStats((statsState) => ({
+          totalPosts: statsState.totalPosts,
+          totalUpvotes: Math.max(0, statsState.totalUpvotes + upvoteDelta),
+        }));
+
+        setProfile((prevProfile) => {
+          if (!prevProfile) {
+            return prevProfile;
+          }
+
+          const currentKarma = Number.isFinite(prevProfile.karma)
+            ? prevProfile.karma
+            : 0;
+
+          return {
+            ...prevProfile,
+            karma: Math.max(0, currentKarma + upvoteDelta),
+          };
+        });
+
+        setUserData((prevUserData) => {
+          if (!prevUserData) {
+            return prevUserData;
+          }
+
+          const currentKarma = Number.isFinite(prevUserData.karma)
+            ? prevUserData.karma
+            : 0;
+
+          return {
+            ...prevUserData,
+            karma: Math.max(0, currentKarma + upvoteDelta),
+          };
+        });
+      }
 
       return nextPosts;
     });

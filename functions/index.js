@@ -964,6 +964,161 @@ export const onPostStatusChange = onDocumentUpdated(
   }
 );
 
+const computePostUpvotes = (postData = {}) => {
+  if (typeof postData.upvoteCount === "number") {
+    return Math.max(postData.upvoteCount, 0);
+  }
+
+  if (Array.isArray(postData.usersThatLiked)) {
+    return postData.usersThatLiked.length;
+  }
+
+  if (typeof postData.totalVotes === "number") {
+    return Math.max(postData.totalVotes, 0);
+  }
+
+  return 0;
+};
+
+export const syncAuthorKarma = onDocumentWritten(
+  {
+    document: "posts/{postId}",
+    maxInstances: 10,
+    timeoutSeconds: 120,
+  },
+  async (event) => {
+    const beforeSnapshot = event.data?.before;
+    const afterSnapshot = event.data?.after;
+
+    const beforeExists = beforeSnapshot?.exists ?? false;
+    const afterExists = afterSnapshot?.exists ?? false;
+
+    const beforeData = beforeExists ? beforeSnapshot.data() : null;
+    const afterData = afterExists ? afterSnapshot.data() : null;
+
+    const affectedAuthors = new Set();
+    if (beforeData?.authorId) {
+      affectedAuthors.add(beforeData.authorId);
+    }
+    if (afterData?.authorId) {
+      affectedAuthors.add(afterData.authorId);
+    }
+
+    if (affectedAuthors.size === 0) {
+      console.log("syncAuthorKarma: No author found for post", {
+        postId: event.params.postId,
+      });
+      return;
+    }
+
+    const relevantChange = (() => {
+      if (!beforeData || !afterData) {
+        return true;
+      }
+
+      const arraysChanged = (beforeValue, afterValue) => {
+        const beforeArray = Array.isArray(beforeValue) ? beforeValue : [];
+        const afterArray = Array.isArray(afterValue) ? afterValue : [];
+        if (beforeArray.length !== afterArray.length) {
+          return true;
+        }
+        return beforeArray.some((value, index) => value !== afterArray[index]);
+      };
+
+      if (arraysChanged(beforeData.usersThatLiked, afterData.usersThatLiked)) {
+        return true;
+      }
+
+      if (
+        arraysChanged(beforeData.usersThatDisliked, afterData.usersThatDisliked)
+      ) {
+        return true;
+      }
+
+      if ((beforeData.upvoteCount ?? null) !== (afterData.upvoteCount ?? null)) {
+        return true;
+      }
+
+      if ((beforeData.totalVotes ?? null) !== (afterData.totalVotes ?? null)) {
+        return true;
+      }
+
+      if ((beforeData.status ?? null) !== (afterData.status ?? null)) {
+        return true;
+      }
+
+      return false;
+    })();
+
+    if (!relevantChange) {
+      return;
+    }
+
+    await Promise.all(
+      Array.from(affectedAuthors).map(async (authorId) => {
+        try {
+          const postsSnapshot = await db
+            .collection("posts")
+            .where("authorId", "==", authorId)
+            .get();
+
+          let totalUpvotes = 0;
+
+          postsSnapshot.forEach((docSnap) => {
+            const postData = docSnap.data() || {};
+            const status = postData.status ?? "published";
+            if (status !== "published") {
+              return;
+            }
+
+            totalUpvotes += computePostUpvotes(postData);
+          });
+
+          totalUpvotes = Math.max(Number(totalUpvotes) || 0, 0);
+
+          const profileRef = db.collection("profiles").doc(authorId);
+          const profileSnap = await profileRef.get();
+
+          if (profileSnap.exists) {
+            const profileData = profileSnap.data() || {};
+            const currentKarma = Number.isFinite(profileData.karma)
+              ? profileData.karma
+              : 0;
+
+            if (currentKarma !== totalUpvotes) {
+              await profileRef.update({ karma: totalUpvotes });
+            }
+          }
+
+          const userRef = db.collection("users").doc(authorId);
+          const userSnap = await userRef.get();
+
+          if (userSnap.exists) {
+            const userData = userSnap.data() || {};
+            const currentUserKarma = Number.isFinite(userData.karma)
+              ? userData.karma
+              : 0;
+
+            if (currentUserKarma !== totalUpvotes) {
+              await userRef.update({ karma: totalUpvotes });
+            }
+          }
+
+          console.log("syncAuthorKarma: Updated karma", {
+            authorId,
+            totalUpvotes,
+          });
+        } catch (error) {
+          console.error(
+            `syncAuthorKarma: Failed to update karma for author ${authorId}`,
+            error
+          );
+        }
+      })
+    );
+  }
+);
+
 // Add scheduled function to check and reset rejection counts
 export const checkRejectionResets = onSchedule(
   {
