@@ -287,7 +287,7 @@ const Layout = ({ children }) => {
                 <>
                   <Link
                     to="/dashboard#share-your-find"
-                    className="inline-flex items-center justify-center rounded-full bg-[#316DCA] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    className="max-[500px]:hidden inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap flex-shrink-0 shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                   >
                     Post Your Find
                   </Link>
