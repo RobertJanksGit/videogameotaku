@@ -3,34 +3,17 @@
  * This file contains the generateSitemap function used by Firebase Functions
  */
 
-import { initializeApp, cert } from "firebase-admin/app";
 import admin from "firebase-admin";
 import { create } from "xmlbuilder2";
 import { Buffer } from "buffer";
-import { getStorage } from "firebase-admin/storage";
 
 // Firebase Admin instances (lazy loaded)
-let app;
 let storage;
 let db;
 
-function getFirebaseApp() {
-  if (!app) {
-    app = initializeApp({
-      credential: cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-      }),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-    });
-  }
-  return app;
-}
-
 function getStorageInstance() {
   if (!storage) {
-    storage = getStorage(getFirebaseApp());
+    storage = admin.storage();
   }
   return storage;
 }
@@ -162,7 +145,11 @@ export async function generateSitemap() {
     const xml = sitemap.end({ prettyPrint: true });
 
     // Upload sitemap.xml to Firebase Storage
-    const bucket = getStorageInstance().bucket();
+    const bucketName =
+      process.env.STORAGE_BUCKET_NAME || process.env.FIREBASE_STORAGE_BUCKET;
+    const bucket = bucketName
+      ? getStorageInstance().bucket(bucketName)
+      : getStorageInstance().bucket();
     const file = bucket.file("public/sitemap.xml");
     await file.save(Buffer.from(xml), {
       contentType: "application/xml",
@@ -199,7 +186,11 @@ async function generateSitemapIndex() {
     const xml = sitemapIndex.end({ prettyPrint: true });
 
     // Upload sitemapindex.xml to Firebase Storage
-    const bucket = getStorageInstance().bucket();
+    const bucketName =
+      process.env.STORAGE_BUCKET_NAME || process.env.FIREBASE_STORAGE_BUCKET;
+    const bucket = bucketName
+      ? getStorageInstance().bucket(bucketName)
+      : getStorageInstance().bucket();
     const file = bucket.file("public/sitemapindex.xml");
     await file.save(Buffer.from(xml), {
       contentType: "application/xml",

@@ -181,11 +181,13 @@ const ProfilePage = () => {
         );
         const snapshot = await getDocs(baseQuery);
 
-        const fetchedPosts = snapshot.docs
-          .map((docSnap) => ({
-            id: docSnap.id,
-            ...docSnap.data(),
-          }))
+        const fetchedPosts = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        }));
+
+        const publishedPosts = fetchedPosts
+          .filter((post) => (post?.status ?? "published") === "published")
           .sort((a, b) => {
             const dateA = getTimestampDate(a.createdAt)?.getTime() || 0;
             const dateB = getTimestampDate(b.createdAt)?.getTime() || 0;
@@ -196,11 +198,11 @@ const ProfilePage = () => {
           return;
         }
 
-        const recentPosts = fetchedPosts.slice(0, PROFILE_POST_LIMIT);
+        const recentPosts = publishedPosts.slice(0, PROFILE_POST_LIMIT);
         setPosts(recentPosts);
 
-        const totalPosts = fetchedPosts.length;
-        const totalUpvotes = fetchedPosts.reduce(
+        const totalPosts = publishedPosts.length;
+        const totalUpvotes = publishedPosts.reduce(
           (total, post) => total + computeUpvotes(post),
           0
         );
