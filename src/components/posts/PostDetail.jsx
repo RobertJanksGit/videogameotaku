@@ -15,6 +15,7 @@ import {
   serverTimestamp,
   updateDoc,
   increment,
+  writeBatch,
 } from "firebase/firestore";
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
@@ -80,6 +81,7 @@ const PostDetail = () => {
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(true);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const hasScrolledToComment = useRef(false);
   const commentThreads = useMemo(
     () => buildCommentThreads(comments),
@@ -243,72 +245,88 @@ const PostDetail = () => {
     e.preventDefault();
     if (!user) return;
     if (!newComment.trim()) return;
+    if (isSubmittingComment) return;
+
+    setIsSubmittingComment(true);
 
     try {
+      const trimmedContent = newComment.trim();
+      const normalizedPhotoURL = normalizeProfilePhoto(user.photoURL || "");
+
       const commentRef = await addDoc(collection(db, "comments"), {
         postId,
-        content: newComment.trim(),
+        content: trimmedContent,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
+        authorPhotoURL: normalizedPhotoURL,
         parentId: null,
         parentCommentId: null,
         createdAt: serverTimestamp(),
-        replyCount: 0, // Add replyCount field
+        replyCount: 0,
       });
-
-      // Update the post's comment count in Firestore
-      const postRef = doc(db, "posts", postId);
-      await updateDoc(postRef, {
-        commentCount: increment(1),
-      });
-
-      // Update the local post state with the new comment count
-      setPost((prevPost) => ({
-        ...prevPost,
-        commentCount: (prevPost.commentCount || 0) + 1,
-      }));
 
       const newCommentObj = {
         id: commentRef.id,
         postId,
-        content: newComment.trim(),
+        content: trimmedContent,
         authorId: user.uid,
         authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
+        authorPhotoURL: normalizedPhotoURL,
         parentId: null,
         parentCommentId: null,
         createdAt: new Date(),
         replyCount: 0,
       };
 
-      // Create notification for post author if it's not their own comment
-      if (post.authorId !== user.uid) {
-        const authorDoc = await getDoc(doc(db, "users", post.authorId));
-        const authorData = authorDoc.data();
-
-        if (authorData?.notificationPrefs?.postComments !== false) {
-          await createNotification({
-            recipientId: post.authorId,
-            senderId: user.uid,
-            senderName: user.displayName || user.email.split("@")[0],
-            message: getNotificationMessage({
-              type: "post_comment",
-              senderName: user.displayName || user.email.split("@")[0],
-              postTitle: post.title,
-            }),
-            type: "post_comment",
-            link: `/post/${postId}`,
-            postId,
-            commentId: commentRef.id,
-          });
-        }
-      }
-
       setComments((prev) => [...prev, newCommentObj]);
       setNewComment("");
+
+      const postRef = doc(db, "posts", postId);
+      try {
+        await updateDoc(postRef, {
+          commentCount: increment(1),
+        });
+      } catch (error) {
+        console.error("Error updating post comment count:", error);
+      }
+
+      setPost((prevPost) => {
+        if (!prevPost) return prevPost;
+        return {
+          ...prevPost,
+          commentCount: (prevPost.commentCount || 0) + 1,
+        };
+      });
+
+      if (post.authorId !== user.uid) {
+        try {
+          const authorDoc = await getDoc(doc(db, "users", post.authorId));
+          const authorData = authorDoc.data();
+
+          if (authorData?.notificationPrefs?.postComments !== false) {
+            await createNotification({
+              recipientId: post.authorId,
+              senderId: user.uid,
+              senderName: user.displayName || user.email.split("@")[0],
+              message: getNotificationMessage({
+                type: "post_comment",
+                senderName: user.displayName || user.email.split("@")[0],
+                postTitle: post.title,
+              }),
+              type: "post_comment",
+              link: `/post/${postId}`,
+              postId,
+              commentId: commentRef.id,
+            });
+          }
+        } catch (notificationError) {
+          console.error("Error sending comment notification:", notificationError);
+        }
+      }
     } catch (error) {
       console.error("Error adding comment:", error);
+    } finally {
+      setIsSubmittingComment(false);
     }
   };
 
@@ -416,6 +434,158 @@ const PostDetail = () => {
     }
   };
 
+  const handleEditComment = async (commentId, updatedContent) => {
+    if (!user) {
+      console.warn("No user found - authentication error");
+      return;
+    }
+
+    const commentToUpdate = comments.find((comment) => comment.id === commentId);
+    if (!commentToUpdate) {
+      console.warn("Comment not found:", commentId);
+      return;
+    }
+
+    if (commentToUpdate.authorId !== user.uid) {
+      console.warn("User attempted to edit a comment they do not own:", commentId);
+      return;
+    }
+
+    const trimmedContent = updatedContent.trim();
+    if (!trimmedContent || trimmedContent === commentToUpdate.content) {
+      return;
+    }
+
+    try {
+      const commentRef = doc(db, "comments", commentId);
+      await updateDoc(commentRef, {
+        content: trimmedContent,
+        updatedAt: serverTimestamp(),
+      });
+
+      setComments((prevComments) =>
+        prevComments.map((comment) =>
+          comment.id === commentId
+            ? {
+                ...comment,
+                content: trimmedContent,
+                updatedAt: new Date(),
+              }
+            : comment
+        )
+      );
+    } catch (error) {
+      console.error("Error updating comment:", error);
+      throw error;
+    }
+  };
+
+  const handleDeleteComment = async (commentId) => {
+    if (!user) {
+      console.warn("No user found - authentication error");
+      return;
+    }
+
+    const commentToDelete = comments.find((comment) => comment.id === commentId);
+    if (!commentToDelete) {
+      console.warn("Comment not found:", commentId);
+      return;
+    }
+
+    if (commentToDelete.authorId !== user.uid) {
+      console.warn("User attempted to delete a comment they do not own:", commentId);
+      return;
+    }
+
+    const parentCommentId = findParentCommentId(commentToDelete);
+
+    const collectDescendants = (targetId) => {
+      const descendants = [];
+      const stack = [targetId];
+
+      while (stack.length > 0) {
+        const currentId = stack.pop();
+        const children = comments.filter(
+          (comment) => findParentCommentId(comment) === currentId
+        );
+
+        children.forEach((child) => {
+          descendants.push(child);
+          stack.push(child.id);
+        });
+      }
+
+      return descendants;
+    };
+
+    const repliesToDelete = collectDescendants(commentId);
+
+    const batch = writeBatch(db);
+
+    repliesToDelete.forEach((reply) => {
+      const replyRef = doc(db, "comments", reply.id);
+      batch.delete(replyRef);
+    });
+
+    const commentRef = doc(db, "comments", commentId);
+    batch.delete(commentRef);
+
+    if (parentCommentId) {
+      const parentCommentRef = doc(db, "comments", parentCommentId);
+      batch.update(parentCommentRef, {
+        replyCount: increment(-1),
+      });
+    }
+
+    try {
+      await batch.commit();
+    } catch (error) {
+      console.error("Error deleting comment from Firestore:", error);
+      throw error;
+    }
+
+    const totalDeleted = 1 + repliesToDelete.length;
+    const postRef = doc(db, "posts", postId);
+
+    try {
+      await updateDoc(postRef, {
+        commentCount: increment(-totalDeleted),
+      });
+    } catch (error) {
+      console.error("Error updating post comment count:", error);
+    }
+
+    setPost((prevPost) => {
+      if (!prevPost) return prevPost;
+      const nextCount = Math.max((prevPost.commentCount || 0) - totalDeleted, 0);
+      return {
+        ...prevPost,
+        commentCount: nextCount,
+      };
+    });
+
+    setComments((prevComments) => {
+      const idsToRemove = new Set([
+        commentId,
+        ...repliesToDelete.map((reply) => reply.id),
+      ]);
+
+      const nextComments = prevComments
+        .map((comment) => {
+          if (comment.id === parentCommentId) {
+            return {
+              ...comment,
+              replyCount: Math.max((comment.replyCount || 0) - 1, 0),
+            };
+          }
+          return comment;
+        })
+        .filter((comment) => !idsToRemove.has(comment.id));
+
+      return nextComments;
+    });
+  };
+
   const handleVoteChange = async (updatedPost) => {
     try {
       const postRef = doc(db, "posts", postId);
@@ -435,6 +605,9 @@ const PostDetail = () => {
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      if (isSubmittingComment) {
+        return;
+      }
       handleSubmitComment(e);
     }
   };
@@ -747,14 +920,14 @@ const PostDetail = () => {
                     <div className="mt-2 flex justify-end">
                       <button
                         type="submit"
-                        disabled={!newComment.trim()}
+                        disabled={!newComment.trim() || isSubmittingComment}
                         className={`px-4 py-2 rounded-lg ${
                           darkMode
                             ? "bg-blue-600 hover:bg-blue-700"
                             : "bg-blue-500 hover:bg-blue-600"
                         } text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        Post Comment
+                        {isSubmittingComment ? "Posting..." : "Post Comment"}
                       </button>
                     </div>
                   </form>
@@ -795,6 +968,8 @@ const PostDetail = () => {
                       replies={replies}
                       darkMode={darkMode}
                       onReply={handleReply}
+                      onEdit={handleEditComment}
+                      onDelete={handleDeleteComment}
                       currentUser={user}
                     />
                   ))
