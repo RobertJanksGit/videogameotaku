@@ -30,6 +30,7 @@ import {
   pingBing,
 } from "./pingSearchEngines.js";
 import puppeteer from "puppeteer";
+import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
 
@@ -63,6 +64,13 @@ const maxSystemCallsPerMinute = defineInt("MAX_SYSTEM_CALLS_PER_MINUTE", {
 const maxTitleLength = defineInt("MAX_TITLE_LENGTH", { default: 200 });
 const maxContentLength = defineInt("MAX_CONTENT_LENGTH", { default: 10000 });
 const minContentLength = defineInt("MIN_CONTENT_LENGTH", { default: 10 });
+
+const MAX_VALIDATION_ATTEMPTS = 3;
+const VALIDATION_RETRY_BASE_DELAY_MS = 1000;
+const VALIDATION_FALLBACK_MESSAGE =
+  "Our automated review hit a snag. No action needed—moderators will take a look soon.";
+const MAX_MODERATION_IMAGE_WIDTH = 1280;
+const MAX_MODERATION_IMAGE_BYTES = 450 * 1024; // ~450KB cap for moderation payloads
 
 // Initialize OpenAI client
 let openai = null;
@@ -400,6 +408,166 @@ const fetchWithTimeout = async (
   }
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const compressImageForModeration = async (
+  buffer,
+  contentType = "image/jpeg"
+) => {
+  if (!buffer || buffer.length === 0) {
+    return {
+      buffer,
+      contentType,
+      originalSize: buffer ? buffer.length : 0,
+      processedSize: buffer ? buffer.length : 0,
+    };
+  }
+
+  try {
+    const basePipeline = sharp(buffer, { failOnError: false });
+    const metadata = await basePipeline.metadata();
+
+    const targetWidth =
+      metadata.width && metadata.width > MAX_MODERATION_IMAGE_WIDTH
+        ? MAX_MODERATION_IMAGE_WIDTH
+        : null;
+
+    const createPipeline = (quality, format = "jpeg") => {
+      let pipeline = sharp(buffer, { failOnError: false });
+
+      if (targetWidth) {
+        pipeline = pipeline.resize({
+          width: targetWidth,
+          withoutEnlargement: true,
+          fit: "inside",
+        });
+      }
+
+      switch (format) {
+        case "png":
+          pipeline = pipeline.png({
+            compressionLevel: 9,
+            adaptiveFiltering: true,
+            palette: true,
+          });
+          break;
+        case "webp":
+          pipeline = pipeline.webp({ quality, smartSubsample: true });
+          break;
+        default:
+          pipeline = pipeline.jpeg({
+            quality,
+            mozjpeg: true,
+            chromaSubsampling: "4:2:0",
+          });
+      }
+
+      return pipeline.toBuffer();
+    };
+
+    // Start with JPEG quality 80
+    let outputBuffer = await createPipeline(80, "jpeg");
+    let outputContentType = "image/jpeg";
+
+    const qualitySteps = [70, 60, 50, 40];
+
+    for (const quality of qualitySteps) {
+      if (outputBuffer.length <= MAX_MODERATION_IMAGE_BYTES) {
+        break;
+      }
+      outputBuffer = await createPipeline(quality, "jpeg");
+    }
+
+    if (outputBuffer.length > MAX_MODERATION_IMAGE_BYTES) {
+      // Fallback to WEBP which is usually smaller
+      outputBuffer = await createPipeline(75, "webp");
+      outputContentType = "image/webp";
+    }
+
+    // If still large, one more pass at lower quality webp
+    if (outputBuffer.length > MAX_MODERATION_IMAGE_BYTES) {
+      outputBuffer = await createPipeline(60, "webp");
+      outputContentType = "image/webp";
+    }
+
+    return {
+      buffer: outputBuffer,
+      contentType: outputContentType,
+      originalSize: buffer.length,
+      processedSize: outputBuffer.length,
+      targetWidth,
+    };
+  } catch (error) {
+    console.warn("Image compression failed, falling back to original", {
+      error: error.message,
+    });
+    return {
+      buffer,
+      contentType,
+      originalSize: buffer.length,
+      processedSize: buffer.length,
+    };
+  }
+};
+
+const callValidationService = async (apiUrl, payload) => {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_VALIDATION_ATTEMPTS; attempt++) {
+    try {
+      console.log(
+        `Sending payload to validation service (attempt ${attempt} of ${MAX_VALIDATION_ATTEMPTS})`
+      );
+
+      const response = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+        requestTimeout.value()
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(
+          `Validation service responded with ${response.status}: ${errorBody}`
+        );
+      }
+
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `Validation service attempt ${attempt} failed: ${error.message}`,
+        {
+          stack: error.stack,
+        }
+      );
+
+      if (attempt < MAX_VALIDATION_ATTEMPTS) {
+        const backoffDelay = Math.min(
+          5000,
+          VALIDATION_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
+        );
+        console.log(`Retrying validation after ${backoffDelay}ms delay`);
+        await sleep(backoffDelay);
+        continue;
+      }
+
+      throw lastError;
+    }
+  }
+
+  throw (
+    lastError ||
+    new Error("Validation service failed without additional details")
+  );
+};
+
 const sanitizeContent = (content) => {
   // Remove potential XSS vectors and sanitize content
   return content
@@ -424,15 +592,66 @@ const safeParseJson = (value) => {
 
 const toBoolean = (value) => {
   if (typeof value === "boolean") return value;
+
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
+
+    if (normalized.length === 0) {
+      return null;
+    }
+
+    const truthyValues = new Set([
+      "true",
+      "1",
+      "yes",
+      "y",
+      "approve",
+      "approved",
+      "accept",
+      "accepted",
+      "allow",
+      "allowed",
+      "pass",
+      "passed",
+      "valid",
+      "safe",
+      "clean",
+      "publish",
+      "published",
+      "ok",
+      "okay",
+    ]);
+
+    const falsyValues = new Set([
+      "false",
+      "0",
+      "no",
+      "n",
+      "reject",
+      "rejected",
+      "deny",
+      "denied",
+      "block",
+      "blocked",
+      "ban",
+      "banned",
+      "fail",
+      "failed",
+      "invalid",
+      "unsafe",
+      "flag",
+      "flagged",
+    ]);
+
+    if (truthyValues.has(normalized)) return true;
+    if (falsyValues.has(normalized)) return false;
   }
+
   if (typeof value === "number") {
     if (value === 0) return false;
     if (value === 1) return true;
   }
+
   return null;
 };
 
@@ -626,6 +845,7 @@ export const validatePost = onDocumentCreated(
     document: "posts/{postId}",
     secrets: [validationApiUrl, validationPrompt, newsApiUrl, WEBSITE_URL],
     maxInstances: 10,
+    memory: "512MiB",
   },
   async (event) => {
     const snapshot = event.data;
@@ -680,14 +900,39 @@ export const validatePost = onDocumentCreated(
 
       if (data.imageUrl && typeof data.imageUrl === "string") {
         try {
-          const imageResponse = await fetchWithTimeout(data.imageUrl, {}, 10000);
+          const imageResponse = await fetchWithTimeout(
+            data.imageUrl,
+            {},
+            10000
+          );
 
           if (imageResponse.ok) {
             const contentType =
               imageResponse.headers.get("content-type") || "image/jpeg";
-            const buffer = Buffer.from(await imageResponse.arrayBuffer());
-            payload.image = buffer.toString("base64");
-            payload.imageContentType = contentType;
+            const originalBuffer = Buffer.from(
+              await imageResponse.arrayBuffer()
+            );
+
+            const {
+              buffer: compressedBuffer,
+              contentType: moderationContentType,
+              originalSize,
+              processedSize,
+              targetWidth,
+            } = await compressImageForModeration(originalBuffer, contentType);
+
+            payload.image = compressedBuffer.toString("base64");
+            payload.imageContentType = moderationContentType;
+            payload.imageMetadata = {
+              originalBytes: originalSize,
+              moderationBytes: processedSize,
+              resizedToWidth: targetWidth || null,
+            };
+
+            console.log(
+              "Prepared image for moderation",
+              JSON.stringify(payload.imageMetadata)
+            );
           } else {
             console.warn(
               `Unable to fetch image for moderation. Status: ${imageResponse.status} ${imageResponse.statusText}`
@@ -698,36 +943,11 @@ export const validatePost = onDocumentCreated(
         }
       }
 
-      console.log("Sending payload to validation service");
-
-      const response = await fetchWithTimeout(
-        apiUrl,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        },
-        requestTimeout.value()
-      );
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(
-          `Validation service responded with ${response.status}: ${errorBody}`
-        );
-      }
-
-      const result = await response.json();
+      const result = await callValidationService(apiUrl, payload);
       console.log("Validation response:", JSON.stringify(result, null, 2));
 
-      const {
-        decision,
-        reason,
-        structuredReason,
-        aggregatedDetails,
-      } = extractModerationDecision(result);
+      const { decision, reason, structuredReason, aggregatedDetails } =
+        extractModerationDecision(result);
 
       if (decision === null) {
         throw new Error("Validation service did not provide a clear decision");
@@ -779,7 +999,10 @@ export const validatePost = onDocumentCreated(
 
       const detailCandidates = [];
 
-      if (parsedStructuredReason && typeof parsedStructuredReason === "object") {
+      if (
+        parsedStructuredReason &&
+        typeof parsedStructuredReason === "object"
+      ) {
         detailCandidates.push(parsedStructuredReason);
       }
 
@@ -846,7 +1069,10 @@ export const validatePost = onDocumentCreated(
         try {
           await regenerateSitemapWithDebounce();
         } catch (sitemapError) {
-          console.error("Error regenerating sitemap after moderation:", sitemapError);
+          console.error(
+            "Error regenerating sitemap after moderation:",
+            sitemapError
+          );
         }
 
         // Ping search engines after sitemap is updated
@@ -870,11 +1096,12 @@ export const validatePost = onDocumentCreated(
 
       const errorDetails = {
         status: "pending",
-        moderationMessage:
-          "Pending manual review due to validation error. Our team has been notified.",
+        moderationMessage: VALIDATION_FALLBACK_MESSAGE,
         moderationDetails: {
           reason: "validation_error",
           error: error.message,
+          retryAttempts: MAX_VALIDATION_ATTEMPTS,
+          lastErrorAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         validatedAt: admin.firestore.FieldValue.delete(),
@@ -1050,7 +1277,9 @@ export const syncAuthorKarma = onDocumentWritten(
         return true;
       }
 
-      if ((beforeData.upvoteCount ?? null) !== (afterData.upvoteCount ?? null)) {
+      if (
+        (beforeData.upvoteCount ?? null) !== (afterData.upvoteCount ?? null)
+      ) {
         return true;
       }
 
@@ -2283,7 +2512,16 @@ export const autoPostToFacebook = onDocumentWritten(
       }`;
 
       // Clean and prepare post content by removing markdown links and normalizing whitespace
-      const cleanContent = afterData.content
+      const rawContent =
+        typeof afterData.content === "string" ? afterData.content : "";
+
+      if (!rawContent) {
+        console.warn(
+          "Post content missing or not a string, using title only for Facebook message"
+        );
+      }
+
+      const cleanContent = rawContent
         .replace(/\[Source\]\([^)]+\)/g, "")
         .replace(/\[.*?\]\(.*?\)/g, "")
         .replace(/\n+/g, " ")
@@ -2298,15 +2536,15 @@ export const autoPostToFacebook = onDocumentWritten(
       // Create the Facebook post message with the shorter teaser
       const message = `${afterData.title}\n\n${teaser}\n\nRead more: ${postUrl}`;
 
-      // Always use a link post to allow Facebook to scrape the image from Open Graph metadata
-      const postData = {
-        message: message,
+      // Facebook Graph API expects URL-encoded form data
+      const postData = new URLSearchParams({
+        message,
         link: postUrl,
-      };
+      });
 
       console.log("Final Facebook post data:", {
-        hasMessage: !!postData.message,
-        hasLink: !!postData.link,
+        hasMessage: postData.has("message"),
+        hasLink: postData.has("link"),
         postUrl: postUrl,
         pageId: pageId,
       });
@@ -2317,10 +2555,9 @@ export const autoPostToFacebook = onDocumentWritten(
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
           },
-          body: JSON.stringify(postData),
+          body: postData,
         }
       );
 

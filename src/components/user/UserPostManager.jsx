@@ -999,6 +999,17 @@ const UserPostManager = ({ darkMode }) => {
                         {(post.status || "pending").charAt(0).toUpperCase() +
                           (post.status || "pending").slice(1)}
                       </span>
+                      {post.status === "pending" &&
+                        post.moderationDetails?.reason === "validation_error" && (
+                          <div
+                            className={`mt-1 text-xs ${
+                              darkMode ? "text-yellow-300" : "text-yellow-700"
+                            }`}
+                          >
+                            {post.moderationMessage ||
+                              "Automated review is retrying—no action needed."}
+                          </div>
+                        )}
                     </td>
                     <td
                       className={`px-6 py-4 whitespace-nowrap text-sm ${
