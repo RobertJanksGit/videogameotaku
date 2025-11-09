@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../config/firebase";
@@ -18,9 +18,7 @@ import ShareButtons from "../common/ShareButtons";
 import SEO from "../common/SEO";
 import StructuredData from "../common/StructuredData";
 import OptimizedImage from "../common/OptimizedImage";
-import formatTimeAgo, {
-  getTimestampDate,
-} from "../../utils/formatTimeAgo";
+import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
 import getRankFromKarma from "../../utils/karma";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import {
@@ -53,6 +51,7 @@ const HomePage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [featuredPosts, setFeaturedPosts] = useState([]);
+  const featuredCarouselRef = useRef(null);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedPlatform, setSelectedPlatform] = useState("all");
   const [activeTab, setActiveTab] = useState(FEED_TAB_KEYS.NEW);
@@ -89,44 +88,62 @@ const HomePage = () => {
   const postCtaClasses =
     "inline-flex w-full items-center justify-center rounded-full bg-[#316DCA] px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 sm:w-auto";
 
-  // Migrate old voting system to new array-based system
-  const migratePost = useCallback(async (post) => {
-    if (
-      Array.isArray(post.usersThatLiked) &&
-      Array.isArray(post.usersThatDisliked)
-    ) {
-      return post; // Already migrated
-    }
+  const scrollFeaturedCarousel = useCallback((direction) => {
+    const container = featuredCarouselRef.current;
+    if (!container) return;
 
-    const usersThatLiked = [];
-    const usersThatDisliked = [];
+    const firstCard = container.firstElementChild;
+    const cardWidth = firstCard
+      ? firstCard.getBoundingClientRect().width + 16
+      : container.clientWidth;
 
-    // Convert old object format to arrays
-    if (post.usersThatLiked && typeof post.usersThatLiked === "object") {
-      Object.entries(post.usersThatLiked).forEach(([userId, voteType]) => {
-        if (voteType === "upvote") {
-          usersThatLiked.push(userId);
-        } else if (voteType === "downvote") {
-          usersThatDisliked.push(userId);
-        }
-      });
-    }
-
-    // Update the post in Firestore
-    const postRef = doc(db, "posts", post.id);
-    await updateDoc(postRef, {
-      usersThatLiked,
-      usersThatDisliked,
-      totalVotes: usersThatLiked.length - usersThatDisliked.length,
+    container.scrollBy({
+      left: direction === "next" ? cardWidth : -cardWidth,
+      behavior: "smooth",
     });
+  }, []);
 
-    return {
-      ...post,
-      usersThatLiked,
-      usersThatDisliked,
-      totalVotes: usersThatLiked.length - usersThatDisliked.length,
-    };
-  }, [db]);
+  // Migrate old voting system to new array-based system
+  const migratePost = useCallback(
+    async (post) => {
+      if (
+        Array.isArray(post.usersThatLiked) &&
+        Array.isArray(post.usersThatDisliked)
+      ) {
+        return post; // Already migrated
+      }
+
+      const usersThatLiked = [];
+      const usersThatDisliked = [];
+
+      // Convert old object format to arrays
+      if (post.usersThatLiked && typeof post.usersThatLiked === "object") {
+        Object.entries(post.usersThatLiked).forEach(([userId, voteType]) => {
+          if (voteType === "upvote") {
+            usersThatLiked.push(userId);
+          } else if (voteType === "downvote") {
+            usersThatDisliked.push(userId);
+          }
+        });
+      }
+
+      // Update the post in Firestore
+      const postRef = doc(db, "posts", post.id);
+      await updateDoc(postRef, {
+        usersThatLiked,
+        usersThatDisliked,
+        totalVotes: usersThatLiked.length - usersThatDisliked.length,
+      });
+
+      return {
+        ...post,
+        usersThatLiked,
+        usersThatDisliked,
+        totalVotes: usersThatLiked.length - usersThatDisliked.length,
+      };
+    },
+    [db]
+  );
 
   // Separate function to fetch featured posts
   const fetchFeaturedPosts = async () => {
@@ -204,7 +221,9 @@ const HomePage = () => {
   const fetchPostsForTab = useCallback(
     async (tabKey, { isLoadMore = false } = {}) => {
       const existingState = tabData[tabKey] || createEmptyTabState();
-      const effectiveLastVisible = isLoadMore ? existingState.lastVisible : null;
+      const effectiveLastVisible = isLoadMore
+        ? existingState.lastVisible
+        : null;
 
       setTabData((prev) => {
         const previous = prev[tabKey] || createEmptyTabState();
@@ -340,7 +359,12 @@ const HomePage = () => {
       window.removeEventListener("scroll", debouncedScroll);
       clearTimeout(timeoutId);
     };
-  }, [activeTab, currentTabState.hasMore, currentTabState.isLoading, fetchPostsForTab]);
+  }, [
+    activeTab,
+    currentTabState.hasMore,
+    currentTabState.isLoading,
+    fetchPostsForTab,
+  ]);
 
   const handleVoteChange = (updatedPost) => {
     setTabData((prev) => {
@@ -468,7 +492,9 @@ const HomePage = () => {
           {timeDisplay ? (
             <TimeElement
               dateTime={publishedAt ? publishedAt.toISOString() : undefined}
-              className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}
+              className={`text-xs ${
+                darkMode ? "text-gray-400" : "text-gray-500"
+              }`}
             >
               {timeDisplay}
             </TimeElement>
@@ -480,7 +506,9 @@ const HomePage = () => {
     return (
       <div
         className={`flex items-center gap-3 px-5 py-4 border-b ${
-          darkMode ? "border-gray-700 bg-gray-900/40" : "border-gray-200 bg-gray-50"
+          darkMode
+            ? "border-gray-700 bg-gray-900/40"
+            : "border-gray-200 bg-gray-50"
         }`}
       >
         {profileUrl ? (
@@ -533,6 +561,104 @@ const HomePage = () => {
       </div>
     </div>
   );
+
+  const renderFeaturedCard = (post, extraClasses = "") => {
+    const priorityIndex = featuredPosts.findIndex(
+      (item) => item.id === post.id
+    );
+    const shouldEagerLoad = priorityIndex > -1 && priorityIndex < 2;
+
+    return (
+      <div
+        key={post.id}
+        onClick={() => handlePostClick(post.id)}
+        className={`group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg transition-transform duration-300 hover:scale-[1.02] ${
+          darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
+        } ${extraClasses}`}
+      >
+        {renderAuthorHeader(post)}
+        {post.imageUrl ? (
+          <div className="aspect-w-16 aspect-h-9 overflow-hidden">
+            <OptimizedImage
+              src={post.imageUrl}
+              alt={post.title}
+              className="h-full w-full object-contain"
+              sizes="(min-width: 1024px) 25vw, (min-width: 768px) 50vw, 100vw"
+              loading={shouldEagerLoad ? "eager" : "lazy"}
+              objectFit="contain"
+            />
+          </div>
+        ) : (
+          <div
+            className={`flex h-48 w-full items-center justify-center ${
+              darkMode ? "bg-gray-700" : "bg-gray-100"
+            }`}
+          >
+            <span
+              className={`text-4xl ${
+                darkMode ? "text-gray-600" : "text-gray-400"
+              }`}
+            >
+              📰
+            </span>
+          </div>
+        )}
+        <div className="flex flex-1 flex-col p-6">
+          <div className="mb-3 flex flex-wrap gap-1">
+            {(Array.isArray(post.platforms)
+              ? post.platforms
+              : [post.platform]
+            ).map((platform) => (
+              <span
+                key={platform}
+                className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
+                  darkMode
+                    ? "bg-gray-700 text-gray-300"
+                    : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {platform}
+              </span>
+            ))}
+          </div>
+
+          <div className="mb-4">
+            <span
+              className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
+                darkMode
+                  ? "bg-gray-700 text-gray-300"
+                  : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {post.category}
+            </span>
+          </div>
+
+          <h3
+            className={`mb-2 text-xl font-semibold ${
+              darkMode ? "text-white" : "text-gray-900"
+            }`}
+          >
+            {post.title}
+          </h3>
+          <p
+            className={`mb-4 line-clamp-2 text-sm ${
+              darkMode ? "text-gray-300" : "text-gray-600"
+            }`}
+          >
+            {getPreviewContent(post.content)}
+          </p>
+          <div
+            className={`mt-auto border-t ${
+              darkMode ? "border-gray-700" : "border-gray-200"
+            }`}
+          >
+            {renderCardFooter(post)}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const handlePostClick = (postId) => {
     navigate(`/post/${postId}`);
@@ -608,99 +734,71 @@ const HomePage = () => {
         <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-white max-w-7xl mx-auto">
           Featured Posts
         </h2>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
-          {featuredPosts.map((post) => (
-            <div
-              key={post.id}
-              onClick={() => handlePostClick(post.id)}
-              className={`group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg transition-transform duration-300 hover:scale-[1.02] ${
-                darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
-              }`}
-            >
-              {renderAuthorHeader(post)}
-              {post.imageUrl ? (
-                <div className="aspect-w-16 aspect-h-9 overflow-hidden">
-                  <OptimizedImage
-                    src={post.imageUrl}
-                    alt={post.title}
-                    className="w-full h-auto object-contain"
-                    sizes="(min-width: 1024px) 25vw, (min-width: 768px) 50vw, 100vw"
-                    loading={featuredPosts.indexOf(post) < 2 ? "eager" : "lazy"}
-                    objectFit="contain"
+
+        {/* Mobile carousel */}
+        <div className="relative md:hidden">
+          <div
+            ref={featuredCarouselRef}
+            className="flex gap-4 overflow-x-auto snap-x snap-mandatory scroll-px-4 -mx-4 px-4 pb-2"
+          >
+            {featuredPosts.map((post) =>
+              renderFeaturedCard(
+                post,
+                "snap-start flex-shrink-0 min-w-[80%] max-w-sm max-[440px]:min-w-full max-[440px]:max-w-full"
+              )
+            )}
+          </div>
+          {featuredPosts.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => scrollFeaturedCarousel("prev")}
+                aria-label="View previous featured post"
+                className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-2 text-gray-700 shadow-md transition hover:bg-white dark:bg-gray-800/90 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15 19l-7-7 7-7"
                   />
-                </div>
-              ) : (
-                <div
-                  className={`w-full h-48 flex items-center justify-center ${
-                    darkMode ? "bg-gray-700" : "bg-gray-100"
-                  }`}
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollFeaturedCarousel("next")}
+                aria-label="View next featured post"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-2 text-gray-700 shadow-md transition hover:bg-white dark:bg-gray-800/90 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2"
                 >
-                  <span
-                    className={`text-4xl ${
-                      darkMode ? "text-gray-600" : "text-gray-400"
-                    }`}
-                  >
-                    📰
-                  </span>
-                </div>
-              )}
-              <div className="flex flex-1 flex-col p-6">
-                {/* Platforms Section */}
-                <div className="mb-3 flex flex-wrap gap-1">
-                  {(Array.isArray(post.platforms)
-                    ? post.platforms
-                    : [post.platform]
-                  ).map((platform) => (
-                    <span
-                      key={platform}
-                      className={`inline-block px-2 py-1 text-xs font-semibold rounded-full ${
-                        darkMode
-                          ? "bg-gray-700 text-gray-300"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {platform}
-                    </span>
-                  ))}
-                </div>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
 
-                {/* Category */}
-                <div className="mb-4">
-                  <span
-                    className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
-                      darkMode
-                        ? "bg-gray-700 text-gray-300"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {post.category}
-                  </span>
-                </div>
-
-                <h3
-                  className={`text-xl font-semibold mb-2 ${
-                    darkMode ? "text-white" : "text-gray-900"
-                  }`}
-                >
-                  {post.title}
-                </h3>
-                <p
-                  className={`text-sm mb-4 line-clamp-2 ${
-                    darkMode ? "text-gray-300" : "text-gray-600"
-                  }`}
-                >
-                  {getPreviewContent(post.content)}
-                </p>
-                <div
-                  className={`mt-auto border-t ${
-                    darkMode ? "border-gray-700" : "border-gray-200"
-                  }`}
-                >
-                  {renderCardFooter(post)}
-                </div>
-              </div>
-            </div>
-          ))}
+        {/* Desktop grid */}
+        <div className="hidden gap-6 md:grid md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
+          {featuredPosts.map((post) => renderFeaturedCard(post))}
         </div>
       </section>
 
@@ -711,233 +809,240 @@ const HomePage = () => {
           <section className="w-full md:flex-1">
             <div className="mb-6 flex flex-col gap-4">
               <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
-              Community Feed
-            </h2>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                <select
-                  value={selectedPlatform}
-                  onChange={(e) => setSelectedPlatform(e.target.value)}
-                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                    darkMode
-                      ? "bg-[#1C2128] border-gray-700 text-white"
-                      : "border-gray-300"
-                  }`}
-                >
-                  <option value="all">All Platforms</option>
-                  <option value="Nintendo">Nintendo</option>
-                  <option value="PlayStation">PlayStation</option>
-                  <option value="Xbox">Xbox</option>
-                  <option value="PC">PC</option>
-                  <option value="VR">VR</option>
-                  <option value="Mobile">Mobile</option>
-                </select>
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                    darkMode
-                      ? "bg-[#1C2128] border-gray-700 text-white"
-                      : "border-gray-300"
-                  }`}
-                >
-                  <option value="all">All Categories</option>
-                  <option value="news">News</option>
-                  <option value="review">Review</option>
-                  <option value="guide">Guide</option>
-                  <option value="opinion">Opinion</option>
-                </select>
-                <select
-                  value={activeTab}
-                  onChange={(e) => setActiveTab(e.target.value)}
-                  className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
-                    darkMode
-                      ? "bg-[#1C2128] border-gray-700 text-white"
-                      : "border-gray-300"
-                  }`}
-                >
-                  {[FEED_TAB_KEYS.NEW, ...tabs.map((tab) => tab.key).filter((key) => key !== FEED_TAB_KEYS.NEW)].map((key) => (
-                    <option key={key} value={key}>
-                      {FEED_TAB_CONFIG[key]?.label || key}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {user && (
-                <button
-                  type="button"
-                  onClick={handleShareYourFind}
-                  className={postCtaClasses}
-                >
-                  Post Your Find
-                </button>
-              )}
+                Community Feed
+              </h2>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                  <select
+                    value={selectedPlatform}
+                    onChange={(e) => setSelectedPlatform(e.target.value)}
+                    className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                      darkMode
+                        ? "bg-[#1C2128] border-gray-700 text-white"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    <option value="all">All Platforms</option>
+                    <option value="Nintendo">Nintendo</option>
+                    <option value="PlayStation">PlayStation</option>
+                    <option value="Xbox">Xbox</option>
+                    <option value="PC">PC</option>
+                    <option value="VR">VR</option>
+                    <option value="Mobile">Mobile</option>
+                  </select>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                      darkMode
+                        ? "bg-[#1C2128] border-gray-700 text-white"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    <option value="all">All Categories</option>
+                    <option value="news">News</option>
+                    <option value="review">Review</option>
+                    <option value="guide">Guide</option>
+                    <option value="opinion">Opinion</option>
+                  </select>
+                  <select
+                    value={activeTab}
+                    onChange={(e) => setActiveTab(e.target.value)}
+                    className={`w-full sm:w-auto px-3 py-2 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base ${
+                      darkMode
+                        ? "bg-[#1C2128] border-gray-700 text-white"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    {[
+                      FEED_TAB_KEYS.NEW,
+                      ...tabs
+                        .map((tab) => tab.key)
+                        .filter((key) => key !== FEED_TAB_KEYS.NEW),
+                    ].map((key) => (
+                      <option key={key} value={key}>
+                        {FEED_TAB_CONFIG[key]?.label || key}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {user && (
+                  <button
+                    type="button"
+                    onClick={handleShareYourFind}
+                    className={postCtaClasses}
+                  >
+                    Post Your Find
+                  </button>
+                )}
               </div>
             </div>
             <div className="space-y-8">
-            {postsToRender.map((post) => (
-              <article
-                key={post.id}
-                onClick={() => handlePostClick(post.id)}
-                className={`h-entry group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg cursor-pointer transition-transform hover:scale-[1.01] ${
-                  darkMode
-                    ? "bg-gray-800 border-gray-700"
-                    : "bg-white border-gray-200"
-                }`}
-              >
-                {renderAuthorHeader(post)}
-                {post.imageUrl && (
-                  <div className="w-full aspect-w-16 aspect-h-9 overflow-hidden">
-                    <OptimizedImage
-                      src={post.imageUrl}
-                      alt={post.title}
-                      className="w-full h-auto object-contain u-photo"
-                      sizes="(min-width: 1024px) 896px, 100vw"
-                      loading={post.id === firstPostId ? "eager" : "lazy"}
-                      objectFit="contain"
-                    />
-                  </div>
-                )}
-                <div className="flex flex-1 flex-col p-6">
-                  <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Platform tags */}
-                      {(Array.isArray(post.platforms)
-                        ? post.platforms
-                        : [post.platform]
-                      ).map((platform) => (
+              {postsToRender.map((post) => (
+                <article
+                  key={post.id}
+                  onClick={() => handlePostClick(post.id)}
+                  className={`h-entry group flex h-full flex-col overflow-hidden rounded-lg border shadow-lg cursor-pointer transition-transform hover:scale-[1.01] ${
+                    darkMode
+                      ? "bg-gray-800 border-gray-700"
+                      : "bg-white border-gray-200"
+                  }`}
+                >
+                  {renderAuthorHeader(post)}
+                  {post.imageUrl && (
+                    <div className="w-full aspect-w-16 aspect-h-9 overflow-hidden">
+                      <OptimizedImage
+                        src={post.imageUrl}
+                        alt={post.title}
+                        className="w-full h-auto object-contain u-photo"
+                        sizes="(min-width: 1024px) 896px, 100vw"
+                        loading={post.id === firstPostId ? "eager" : "lazy"}
+                        objectFit="contain"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-1 flex-col p-6">
+                    <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Platform tags */}
+                        {(Array.isArray(post.platforms)
+                          ? post.platforms
+                          : [post.platform]
+                        ).map((platform) => (
+                          <span
+                            key={platform}
+                            className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
+                              darkMode
+                                ? "bg-gray-700 text-gray-300"
+                                : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
+                            {platform}
+                          </span>
+                        ))}
+                        {/* Category tag */}
                         <span
-                          key={platform}
                           className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
                             darkMode
                               ? "bg-gray-700 text-gray-300"
                               : "bg-gray-100 text-gray-600"
                           }`}
                         >
-                          {platform}
+                          {post.category}
                         </span>
-                      ))}
-                      {/* Category tag */}
-                      <span
-                        className={`inline-block rounded-full px-3 py-1 text-sm font-semibold p-category ${
-                          darkMode
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-gray-100 text-gray-600"
-                        }`}
+                      </div>
+                      <div
+                        className="flex w-full items-center justify-start gap-3 sm:w-auto sm:justify-end"
+                        onClick={(event) => event.stopPropagation()}
                       >
-                        {post.category}
-                      </span>
+                        <ShareButtons
+                          url={`${siteUrl}/post/${post.id}`}
+                          title={post.title}
+                          darkMode={darkMode}
+                        />
+                      </div>
                     </div>
-                    <div
-                      className="flex w-full items-center justify-start gap-3 sm:w-auto sm:justify-end"
-                      onClick={(event) => event.stopPropagation()}
+                    <h3
+                      className={`mb-4 text-2xl font-bold p-name ${
+                        darkMode ? "text-white" : "text-gray-900"
+                      }`}
                     >
-                      <ShareButtons
-                        url={`${siteUrl}/post/${post.id}`}
-                        title={post.title}
-                        darkMode={darkMode}
-                      />
+                      {post.title}
+                    </h3>
+                    <p
+                      className={`mb-4 text-base line-clamp-3 p-summary ${
+                        darkMode ? "text-gray-300" : "text-gray-600"
+                      }`}
+                    >
+                      {getPreviewContent(post.content)}
+                    </p>
+                    <div
+                      className={`mt-auto border-t ${
+                        darkMode ? "border-gray-700" : "border-gray-200"
+                      }`}
+                    >
+                      {renderCardFooter(post)}
                     </div>
+                    <a href={`/post/${post.id}`} className="u-url hidden">
+                      Permalink
+                    </a>
                   </div>
-                  <h3
-                    className={`mb-4 text-2xl font-bold p-name ${
-                      darkMode ? "text-white" : "text-gray-900"
-                    }`}
-                  >
-                    {post.title}
-                  </h3>
-                  <p
-                    className={`mb-4 text-base line-clamp-3 p-summary ${
-                      darkMode ? "text-gray-300" : "text-gray-600"
-                    }`}
-                  >
-                    {getPreviewContent(post.content)}
-                  </p>
-                  <div
-                    className={`mt-auto border-t ${
-                      darkMode ? "border-gray-700" : "border-gray-200"
-                    }`}
-                  >
-                    {renderCardFooter(post)}
-                  </div>
-                  <a href={`/post/${post.id}`} className="u-url hidden">
-                    Permalink
-                  </a>
-                </div>
-              </article>
-            ))}
+                </article>
+              ))}
 
-            {!currentTabState.isLoading && postsToRender.length === 0 && (
-              <div
-                className={`rounded-lg border p-6 text-center text-sm ${
-                  darkMode
-                    ? "border-gray-700 bg-gray-900 text-gray-300"
-                    : "border-gray-200 bg-gray-50 text-gray-600"
-                }`}
-              >
-                {currentTabState.error ||
-                  "No posts found for this tab yet. Check back soon!"}
-              </div>
-            )}
-
-            <div className="flex flex-col items-center py-4 space-y-4">
-              {currentTabState.isLoading && (
+              {!currentTabState.isLoading && postsToRender.length === 0 && (
                 <div
-                  className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
-                    darkMode ? "border-white" : "border-gray-900"
+                  className={`rounded-lg border p-6 text-center text-sm ${
+                    darkMode
+                      ? "border-gray-700 bg-gray-900 text-gray-300"
+                      : "border-gray-200 bg-gray-50 text-gray-600"
                   }`}
-                ></div>
+                >
+                  {currentTabState.error ||
+                    "No posts found for this tab yet. Check back soon!"}
+                </div>
               )}
 
-              {!currentTabState.isLoading && currentTabState.hasMore && (
-                <div>
-                  <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
-                    More Content Available
-                  </h3>
-                  <button
-                    onClick={() => fetchPostsForTab(activeTab, { isLoadMore: true })}
-                    className={`px-6 py-2 text-sm rounded-md ${
-                      darkMode
-                        ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
-                        : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+              <div className="flex flex-col items-center py-4 space-y-4">
+                {currentTabState.isLoading && (
+                  <div
+                    className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
+                      darkMode ? "border-white" : "border-gray-900"
+                    }`}
+                  ></div>
+                )}
+
+                {!currentTabState.isLoading && currentTabState.hasMore && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                      More Content Available
+                    </h3>
+                    <button
+                      onClick={() =>
+                        fetchPostsForTab(activeTab, { isLoadMore: true })
+                      }
+                      className={`px-6 py-2 text-sm rounded-md ${
+                        darkMode
+                          ? "bg-[#1C2128] text-blue-400 hover:bg-[#22272E]"
+                          : "bg-gray-100 text-blue-500 hover:bg-gray-200"
+                      }`}
+                    >
+                      Load More
+                    </button>
+                  </div>
+                )}
+
+                {!currentTabState.hasMore && postsToRender.length > 0 && (
+                  <div
+                    className={`text-center ${
+                      darkMode ? "text-gray-400" : "text-gray-600"
                     }`}
                   >
-                    Load More
+                    No more posts to load
+                  </div>
+                )}
+
+                {currentTabState.error && postsToRender.length > 0 && (
+                  <div
+                    className={`text-center text-sm ${
+                      darkMode ? "text-red-400" : "text-red-600"
+                    }`}
+                  >
+                    {currentTabState.error}
+                  </div>
+                )}
+              </div>
+              {user && postsToRender.length > 0 && (
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={handleShareYourFind}
+                    className={postCtaClasses}
+                  >
+                    Post Your Find
                   </button>
                 </div>
               )}
-
-              {!currentTabState.hasMore && postsToRender.length > 0 && (
-                <div
-                  className={`text-center ${
-                    darkMode ? "text-gray-400" : "text-gray-600"
-                  }`}
-                >
-                  No more posts to load
-                </div>
-              )}
-
-              {currentTabState.error && postsToRender.length > 0 && (
-                <div
-                  className={`text-center text-sm ${
-                    darkMode ? "text-red-400" : "text-red-600"
-                  }`}
-                >
-                  {currentTabState.error}
-                </div>
-              )}
-            </div>
-            {user && postsToRender.length > 0 && (
-              <div className="mt-6 flex justify-center">
-                <button
-                  type="button"
-                  onClick={handleShareYourFind}
-                  className={postCtaClasses}
-                >
-                  Post Your Find
-                </button>
-              </div>
-            )}
             </div>
           </section>
 
