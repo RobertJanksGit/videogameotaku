@@ -41,6 +41,10 @@ const validationPrompt = defineSecret("VALIDATION_PROMPT");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const newsApiUrl = defineSecret("NEWS_API_URL");
 const systemUserId = defineSecret("SYSTEM_USER_ID");
+const systemUserIds = defineSecret("SYSTEM_USER_IDS");
+const newsUserSupermeeshiId = defineSecret("NEWS_USER_SUPERMEESHI_ID");
+const newsUserShakudaId = defineSecret("NEWS_USER_SHAKUDA_ID");
+const newsUserBlofuId = defineSecret("NEWS_USER_BLOFU_ID");
 const WEBSITE_URL = defineSecret("WEBSITE_URL");
 const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret("FACEBOOK_PAGE_ACCESS_TOKEN");
 const SITEMAP_API_KEY = defineSecret("SITEMAP_API_KEY");
@@ -354,23 +358,175 @@ const ALLOWED_MIME_TYPES = [
 const SECURE_TOKEN_LENGTH = 32;
 
 // System user configuration
-let SYSTEM_USER = null;
+const systemUserCache = new Map();
+let systemUserIdPool = null;
+let optionalSystemUserIdsWarningLogged = false;
 
-// Helper function to get system user
-const getSystemUser = async () => {
-  if (SYSTEM_USER) return SYSTEM_USER;
+const getOptionalSecretValue = (secretParam) => {
+  try {
+    return secretParam.value();
+  } catch (error) {
+    if (!optionalSystemUserIdsWarningLogged) {
+      console.warn("Optional system user IDs secret is not available.", {
+        error: error.message,
+      });
+      optionalSystemUserIdsWarningLogged = true;
+    }
+    return null;
+  }
+};
 
-  const userDoc = await db.collection("users").doc(systemUserId.value()).get();
-  if (!userDoc.exists) {
-    throw new Error("System user not found");
+const parseSystemUserIdList = (rawValue) => {
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean);
+    }
+  } catch (error) {
+    // Fall back to comma-separated parsing
   }
 
-  SYSTEM_USER = {
+  return rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+};
+
+const getSystemUserIdPool = () => {
+  if (systemUserIdPool) {
+    return systemUserIdPool;
+  }
+
+  const ids = new Set();
+
+  const optionalIds = parseSystemUserIdList(getOptionalSecretValue(systemUserIds));
+  optionalIds.forEach((id) => ids.add(id));
+
+  const defaultId = (() => {
+    try {
+      return systemUserId.value();
+    } catch (error) {
+      throw new Error(
+        "SYSTEM_USER_ID secret is not configured. At least one system user ID is required."
+      );
+    }
+  })();
+
+  if (defaultId) {
+    ids.add(defaultId.trim());
+  }
+
+  const resolvedIds = Array.from(ids).filter(Boolean);
+  if (resolvedIds.length === 0) {
+    throw new Error(
+      "No system user IDs configured. Provide SYSTEM_USER_ID or SYSTEM_USER_IDS."
+    );
+  }
+
+  systemUserIdPool = resolvedIds;
+  console.log("Loaded system user ID pool:", resolvedIds);
+  return systemUserIdPool;
+};
+
+const NEWS_POSTER_SECRET_MAP = {
+  SuperMeeshi: {
+    secret: newsUserSupermeeshiId,
+    secretName: "NEWS_USER_SUPERMEESHI_ID",
+  },
+  Shakuda: {
+    secret: newsUserShakudaId,
+    secretName: "NEWS_USER_SHAKUDA_ID",
+  },
+  Blofu: { secret: newsUserBlofuId, secretName: "NEWS_USER_BLOFU_ID" },
+};
+
+const getNewsPosterSystemUserId = (userName) => {
+  const normalizedName = (userName || "").trim();
+  const posterConfig = NEWS_POSTER_SECRET_MAP[normalizedName];
+
+  if (posterConfig) {
+    try {
+      const resolvedId = (posterConfig.secret.value() || "").trim();
+      if (resolvedId) {
+        return resolvedId;
+      }
+      console.warn(
+        `Secret ${posterConfig.secretName} is configured but empty. Falling back to default system user.`
+      );
+    } catch (error) {
+      console.error(
+        `Failed to resolve secret ${posterConfig.secretName}. Falling back to default system user.`,
+        error
+      );
+    }
+  } else if (normalizedName) {
+    console.warn(
+      `Unknown news poster "${normalizedName}" received. Falling back to default system user.`
+    );
+  } else {
+    console.warn(
+      "No UserName provided in article payload. Falling back to default system user."
+    );
+  }
+
+  return getSystemUserIdPool()[0];
+};
+
+const resolveSystemUserForArticle = async (article) => {
+  const candidateUserName = article?.UserName ?? article?.userName ?? "";
+  const targetUserId = getNewsPosterSystemUserId(candidateUserName);
+
+  try {
+    return await initializeSystemUser(targetUserId);
+  } catch (error) {
+    console.error(
+      `Failed to initialize system user ${targetUserId} for article "${
+        article?.title ?? "Untitled"
+      }". Attempting fallback.`,
+      error
+    );
+
+    const fallbackId = getSystemUserIdPool()[0];
+    if (!fallbackId || fallbackId === targetUserId) {
+      throw error;
+    }
+
+    try {
+      return await initializeSystemUser(fallbackId);
+    } catch (fallbackError) {
+      console.error(
+        `Fallback system user initialization failed for ID ${fallbackId}.`,
+        fallbackError
+      );
+      throw fallbackError;
+    }
+  }
+};
+
+// Helper function to get system user
+const getSystemUser = async (userId = null) => {
+  const targetUserId = (userId || "").trim() || getSystemUserIdPool()[0];
+
+  if (systemUserCache.has(targetUserId)) {
+    return systemUserCache.get(targetUserId);
+  }
+
+  const userDoc = await db.collection("users").doc(targetUserId).get();
+  if (!userDoc.exists) {
+    throw new Error(`System user not found for ID ${targetUserId}`);
+  }
+
+  const systemUser = {
     id: userDoc.id,
     ...userDoc.data(),
   };
 
-  return SYSTEM_USER;
+  systemUserCache.set(targetUserId, systemUser);
+  return systemUser;
 };
 
 // Helper function to get bucket
@@ -409,6 +565,45 @@ const fetchWithTimeout = async (
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const MAX_NEWS_POST_DELAY_MS = 3.5 * 60 * 60 * 1000; // 3 hours 30 minutes
+const NEWS_POST_DELAY_BUFFER_SECONDS = 60;
+const generateRandomNewsDelayMs = () =>
+  Math.floor(Math.random() * (MAX_NEWS_POST_DELAY_MS + 1));
+
+const applyArticleDelay = async (requestedDelayMs, functionStart) => {
+  const elapsedMs = Date.now() - functionStart;
+  const remainingExecutionMs = Math.max(
+    0,
+    (FUNCTION_TIMEOUT - NEWS_POST_DELAY_BUFFER_SECONDS) * 1000 - elapsedMs
+  );
+  const appliedDelayMs = Math.min(requestedDelayMs, remainingExecutionMs);
+
+  if (appliedDelayMs > 0) {
+    console.log(
+      `Waiting ${Math.round(
+        appliedDelayMs / 1000
+      )} seconds before posting (requested ${Math.round(
+        requestedDelayMs / 1000
+      )} seconds).`
+    );
+    await sleep(appliedDelayMs);
+  }
+
+  if (requestedDelayMs > appliedDelayMs) {
+    console.log(
+      `Truncated delay from ${Math.round(
+        requestedDelayMs / 1000
+      )}s to ${Math.round(
+        appliedDelayMs / 1000
+      )}s due to remaining execution time constraints (${Math.round(
+        remainingExecutionMs / 1000
+      )}s left).`
+    );
+  }
+
+  return appliedDelayMs;
+};
 
 const compressImageForModeration = async (
   buffer,
@@ -1456,7 +1651,7 @@ export const checkRejectionResets = onSchedule(
     minBackoff: "10s",
     maxBackoff: "60s",
     timeoutSeconds: 120, // Increased to 2 minutes
-    secrets: [systemUserId],
+    secrets: [systemUserId, systemUserIds],
     labels: {
       "deployment-scheduled": "true",
     },
@@ -1623,7 +1818,16 @@ export const fetchAndSavePosts = onSchedule(
   {
     schedule: "0 2,6,10,14,18,22 * * *",
     maxInstances: 1,
-    secrets: [systemUserId, bucketName, openaiApiKey, newsApiUrl],
+    secrets: [
+      systemUserId,
+      systemUserIds,
+      bucketName,
+      openaiApiKey,
+      newsApiUrl,
+      newsUserSupermeeshiId,
+      newsUserShakudaId,
+      newsUserBlofuId,
+    ],
     timeoutSeconds: FUNCTION_TIMEOUT,
     memory: "2GiB",
     region: "us-central1",
@@ -1727,15 +1931,11 @@ export const fetchAndSavePosts = onSchedule(
         lastSuccessfulArticle: null,
         memoryUsage: initialMemory,
         recoveryAttempt: 0,
+        systemUserMode: "per_article",
       });
-
-      // Initialize system user with timeout and retry
-      const SYSTEM_USER = await initializeSystemUser();
-      if (!SYSTEM_USER) throw new Error("Failed to initialize system user");
 
       await executionRef.update({
         status: "fetching_articles",
-        systemUserId: SYSTEM_USER.id,
       });
 
       // Fetch articles with improved error handling and longer timeout
@@ -1813,7 +2013,6 @@ export const fetchAndSavePosts = onSchedule(
         // Process batch
         await processArticleBatch(
           batch,
-          SYSTEM_USER,
           executionRef,
           startTime,
           (article) => {
@@ -1913,10 +2112,14 @@ export const fetchAndSavePosts = onSchedule(
 );
 
 // Helper function to initialize system user with retry
-async function initializeSystemUser(maxRetries = 3) {
+async function initializeSystemUser(targetUserId, maxRetries = 3) {
+  if (!targetUserId) {
+    throw new Error("No system user ID provided for initialization");
+  }
+
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const userPromise = getSystemUser();
+      const userPromise = getSystemUser(targetUserId);
       const userTimeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("System user fetch timeout")), 10000)
       );
@@ -1997,7 +2200,6 @@ async function fetchArticlesWithRetry(maxRetries = 3) {
 // Update the processArticleBatch function to be more memory-conscious
 async function processArticleBatch(
   articles,
-  SYSTEM_USER,
   executionRef,
   startTime,
   onSuccess,
@@ -2012,6 +2214,34 @@ async function processArticleBatch(
         return false;
       }
 
+      let systemUser;
+      try {
+        systemUser = await resolveSystemUserForArticle(article);
+        if (systemUser) {
+          article.assignedSystemUserId = systemUser.id;
+        }
+        console.log(
+          `Resolved system user for article "${article.title}": ${
+            systemUser?.id ?? "unknown"
+          } (requested by ${article?.UserName ?? article?.userName ?? "N/A"})`
+        );
+      } catch (error) {
+        console.error(
+          `Unable to resolve system user for article "${article.title}". Skipping.`,
+          error
+        );
+        onError();
+        continue;
+      }
+
+      if (!systemUser) {
+        console.error(
+          `System user resolution returned null for article "${article.title}". Skipping.`
+        );
+        onError();
+        continue;
+      }
+
       // Skip articles without images
       if (!article.imageUrl) {
         console.log(`Skipping article without image: ${article.title}`);
@@ -2019,10 +2249,15 @@ async function processArticleBatch(
         continue;
       }
 
+      const requestedDelayMs = generateRandomNewsDelayMs();
+      const appliedDelayMs = await applyArticleDelay(requestedDelayMs, startTime);
+      article.requestedDelayMs = requestedDelayMs;
+      article.appliedDelayMs = appliedDelayMs;
+
       // Process image
       console.log(`Processing image for article: ${article.title}`);
       try {
-        article.imageData = await processImage(article.imageUrl, SYSTEM_USER);
+        article.imageData = await processImage(article.imageUrl, systemUser);
         await cleanupMemory(); // Clean up after image processing
       } catch (error) {
         console.error(
@@ -2042,7 +2277,7 @@ async function processArticleBatch(
 
       // Create post only if we have valid image data
       if (article.imageData) {
-        await createPost(article, SYSTEM_USER, embedding);
+        await createPost(article, systemUser, embedding);
         onSuccess(article);
       } else {
         console.log(
@@ -2207,7 +2442,16 @@ async function createPost(article, SYSTEM_USER, embedding) {
 export const testFetchAndSavePosts = onRequest(
   {
     maxInstances: 1,
-    secrets: [systemUserId, bucketName, openaiApiKey, newsApiUrl],
+    secrets: [
+      systemUserId,
+      systemUserIds,
+      bucketName,
+      openaiApiKey,
+      newsApiUrl,
+      newsUserSupermeeshiId,
+      newsUserShakudaId,
+      newsUserBlofuId,
+    ],
     timeoutSeconds: FUNCTION_TIMEOUT,
     memory: "1GiB",
   },
@@ -2221,14 +2465,9 @@ export const testFetchAndSavePosts = onRequest(
 
     console.log("Starting test endpoint execution");
     try {
+      const functionStartTime = Date.now();
       let successCount = 0;
       let errorCount = 0;
-
-      // Get system user at runtime
-      const SYSTEM_USER = await getSystemUser();
-      if (!SYSTEM_USER) {
-        throw new Error("Failed to initialize system user");
-      }
 
       console.log("Testing API connection...");
       const response = await fetch(`${newsApiUrl.value()}`);
@@ -2263,15 +2502,29 @@ export const testFetchAndSavePosts = onRequest(
       // Process each unique article
       for (const article of uniqueArticles) {
         try {
-          // Add delay between posts (2 seconds)
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const systemUser = await resolveSystemUserForArticle(article);
+          if (!systemUser) {
+            console.warn(
+              `Skipping article "${article.title}" because no system user could be resolved.`
+            );
+            errorCount++;
+            continue;
+          }
+
+          const requestedDelayMs = generateRandomNewsDelayMs();
+          const appliedDelayMs = await applyArticleDelay(
+            requestedDelayMs,
+            functionStartTime
+          );
+          article.requestedDelayMs = requestedDelayMs;
+          article.appliedDelayMs = appliedDelayMs;
 
           // Handle image if it exists
           let imageData = null;
           if (article.imageUrl) {
             console.log(`Processing image for article: ${article.title}`);
             try {
-              imageData = await processImage(article.imageUrl, SYSTEM_USER);
+              imageData = await processImage(article.imageUrl, systemUser);
               await cleanupMemory(); // Clean up after image processing
             } catch (error) {
               console.error(
@@ -2288,7 +2541,7 @@ export const testFetchAndSavePosts = onRequest(
           await validateContent(article.title, sanitizedContent);
 
           // Check rate limit before creating post
-          if (!(await checkRateLimit(SYSTEM_USER.id, "system"))) {
+          if (!(await checkRateLimit(systemUser.id, "system"))) {
             throw new Error("Rate limit exceeded");
           }
 
@@ -2299,10 +2552,10 @@ export const testFetchAndSavePosts = onRequest(
             content: sanitizedContent,
             category: "news",
             platforms: article.platforms || [],
-            authorId: SYSTEM_USER.id,
-            authorName: SYSTEM_USER.name,
-            authorEmail: SYSTEM_USER.email,
-            authorPhotoURL: SYSTEM_USER.photoURL,
+            authorId: systemUser.id,
+            authorName: systemUser.name,
+            authorEmail: systemUser.email,
+            authorPhotoURL: systemUser.photoURL,
             imageUrl: imageData?.url || null,
             imagePath: imageData?.path || null,
             imageContentType: imageData?.contentType || null,
@@ -2315,8 +2568,8 @@ export const testFetchAndSavePosts = onRequest(
             totalVotes: 0,
             status: "published",
             type: "news",
-            lastEditedBy: SYSTEM_USER.name,
-            lastEditedById: SYSTEM_USER.id,
+            lastEditedBy: systemUser.name,
+            lastEditedById: systemUser.id,
           };
 
           // Create the post

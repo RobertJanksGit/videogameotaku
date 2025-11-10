@@ -66,6 +66,20 @@ const UserManager = ({ darkMode }) => {
   return (
     <div className="space-y-6">
       <div
+        className={`flex items-center justify-end text-sm font-medium ${
+          darkMode ? "text-gray-200" : "text-gray-700"
+        }`}
+      >
+        <span className="mr-2">Total Users:</span>
+        <span
+          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+            darkMode ? "bg-[#373E47] text-white" : "bg-gray-100 text-gray-900"
+          }`}
+        >
+          {users.length}
+        </span>
+      </div>
+      <div
         className={`rounded-md border ${
           darkMode ? "border-gray-700" : "border-gray-200"
         }`}
