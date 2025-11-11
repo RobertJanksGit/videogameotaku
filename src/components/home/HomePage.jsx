@@ -97,8 +97,18 @@ const HomePage = () => {
       ? firstCard.getBoundingClientRect().width + 16
       : container.clientWidth;
 
-    container.scrollBy({
-      left: direction === "next" ? cardWidth : -cardWidth,
+    const maxScrollLeft = Math.max(
+      0,
+      container.scrollWidth - container.clientWidth
+    );
+
+    const targetScrollLeft =
+      direction === "next"
+        ? Math.min(container.scrollLeft + cardWidth, maxScrollLeft)
+        : Math.max(container.scrollLeft - cardWidth, 0);
+
+    container.scrollTo({
+      left: targetScrollLeft,
       behavior: "smooth",
     });
   }, []);
@@ -333,6 +343,52 @@ const HomePage = () => {
   useEffect(() => {
     fetchFeaturedPosts();
   }, [user]);
+
+  useEffect(() => {
+    const container = featuredCarouselRef.current;
+    if (!container) {
+      return;
+    }
+
+    let animationFrameId = null;
+
+    const clampScrollPosition = () => {
+      animationFrameId = null;
+      const maxScrollLeft = Math.max(
+        0,
+        container.scrollWidth - container.clientWidth
+      );
+
+      if (container.scrollLeft > maxScrollLeft) {
+        container.scrollLeft = maxScrollLeft;
+      } else if (container.scrollLeft < 0) {
+        container.scrollLeft = 0;
+      }
+    };
+
+    const handleScroll = () => {
+      if (animationFrameId !== null) {
+        return;
+      }
+      animationFrameId = window.requestAnimationFrame(clampScrollPosition);
+    };
+
+    const handleResize = () => {
+      clampScrollPosition();
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    window.addEventListener("resize", handleResize);
+    clampScrollPosition();
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleResize);
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [featuredPosts.length]);
 
   // Infinite scroll handler
   const handleScroll = () => {

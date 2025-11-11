@@ -24,6 +24,88 @@ const POSTS_COLLECTION = "posts";
 const USERS_COLLECTION = "users";
 const NOTIFICATIONS_COLLECTION = "notifications";
 
+const THREAD_CONTEXT_LIMIT = 5;
+
+const timestampToMillis = (value) => {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.seconds === "number") {
+    const nanos = typeof value.nanoseconds === "number" ? value.nanoseconds : 0;
+    return value.seconds * 1000 + Math.floor(nanos / 1e6);
+  }
+  if (typeof value === "number") return value;
+  return 0;
+};
+
+const sanitizeCommentForContext = (comment) => {
+  if (!comment || !comment.id) return null;
+  const content = comment.content ?? comment.text ?? "";
+  if (!content) return null;
+  return {
+    id: comment.id,
+    authorName: comment.authorName ?? comment.author ?? "",
+    authorId: comment.authorId ?? null,
+    content,
+    createdAt: comment.createdAt ?? null,
+  };
+};
+
+const prepareCommentForPrompt = (comment) => {
+  if (!comment) return null;
+  const content = comment.content ?? comment.text ?? "";
+  if (!content) return null;
+  return {
+    authorName: comment.authorName ?? comment.author ?? "",
+    content,
+  };
+};
+
+const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
+  const entries = new Map();
+
+  const addEntry = (comment) => {
+    const sanitized = sanitizeCommentForContext(comment);
+    if (!sanitized) return;
+    if (!entries.has(sanitized.id)) {
+      entries.set(sanitized.id, sanitized);
+    }
+  };
+
+  addEntry(parentComment);
+
+  if (threadRootCommentId) {
+    try {
+      const snapshot = await db
+        .collection(COMMENTS_COLLECTION)
+        .where("threadRootCommentId", "==", threadRootCommentId)
+        .orderBy("createdAt", "asc")
+        .limit(THREAD_CONTEXT_LIMIT * 2)
+        .get();
+
+      for (const doc of snapshot.docs) {
+        addEntry({ id: doc.id, ...doc.data() });
+      }
+    } catch (error) {
+      console.error?.("Failed to load thread context for bot reply", {
+        threadRootCommentId,
+        error: error.message,
+      });
+    }
+  }
+
+  const sorted = Array.from(entries.values()).sort(
+    (a, b) => timestampToMillis(a.createdAt) - timestampToMillis(b.createdAt)
+  );
+
+  const trimmed = sorted.slice(-THREAD_CONTEXT_LIMIT);
+
+  return trimmed.map(({ id, authorName, content }) => ({
+    id,
+    authorName,
+    content,
+  }));
+};
+
 const getCount = async (query) => {
   if (typeof query.count === "function") {
     const snapshot = await query.count().get();
@@ -191,6 +273,8 @@ const fetchContext = async (db, action, bot) => {
 
   const threadRootCommentId = computeThreadRoot(action, parentComment);
 
+  const threadContext = await buildThreadContext(db, parentComment, threadRootCommentId);
+
   const commentsByBotOnPost = await getCount(
     db
       .collection(COMMENTS_COLLECTION)
@@ -212,6 +296,7 @@ const fetchContext = async (db, action, bot) => {
     post: postData,
     parentComment,
     threadRootCommentId,
+    threadContext,
     commentsByBotOnPost,
     repliesByBotInThread,
   };
@@ -402,6 +487,7 @@ const processSingleAction = async ({
       post: contextResult.post,
       parentComment: contextResult.parentComment,
       threadRootCommentId: contextResult.threadRootCommentId,
+      threadContext: contextResult.threadContext,
       commentsByBotOnPost: state.commentsByBotOnPost,
       repliesByBotInThread: state.repliesByBotInThread,
       triggeringComment: contextResult.parentComment,
@@ -409,13 +495,18 @@ const processSingleAction = async ({
     helpers: {
       random: Math.random,
       weightedChoice,
-      generateComment: async ({ mode, post, parentComment }) =>
+      generateComment: async ({ mode, post, parentComment, threadContext }) =>
         generateInCharacterComment({
           openAI,
           bot,
           mode,
           post,
-          parentComment,
+          parentComment: prepareCommentForPrompt(parentComment),
+          threadContext: Array.isArray(threadContext)
+            ? threadContext
+                .map((entry) => prepareCommentForPrompt(entry))
+                .filter(Boolean)
+            : [],
         }),
       maybeAddTypos,
       createCommentOnPost: ({ post, text }) =>

@@ -4,8 +4,8 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
   where,
@@ -82,125 +82,164 @@ const CommunityActivityWidget = ({ className = "", userId = null, title = "Commu
   useEffect(() => {
     if (!isDesktop) {
       setActivityItems([]);
+      setIsLoading(false);
+      setError(null);
       return;
     }
 
+    setIsLoading(true);
+    setError(null);
+    setActivityItems([]);
+
     let isCancelled = false;
+    let postsLoaded = false;
+    let commentsLoaded = false;
+    let latestPosts = [];
+    let latestComments = [];
+    const postTitleCache = new Map();
 
-    const fetchActivity = async () => {
-      setIsLoading(true);
-      setError(null);
-      setActivityItems([]);
-
-      try {
-        const postsCollection = collection(db, "posts");
-        const commentsCollection = collection(db, "comments");
-
-        const postsQuery = userId
-          ? query(
-              postsCollection,
-              where("authorId", "==", userId),
-              orderBy("createdAt", "desc"),
-              limit(MAX_ITEMS)
-            )
-          : query(postsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
-
-        const commentsQuery = userId
-          ? query(
-              commentsCollection,
-              where("authorId", "==", userId),
-              orderBy("createdAt", "desc"),
-              limit(MAX_ITEMS)
-            )
-          : query(commentsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
-
-        const [postsSnapshot, commentsSnapshot] = await Promise.all([
-          getDocs(postsQuery),
-          getDocs(commentsQuery),
-        ]);
-
-        const postActivities = postsSnapshot.docs
-          .map((docSnapshot) => {
-            const data = docSnapshot.data();
-            if (data.status && data.status !== "published") {
-              return null;
-            }
-
-            return {
-              id: docSnapshot.id,
-              type: "post",
-              authorName: data.authorName,
-              postTitle: data.title,
-              postId: docSnapshot.id,
-              createdAt: data.createdAt || null,
-            };
-          })
-          .filter(Boolean);
-
-        const postTitleCache = new Map();
-        const resolvePostTitle = async (postId) => {
-          if (!postId) {
-            return null;
-          }
-
-          if (postTitleCache.has(postId)) {
-            return postTitleCache.get(postId);
-          }
-
-          const postDoc = await getDoc(doc(db, "posts", postId));
-          const title = postDoc.exists() ? postDoc.data().title : null;
-          postTitleCache.set(postId, title);
-          return title;
-        };
-
-        const commentActivities = await Promise.all(
-          commentsSnapshot.docs.map(async (docSnapshot) => {
-            const data = docSnapshot.data();
-            const postTitle = data.postTitle || (await resolvePostTitle(data.postId));
-
-            return {
-              id: docSnapshot.id,
-              type: "comment",
-              authorName: data.authorName,
-              postTitle,
-              postId: data.postId,
-              commentId: docSnapshot.id,
-              createdAt: data.createdAt || null,
-            };
-          })
-        );
-
-        const merged = [...postActivities, ...commentActivities]
-          .filter((item) => item.createdAt)
-          .sort((a, b) => {
-            const aDate = getTimestampDate(a.createdAt);
-            const bDate = getTimestampDate(b.createdAt);
-            const aTime = aDate ? aDate.getTime() : 0;
-            const bTime = bDate ? bDate.getTime() : 0;
-            return bTime - aTime;
-          })
-          .slice(0, MAX_ITEMS);
-
-        if (!isCancelled) {
-          setActivityItems(merged);
-        }
-      } catch (activityError) {
-        console.error("Failed to load community activity:", activityError);
-        if (!isCancelled) {
-          setError("Unable to load community activity right now.");
-          setActivityItems([]);
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false);
-        }
+    const resolvePostTitle = async (postId) => {
+      if (!postId) {
+        return null;
       }
+
+      if (postTitleCache.has(postId)) {
+        return postTitleCache.get(postId);
+      }
+
+      const postDoc = await getDoc(doc(db, "posts", postId));
+      const title = postDoc.exists() ? postDoc.data().title : null;
+      postTitleCache.set(postId, title);
+      return title;
     };
 
-    fetchActivity();
+    const handleError = (activityError) => {
+      console.error("Failed to load community activity:", activityError);
+      if (isCancelled) {
+        return;
+      }
+      setError("Unable to load community activity right now.");
+      setActivityItems([]);
+      setIsLoading(false);
+    };
+
+    const updateCombinedActivities = () => {
+      if (isCancelled || !postsLoaded || !commentsLoaded) {
+        return;
+      }
+
+      const merged = [...latestPosts, ...latestComments]
+        .filter((item) => item.createdAt)
+        .sort((a, b) => {
+          const aDate = getTimestampDate(a.createdAt);
+          const bDate = getTimestampDate(b.createdAt);
+          const aTime = aDate ? aDate.getTime() : 0;
+          const bTime = bDate ? bDate.getTime() : 0;
+          return bTime - aTime;
+        })
+        .slice(0, MAX_ITEMS);
+
+      setActivityItems(merged);
+      setError(null);
+      setIsLoading(false);
+    };
+
+    const postsCollection = collection(db, "posts");
+    const commentsCollection = collection(db, "comments");
+
+    const postsQuery = userId
+      ? query(
+          postsCollection,
+          where("authorId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(MAX_ITEMS)
+        )
+      : query(postsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
+
+    const commentsQuery = userId
+      ? query(
+          commentsCollection,
+          where("authorId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(MAX_ITEMS)
+        )
+      : query(commentsCollection, orderBy("createdAt", "desc"), limit(MAX_ITEMS));
+
+    let unsubscribePosts = () => {};
+    let unsubscribeComments = () => {};
+
+    try {
+      unsubscribePosts = onSnapshot(
+        postsQuery,
+        (snapshot) => {
+          const posts = snapshot.docs
+            .map((docSnapshot) => {
+              const data = docSnapshot.data();
+              if (data.status && data.status !== "published") {
+                return null;
+              }
+
+              return {
+                id: docSnapshot.id,
+                type: "post",
+                authorName: data.authorName,
+                postTitle: data.title,
+                postId: docSnapshot.id,
+                createdAt: data.createdAt || null,
+              };
+            })
+            .filter(Boolean);
+
+          latestPosts = posts;
+          postsLoaded = true;
+          updateCombinedActivities();
+        },
+        handleError
+      );
+
+      unsubscribeComments = onSnapshot(
+        commentsQuery,
+        async (snapshot) => {
+          try {
+            const comments = await Promise.all(
+              snapshot.docs.map(async (docSnapshot) => {
+                const data = docSnapshot.data();
+                const postTitle =
+                  data.postTitle || (await resolvePostTitle(data.postId));
+
+                return {
+                  id: docSnapshot.id,
+                  type: "comment",
+                  authorName: data.authorName,
+                  postTitle,
+                  postId: data.postId,
+                  commentId: docSnapshot.id,
+                  createdAt: data.createdAt || null,
+                };
+              })
+            );
+
+            latestComments = comments;
+            commentsLoaded = true;
+            updateCombinedActivities();
+          } catch (commentError) {
+            handleError(commentError);
+          }
+        },
+        handleError
+      );
+    } catch (subscriptionError) {
+      handleError(subscriptionError);
+    }
 
     return () => {
       isCancelled = true;
+      if (typeof unsubscribePosts === "function") {
+        unsubscribePosts();
+      }
+      if (typeof unsubscribeComments === "function") {
+        unsubscribeComments();
+      }
     };
   }, [isDesktop, userId]);
 

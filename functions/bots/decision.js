@@ -153,6 +153,17 @@ export const handlePendingAction = async ({
 
   const chosenAction = weightedChoice(weights) || "ignore";
 
+  logger?.info?.("Bot pending action decision", {
+    botUid: bot.uid,
+    actionType: action.type,
+    chosenAction,
+    canComment,
+    canReply,
+    hasParentComment: Boolean(context.parentComment?.id),
+    parentCommentId: context.parentComment?.id ?? null,
+    threadRootCommentId: context.threadRootCommentId ?? null,
+  });
+
   switch (chosenAction) {
     case "commentOnPost": {
       if (!canComment || !context.post) {
@@ -166,6 +177,7 @@ export const handlePendingAction = async ({
         mode: "TOP_LEVEL",
         post: context.post,
         parentComment: null,
+        threadContext: context.threadContext,
       });
       const finalComment = maybeAddTypos(bot, rawComment);
       const commentId = await createCommentOnPost({
@@ -173,6 +185,12 @@ export const handlePendingAction = async ({
         post: context.post,
         text: finalComment,
         action,
+      });
+      logger?.info?.("Bot top-level comment created", {
+        botUid: bot.uid,
+        postId: context.post?.id,
+        commentId,
+        actionType: action.type,
       });
       return {
         status: "engaged",
@@ -183,26 +201,82 @@ export const handlePendingAction = async ({
       };
     }
     case "commentOnComment": {
-      if (!canReply || !context.parentComment) {
-        return { status: "ignored", reason: "reply_not_allowed" };
+      const targetComment =
+        context.parentComment && context.parentComment.id ? context.parentComment : null;
+
+      if (!canReply || !targetComment) {
+        logger?.info?.("Bot reply fallback to top-level", {
+          botUid: bot.uid,
+          postId: context.post?.id,
+          reason: !canReply ? "reply_not_allowed" : "missing_target_comment",
+          contextParentHasId: Boolean(context.parentComment?.id),
+          chosenAction,
+        });
+        if (!canComment || !context.post) {
+          return { status: "ignored", reason: "reply_not_allowed" };
+        }
+        if (!generateComment || !createCommentOnPost) {
+          throw new Error("Comment helpers not provided");
+        }
+        const rawComment = await generateComment({
+          bot,
+          mode: "TOP_LEVEL",
+          post: context.post,
+          parentComment: null,
+          threadContext: context.threadContext,
+        });
+        const finalComment = maybeAddTypos(bot, rawComment);
+        const commentId = await createCommentOnPost({
+          bot,
+          post: context.post,
+          text: finalComment,
+          action,
+        });
+        return {
+          status: "engaged",
+          action: "commentOnComment",
+          commentId,
+          effectiveProb,
+          relevanceBoost,
+          fallbackToTopLevel: true,
+        };
       }
+
       if (!generateComment || !createReplyToComment) {
         throw new Error("Reply helpers not provided");
       }
+      logger?.info?.("Bot reply path selected", {
+        botUid: bot.uid,
+        postId: context.post?.id,
+        parentCommentId: targetComment.id,
+        threadRootCommentId: context.threadRootCommentId ?? null,
+        threadContextSize: Array.isArray(context.threadContext)
+          ? context.threadContext.length
+          : 0,
+        chosenAction,
+      });
       const rawComment = await generateComment({
         bot,
         mode: "REPLY",
         post: context.post,
-        parentComment: context.parentComment,
+        parentComment: targetComment,
+        threadContext: context.threadContext,
       });
       const finalComment = maybeAddTypos(bot, rawComment);
+      // Bot reply path: respond to a specific comment and set parentCommentId so UI nests correctly.
       const commentId = await createReplyToComment({
         bot,
         post: context.post,
-        parentComment: context.parentComment,
+        parentComment: targetComment,
         threadRootCommentId: context.threadRootCommentId,
         text: finalComment,
         action,
+      });
+      logger?.info?.("Bot reply created", {
+        botUid: bot.uid,
+        postId: context.post?.id,
+        parentCommentId: targetComment.id,
+        commentId,
       });
       return {
         status: "engaged",
@@ -229,12 +303,13 @@ export const handlePendingAction = async ({
       }
 
       const replyMode =
-        canReply && context.parentComment ? "REPLY" : "TOP_LEVEL";
+        canReply && context.parentComment && context.parentComment.id ? "REPLY" : "TOP_LEVEL";
       const rawComment = await generateComment({
         bot,
         mode: replyMode,
         post: context.post,
         parentComment: replyMode === "REPLY" ? context.parentComment : null,
+        threadContext: context.threadContext,
       });
       const finalComment = maybeAddTypos(bot, rawComment);
 

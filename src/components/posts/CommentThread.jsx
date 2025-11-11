@@ -474,6 +474,22 @@ const CommentThread = ({
   const [deletingCommentId, setDeletingCommentId] = useState(null);
 
   const canReply = Boolean(currentUser);
+  const currentUserId = currentUser?.uid ?? null;
+  const isAdmin =
+    currentUser?.role === "admin" ||
+    currentUser?.isAdmin === true ||
+    currentUser?.role === "ADMIN";
+
+  const isCommentAuthor = (authorId) =>
+    Boolean(currentUserId) && Boolean(authorId) && currentUserId === authorId;
+
+  const canEditComment = (authorId) => isCommentAuthor(authorId);
+
+  const canDeleteComment = (authorId) =>
+    Boolean(currentUserId) && (isCommentAuthor(authorId) || isAdmin);
+
+  const canManageComment = (authorId) =>
+    canEditComment(authorId) || canDeleteComment(authorId);
 
   const handleReplyClick = (commentId) => {
     if (!canReply) return;
@@ -518,6 +534,10 @@ const CommentThread = ({
   );
 
   const handleEditClick = (comment) => {
+    if (!canEditComment(comment.authorId)) {
+      return;
+    }
+
     setActiveReplyTargetId(null);
     setReplyDraft("");
     setActiveEditTargetId((prev) => {
@@ -592,7 +612,9 @@ const CommentThread = ({
     />
   );
 
-  const currentUserId = currentUser?.uid ?? null;
+  const parentCanEdit = canEditComment(parentComment.authorId);
+  const parentCanDelete = canDeleteComment(parentComment.authorId);
+  const parentCanManage = canManageComment(parentComment.authorId);
 
   return (
     <article
@@ -607,11 +629,14 @@ const CommentThread = ({
         canReply={canReply}
         isReply={false}
         isReplyFormOpen={activeReplyTargetId === parentComment.id}
-        canManage={currentUserId === parentComment.authorId}
+        canManage={parentCanManage}
         onEditClick={() => handleEditClick(parentComment)}
         onDeleteClick={() => handleDelete(parentComment.id)}
-        isEditDisabled={isEditSubmitting || deletingCommentId !== null}
+        isEditDisabled={
+          !parentCanEdit || isEditSubmitting || deletingCommentId !== null
+        }
         isDeleteDisabled={
+          !parentCanDelete ||
           isEditSubmitting ||
           isReplySubmitting ||
           (deletingCommentId !== null && deletingCommentId !== parentComment.id)
@@ -630,33 +655,46 @@ const CommentThread = ({
             darkMode ? "border-gray-800" : "border-gray-200"
           } pl-6 md:pl-8`}
         >
-          {replies.map((reply) => (
-            <div key={reply.id} className="relative">
-              <CommentItem
-                comment={reply}
-                darkMode={darkMode}
-                onReplyClick={() => handleReplyClick(reply.id)}
-                canReply={canReply}
-                isReply
-                isReplyFormOpen={activeReplyTargetId === reply.id}
-                canManage={currentUserId === reply.authorId}
-                onEditClick={() => handleEditClick(reply)}
-                onDeleteClick={() => handleDelete(reply.id)}
-                isEditDisabled={isEditSubmitting || deletingCommentId !== null}
-                isDeleteDisabled={
-                  isEditSubmitting ||
-                  isReplySubmitting ||
-                  (deletingCommentId !== null && deletingCommentId !== reply.id)
-                }
-                isReplyDisabled={isEditSubmitting || deletingCommentId !== null}
-                isDeleting={deletingCommentId === reply.id}
-              />
-              {activeReplyTargetId === reply.id && canReply && renderReplyForm(reply.id)}
-              {currentUserId === reply.authorId &&
-                activeEditTargetId === reply.id &&
-                renderEditForm(reply.id)}
-            </div>
-          ))}
+          {replies.map((reply) => {
+            const replyCanEdit = canEditComment(reply.authorId);
+            const replyCanDelete = canDeleteComment(reply.authorId);
+            const replyCanManage = canManageComment(reply.authorId);
+            return (
+              <div key={reply.id} className="relative">
+                <CommentItem
+                  comment={reply}
+                  darkMode={darkMode}
+                  onReplyClick={() => handleReplyClick(reply.id)}
+                  canReply={canReply}
+                  isReply
+                  isReplyFormOpen={activeReplyTargetId === reply.id}
+                  canManage={replyCanManage}
+                  onEditClick={() => handleEditClick(reply)}
+                  onDeleteClick={() => handleDelete(reply.id)}
+                  isEditDisabled={
+                    !replyCanEdit ||
+                    isEditSubmitting ||
+                    deletingCommentId !== null
+                  }
+                  isDeleteDisabled={
+                    !replyCanDelete ||
+                    isEditSubmitting ||
+                    isReplySubmitting ||
+                    (deletingCommentId !== null &&
+                      deletingCommentId !== reply.id)
+                  }
+                  isReplyDisabled={
+                    isEditSubmitting || deletingCommentId !== null
+                  }
+                  isDeleting={deletingCommentId === reply.id}
+                />
+                {activeReplyTargetId === reply.id && canReply && renderReplyForm(reply.id)}
+                {currentUserId === reply.authorId &&
+                  activeEditTargetId === reply.id &&
+                  renderEditForm(reply.id)}
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -521,7 +521,12 @@ const PostDetail = () => {
       return;
     }
 
-    if (commentToDelete.authorId !== user.uid) {
+    const isAdmin =
+      user?.role === "admin" ||
+      user?.role === "ADMIN" ||
+      user?.isAdmin === true;
+
+    if (!isAdmin && commentToDelete.authorId !== user.uid) {
       console.warn("User attempted to delete a comment they do not own:", commentId);
       return;
     }

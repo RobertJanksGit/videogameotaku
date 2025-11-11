@@ -240,6 +240,11 @@ const Layout = ({ children }) => {
     setShowAuthModal(false);
   };
 
+  const handleLogoClick = (event) => {
+    event.preventDefault();
+    window.location.assign("/");
+  };
+
   const handleLogout = async () => {
     try {
       await logout();
@@ -278,6 +283,7 @@ const Layout = ({ children }) => {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
             <Link
               to="/"
+              onClick={handleLogoClick}
               className="text-xl font-semibold text-white hover:text-gray-300 transition-colors"
             >
               VideoGameOtaku
