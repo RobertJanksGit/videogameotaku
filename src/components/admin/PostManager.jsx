@@ -21,6 +21,11 @@ import {
 import PropTypes from "prop-types";
 import MarkdownToolbar from "../posts/MarkdownToolbar";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import Modal from "../common/Modal";
+import {
+  validateEmbedUrl,
+  buildEmbedToken,
+} from "../../utils/embedTokens";
 
 const PostManager = ({ darkMode }) => {
   const { user } = useAuth();
@@ -38,6 +43,9 @@ const PostManager = ({ darkMode }) => {
   const [imagePreview, setImagePreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const contentTextareaRef = useRef(null);
+  const [isEmbedModalOpen, setIsEmbedModalOpen] = useState(false);
+  const [embedUrl, setEmbedUrl] = useState("");
+  const [embedError, setEmbedError] = useState("");
 
   // Add admin check
   useEffect(() => {
@@ -102,6 +110,57 @@ const PostManager = ({ darkMode }) => {
         setIsUploading(false);
       }
     }
+  };
+
+  const resetEmbedState = () => {
+    setEmbedUrl("");
+    setEmbedError("");
+  };
+
+  const insertAtCursor = (text) => {
+    const textarea = contentTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const content = currentPost.content;
+    const start = textarea.selectionStart ?? content.length;
+    const end = textarea.selectionEnd ?? content.length;
+    const before = content.slice(0, start);
+    const after = content.slice(end);
+    const nextContent = `${before}${text}${after}`;
+
+    setCurrentPost((prev) => ({
+      ...prev,
+      content: nextContent,
+    }));
+
+    setTimeout(() => {
+      const cursorPosition = start + text.length;
+      textarea.focus();
+      textarea.setSelectionRange(cursorPosition, cursorPosition);
+    }, 0);
+  };
+
+  const handleEmbedSubmit = (e) => {
+    e.preventDefault();
+    const trimmedUrl = embedUrl.trim();
+    if (!trimmedUrl) {
+      setEmbedError("Please paste a social media URL.");
+      return;
+    }
+
+    const result = validateEmbedUrl(trimmedUrl);
+    if (!result.ok) {
+      setEmbedError(result.errorMessage);
+      return;
+    }
+
+    const token = buildEmbedToken(result.provider, result.normalizedUrl);
+    // Embed tokens are plain text markers that will be parsed on render.
+    insertAtCursor(`\n${token}\n`);
+    setIsEmbedModalOpen(false);
+    resetEmbedState();
   };
 
   // Upload image to Firebase Storage
@@ -509,6 +568,33 @@ const PostManager = ({ darkMode }) => {
                 className="hidden"
               />
             </label>
+            <button
+              type="button"
+              onClick={() => {
+                resetEmbedState();
+                setIsEmbedModalOpen(true);
+              }}
+              className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md ${
+                darkMode
+                  ? "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              <svg
+                className="w-5 h-5 mr-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m2-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              Insert Embed
+            </button>
             {isUploading && (
               <span
                 className={`text-sm ${
@@ -539,6 +625,7 @@ const PostManager = ({ darkMode }) => {
             required
           />
         </div>
+
 
         <div className="flex justify-end">
           {isEditing && (
@@ -577,6 +664,81 @@ const PostManager = ({ darkMode }) => {
           </button>
         </div>
       </form>
+
+      <Modal
+        isOpen={isEmbedModalOpen}
+        onClose={() => {
+          setIsEmbedModalOpen(false);
+          resetEmbedState();
+        }}
+        title="Insert Social Post"
+      >
+        <form onSubmit={handleEmbedSubmit} className="space-y-4">
+          <div>
+            <label
+              htmlFor="embedUrl"
+              className={`block text-sm font-medium ${
+                darkMode ? "text-gray-200" : "text-gray-700"
+              }`}
+            >
+              Paste social URL
+            </label>
+            <input
+              id="embedUrl"
+              type="url"
+              placeholder="https://x.com/..."
+              value={embedUrl}
+              onChange={(event) => {
+                setEmbedUrl(event.target.value);
+                if (embedError) {
+                  setEmbedError("");
+                }
+              }}
+              className={`mt-1 block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+                darkMode
+                  ? "bg-[#1C2128] border-gray-700 text-white"
+                  : "border-gray-300"
+              }`}
+              required
+            />
+          </div>
+          {embedError && (
+            <p
+              className={`text-sm ${
+                darkMode ? "text-red-400" : "text-red-600"
+              }`}
+            >
+              {embedError}
+            </p>
+          )}
+          <div className="flex justify-end space-x-3">
+            <button
+              type="button"
+              onClick={() => {
+                setIsEmbedModalOpen(false);
+                resetEmbedState();
+              }}
+              className={`px-4 py-2 text-sm font-medium rounded-md ${
+                darkMode
+                  ? "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className={`px-4 py-2 text-sm font-medium text-white rounded-md ${
+                darkMode
+                  ? "bg-[#316DCA] hover:bg-[#2760AA]"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              Insert Embed
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       <div className="mt-8 mb-4 flex items-center justify-between">
         <h2
