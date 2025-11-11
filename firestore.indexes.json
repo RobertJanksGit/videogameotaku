@@ -50,6 +50,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "publishAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "platforms", "arrayConfig": "CONTAINS" },
         { "fieldPath": "totalVotes", "order": "DESCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }

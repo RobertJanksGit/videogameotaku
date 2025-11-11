@@ -46,6 +46,7 @@ export const PendingActionType = Object.freeze({
  * @property {string} responseStyle
  * @property {BotBehavior} behavior
  * @property {Record<string, number>=} topicPreferences
+ * @property {string=} avatarUrl
  * @property {number=} lastEngagedAt
  */
 
@@ -99,6 +100,7 @@ export const toBotProfile = (doc) => {
     flaw: data.flaw ?? "",
     motivation: data.motivation ?? "",
     responseStyle: data.responseStyle ?? "",
+    avatarUrl: data.avatarUrl ?? data.photoURL ?? null,
     behavior: data.behavior ?? {},
     topicPreferences: data.topicPreferences ?? undefined,
     lastEngagedAt:

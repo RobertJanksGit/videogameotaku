@@ -567,44 +567,9 @@ const fetchWithTimeout = async (
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const MAX_NEWS_POST_DELAY_MS = 3.5 * 60 * 60 * 1000; // 3 hours 30 minutes
-const NEWS_POST_DELAY_BUFFER_SECONDS = 60;
+const MAX_NEWS_POST_DELAY_MS = 1.5 * 60 * 60 * 1000; // 1 hour 30 minutes
 const generateRandomNewsDelayMs = () =>
   Math.floor(Math.random() * (MAX_NEWS_POST_DELAY_MS + 1));
-
-const applyArticleDelay = async (requestedDelayMs, functionStart) => {
-  const elapsedMs = Date.now() - functionStart;
-  const remainingExecutionMs = Math.max(
-    0,
-    (FUNCTION_TIMEOUT - NEWS_POST_DELAY_BUFFER_SECONDS) * 1000 - elapsedMs
-  );
-  const appliedDelayMs = Math.min(requestedDelayMs, remainingExecutionMs);
-
-  if (appliedDelayMs > 0) {
-    console.log(
-      `Waiting ${Math.round(
-        appliedDelayMs / 1000
-      )} seconds before posting (requested ${Math.round(
-        requestedDelayMs / 1000
-      )} seconds).`
-    );
-    await sleep(appliedDelayMs);
-  }
-
-  if (requestedDelayMs > appliedDelayMs) {
-    console.log(
-      `Truncated delay from ${Math.round(
-        requestedDelayMs / 1000
-      )}s to ${Math.round(
-        appliedDelayMs / 1000
-      )}s due to remaining execution time constraints (${Math.round(
-        remainingExecutionMs / 1000
-      )}s left).`
-    );
-  }
-
-  return appliedDelayMs;
-};
 
 const compressImageForModeration = async (
   buffer,
@@ -1058,6 +1023,17 @@ export const validatePost = onDocumentCreated(
     // Skip validation for already published posts
     if (data.status === "published") {
       console.log(`Post ${postId} is already published, skipping validation`);
+      return;
+    }
+
+    if (data.status === "scheduled") {
+      const scheduledTime =
+        data.publishAt && typeof data.publishAt.toDate === "function"
+          ? data.publishAt.toDate().toISOString()
+          : data.publishAt ?? "future";
+      console.log(
+        `Post ${postId} is scheduled for ${scheduledTime}, skipping validation until publish`
+      );
       return;
     }
 
@@ -2112,6 +2088,72 @@ export const fetchAndSavePosts = onSchedule(
   }
 );
 
+export const publishScheduledAggregatorPosts = onSchedule(
+  {
+    schedule: "* * * * *",
+    maxInstances: 1,
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    region: "us-central1",
+    timeZone: "UTC",
+  },
+  async () => {
+    let processed = 0;
+    const pageSize = 20;
+
+    while (true) {
+      const nowTimestamp = admin.firestore.Timestamp.now();
+      const snapshot = await db
+        .collection("posts")
+        .where("status", "==", "scheduled")
+        .where("publishAt", "<=", nowTimestamp)
+        .orderBy("publishAt", "asc")
+        .limit(pageSize)
+        .get();
+
+      if (snapshot.empty) {
+        break;
+      }
+
+      const batch = db.batch();
+      const publishTimestamp = admin.firestore.Timestamp.now();
+
+      snapshot.docs.forEach((doc) => {
+        const scheduledPublishAt = doc.get("publishAt") || null;
+
+        const updateData = {
+          status: "published",
+          createdAt: publishTimestamp,
+          updatedAt: publishTimestamp,
+          publishedAt: publishTimestamp,
+        };
+
+        if (scheduledPublishAt) {
+          updateData.scheduledPublishAt = scheduledPublishAt;
+          updateData.publishAt = admin.firestore.FieldValue.delete();
+        }
+
+        batch.update(doc.ref, updateData);
+      });
+
+      await batch.commit();
+      processed += snapshot.size;
+
+      if (snapshot.size < pageSize) {
+        break;
+      }
+    }
+
+    if (processed > 0) {
+      console.log(
+        `publishScheduledAggregatorPosts published ${processed} scheduled posts`
+      );
+    } else {
+      console.log("publishScheduledAggregatorPosts found no posts to publish");
+    }
+  }
+);
+
 // Helper function to initialize system user with retry
 async function initializeSystemUser(targetUserId, maxRetries = 3) {
   if (!targetUserId) {
@@ -2250,10 +2292,23 @@ async function processArticleBatch(
         continue;
       }
 
-      const requestedDelayMs = generateRandomNewsDelayMs();
-      const appliedDelayMs = await applyArticleDelay(requestedDelayMs, startTime);
-      article.requestedDelayMs = requestedDelayMs;
-      article.appliedDelayMs = appliedDelayMs;
+      const publishDelayMs = generateRandomNewsDelayMs();
+      const publishAtTimestamp =
+        publishDelayMs > 0
+          ? admin.firestore.Timestamp.fromMillis(Date.now() + publishDelayMs)
+          : null;
+      article.publishDelayMs = publishDelayMs;
+      if (publishAtTimestamp) {
+        console.log(
+          `Scheduling article "${article.title}" to publish at ${publishAtTimestamp
+            .toDate()
+            .toISOString()}`
+        );
+      } else {
+        console.log(
+          `Publishing article "${article.title}" immediately (no delay)`
+        );
+      }
 
       // Process image
       console.log(`Processing image for article: ${article.title}`);
@@ -2278,7 +2333,9 @@ async function processArticleBatch(
 
       // Create post only if we have valid image data
       if (article.imageData) {
-        await createPost(article, systemUser, embedding);
+        await createPost(article, systemUser, embedding, {
+          publishAt: publishAtTimestamp,
+        });
         onSuccess(article);
       } else {
         console.log(
@@ -2381,7 +2438,9 @@ async function generateEmbedding(article) {
   }
 }
 
-async function createPost(article, SYSTEM_USER, embedding) {
+async function createPost(article, SYSTEM_USER, embedding, options = {}) {
+  const { publishAt: requestedPublishAt } = options;
+
   // Validate and sanitize content
   const sanitizedContent = sanitizeContent(
     `${article.summary}\n\n[Source](${article.sourceUrl})`
@@ -2395,6 +2454,11 @@ async function createPost(article, SYSTEM_USER, embedding) {
 
   // Create post
   const timestamp = admin.firestore.Timestamp.now();
+  const publishAtIsTimestamp =
+    requestedPublishAt instanceof admin.firestore.Timestamp;
+  const isScheduled = publishAtIsTimestamp;
+  const publishAt = publishAtIsTimestamp ? requestedPublishAt : null;
+
   const postData = {
     title: article.title,
     content: sanitizedContent,
@@ -2414,11 +2478,24 @@ async function createPost(article, SYSTEM_USER, embedding) {
     usersThatLiked: [],
     usersThatDisliked: [],
     totalVotes: 0,
-    status: "published",
+    status: isScheduled ? "scheduled" : "published",
     type: "news",
     lastEditedBy: SYSTEM_USER.name,
     lastEditedById: SYSTEM_USER.id,
   };
+
+  if (article.imageData) {
+    postData.imageUrl = article.imageData.url || null;
+    postData.imagePath = article.imageData.path || null;
+    postData.imageContentType = article.imageData.contentType || null;
+  }
+
+  if (isScheduled) {
+    postData.publishAt = publishAt;
+    postData.scheduledAt = timestamp;
+  } else {
+    postData.publishedAt = timestamp;
+  }
 
   // Create the post
   const docRef = await db.collection("posts").add(postData);
@@ -2466,7 +2543,6 @@ export const testFetchAndSavePosts = onRequest(
 
     console.log("Starting test endpoint execution");
     try {
-      const functionStartTime = Date.now();
       let successCount = 0;
       let errorCount = 0;
 
@@ -2512,13 +2588,25 @@ export const testFetchAndSavePosts = onRequest(
             continue;
           }
 
-          const requestedDelayMs = generateRandomNewsDelayMs();
-          const appliedDelayMs = await applyArticleDelay(
-            requestedDelayMs,
-            functionStartTime
-          );
-          article.requestedDelayMs = requestedDelayMs;
-          article.appliedDelayMs = appliedDelayMs;
+          const publishDelayMs = generateRandomNewsDelayMs();
+          const publishAtTimestamp =
+            publishDelayMs > 0
+              ? admin.firestore.Timestamp.fromMillis(
+                  Date.now() + publishDelayMs
+                )
+              : null;
+          article.publishDelayMs = publishDelayMs;
+          if (publishAtTimestamp) {
+            console.log(
+              `Scheduling article "${article.title}" to publish at ${publishAtTimestamp
+                .toDate()
+                .toISOString()}`
+            );
+          } else {
+            console.log(
+              `Publishing article "${article.title}" immediately (no delay)`
+            );
+          }
 
           // Handle image if it exists
           let imageData = null;
@@ -2526,6 +2614,7 @@ export const testFetchAndSavePosts = onRequest(
             console.log(`Processing image for article: ${article.title}`);
             try {
               imageData = await processImage(article.imageUrl, systemUser);
+              article.imageData = imageData;
               await cleanupMemory(); // Clean up after image processing
             } catch (error) {
               console.error(
@@ -2535,60 +2624,14 @@ export const testFetchAndSavePosts = onRequest(
             }
           }
 
-          // Validate and sanitize content before creating post
-          const sanitizedContent = sanitizeContent(
-            `${article.summary}\n\n[Source](${article.sourceUrl})`
-          );
-          await validateContent(article.title, sanitizedContent);
+          const embedding = await generateEmbedding(article);
+          await cleanupMemory();
 
-          // Check rate limit before creating post
-          if (!(await checkRateLimit(systemUser.id, "system"))) {
-            throw new Error("Rate limit exceeded");
-          }
-
-          // Create post with explicit system user data
-          const timestamp = admin.firestore.Timestamp.now();
-          const postData = {
-            title: article.title,
-            content: sanitizedContent,
-            category: "news",
-            platforms: article.platforms || [],
-            authorId: systemUser.id,
-            authorName: systemUser.name,
-            authorEmail: systemUser.email,
-            authorPhotoURL: systemUser.photoURL,
-            imageUrl: imageData?.url || null,
-            imagePath: imageData?.path || null,
-            imageContentType: imageData?.contentType || null,
-            sourceUrl: article.sourceUrl,
-            sourceName: "Gaming News Aggregator",
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            usersThatLiked: [],
-            usersThatDisliked: [],
-            totalVotes: 0,
-            status: "published",
-            type: "news",
-            lastEditedBy: systemUser.name,
-            lastEditedById: systemUser.id,
-          };
-
-          // Create the post
-          const docRef = await db.collection("posts").add(postData);
-
-          // Use the same standardized text that was used for duplicate checking
-          const standardizedText = getStandardizedText(
-            article.title,
-            article.summary
-          );
-          const embedding = await getEmbeddings([standardizedText]);
-
-          await db.collection("postEmbeddings").doc(docRef.id).set({
-            postId: docRef.id,
-            embedding: embedding[0],
-            standardizedText, // Store the text used for embedding for debugging
-            createdAt: timestamp,
+          await createPost(article, systemUser, embedding, {
+            publishAt: publishAtTimestamp,
           });
+
+          // createPost handles validation, rate limiting, and embedding storage
 
           console.log(
             `Successfully created post for article "${article.title}"`

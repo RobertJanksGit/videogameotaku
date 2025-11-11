@@ -21,6 +21,8 @@ import { generateInCharacterComment } from "./commentGenerator.js";
 
 const COMMENTS_COLLECTION = "comments";
 const POSTS_COLLECTION = "posts";
+const USERS_COLLECTION = "users";
+const NOTIFICATIONS_COLLECTION = "notifications";
 
 const getCount = async (query) => {
   if (typeof query.count === "function") {
@@ -40,6 +42,128 @@ const computeThreadRoot = (action, parentComment) => {
     parentComment.id ||
     null
   );
+};
+
+const buildNotificationMessage = ({ type, senderName, postTitle }) => {
+  switch (type) {
+    case "post_comment":
+      if (postTitle) {
+        return `${senderName} commented on your post "${postTitle}"`;
+      }
+      return `${senderName} commented on your post`;
+    case "comment_reply":
+      return `${senderName} replied to your comment`;
+    default:
+      return "";
+  }
+};
+
+const shouldSendPreference = (prefs = {}, key) => prefs?.[key] !== false;
+
+const fetchUserNotificationPrefs = async (db, userId) => {
+  if (!userId) return null;
+  const snap = await db.collection(USERS_COLLECTION).doc(userId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() || {};
+  return data.notificationPrefs || {};
+};
+
+const createNotification = async (db, payload) => {
+  await db.collection(NOTIFICATIONS_COLLECTION).add({
+    ...payload,
+    read: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+};
+
+const notifyPostAuthorAboutComment = async ({ db, bot, post, commentId }) => {
+  const recipientId = post?.authorId;
+  if (!recipientId || recipientId === bot.uid) {
+    return;
+  }
+
+  try {
+    const prefs = await fetchUserNotificationPrefs(db, recipientId);
+    if (!shouldSendPreference(prefs, "postComments")) {
+      return;
+    }
+
+    const senderName = bot.userName || "Bot";
+    const message = buildNotificationMessage({
+      type: "post_comment",
+      senderName,
+      postTitle: post?.title ?? "",
+    });
+
+    if (!message) {
+      return;
+    }
+
+    await createNotification(db, {
+      recipientId,
+      senderId: bot.uid,
+      senderName,
+      message,
+      type: "post_comment",
+      link: `/post/${post.id}`,
+      postId: post.id,
+      commentId,
+    });
+  } catch (error) {
+    console.error("Failed to create bot post comment notification", {
+      postId: post?.id,
+      commentId,
+      error: error.message,
+    });
+  }
+};
+
+const notifyParentCommentAuthor = async ({
+  db,
+  bot,
+  post,
+  parentComment,
+  commentId,
+}) => {
+  const recipientId = parentComment?.authorId;
+  if (!recipientId || recipientId === bot.uid) {
+    return;
+  }
+
+  try {
+    const prefs = await fetchUserNotificationPrefs(db, recipientId);
+    if (!shouldSendPreference(prefs, "commentReplies")) {
+      return;
+    }
+
+    const senderName = bot.userName || "Bot";
+    const message = buildNotificationMessage({
+      type: "comment_reply",
+      senderName,
+    });
+
+    if (!message) {
+      return;
+    }
+
+    await createNotification(db, {
+      recipientId,
+      senderId: bot.uid,
+      senderName,
+      message,
+      type: "comment_reply",
+      link: `/post/${post.id}`,
+      postId: post.id,
+      commentId,
+    });
+  } catch (error) {
+    console.error("Failed to create bot reply notification", {
+      postId: post?.id,
+      parentCommentId: parentComment?.id,
+      commentId,
+      error: error.message,
+    });
+  }
 };
 
 const fetchContext = async (db, action, bot) => {
@@ -152,6 +276,13 @@ const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
 
   state.commentsByBotOnPost += 1;
 
+  await notifyPostAuthorAboutComment({
+    db,
+    bot,
+    post,
+    commentId: commentRef.id,
+  });
+
   return commentRef.id;
 };
 
@@ -197,6 +328,14 @@ const createReplyHelper = async (
 
   state.commentsByBotOnPost += 1;
   state.repliesByBotInThread += 1;
+
+  await notifyParentCommentAuthor({
+    db,
+    bot,
+    post,
+    parentComment,
+    commentId: commentRef.id,
+  });
 
   return commentRef.id;
 };

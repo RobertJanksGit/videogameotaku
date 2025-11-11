@@ -421,11 +421,35 @@ const PostDetail = () => {
 
       // Update both the new reply and the parent comment's replyCount in local state
       setComments((prevComments) => {
-        const updatedComments = prevComments.map((comment) =>
-          comment.id === parentId
-            ? { ...comment, replyCount: (comment.replyCount || 0) + 1 }
-            : comment
+        const replyAlreadyPresent = prevComments.some(
+          (comment) => comment.id === newReply.id
         );
+
+        const updatedComments = prevComments.map((comment) => {
+          if (comment.id !== parentId) {
+            return comment;
+          }
+
+          if (replyAlreadyPresent) {
+            return comment;
+          }
+
+          return {
+            ...comment,
+            replyCount: (comment.replyCount || 0) + 1,
+          };
+        });
+
+        if (replyAlreadyPresent) {
+          const seenIds = new Set();
+          return updatedComments.filter((comment) => {
+            if (seenIds.has(comment.id)) {
+              return false;
+            }
+            seenIds.add(comment.id);
+            return true;
+          });
+        }
 
         return [...updatedComments, newReply];
       });
