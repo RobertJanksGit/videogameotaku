@@ -199,7 +199,7 @@ const RAW_BOT_PROFILES = [
   {
     uid: "bot-brofessor420",
     userName: "brofessor420",
-    avatarUrl: AVATAR_POOL[1],
+    avatarUrl: AVATAR_POOL[7],
     isActive: true,
     age: 23,
     sex: "male",
@@ -1287,7 +1287,7 @@ const RAW_BOT_PROFILES = [
   {
     uid: "bot-mira-bloom",
     userName: "MiraBloom",
-    avatarUrl: AVATAR_POOL[7],
+    avatarUrl: AVATAR_POOL[1],
     isActive: true,
     sex: "female",
 
