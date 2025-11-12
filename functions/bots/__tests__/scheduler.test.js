@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runBotActivityForTick } from "../scheduler.js";
 import { ScheduledBotActionType } from "../models.js";
 
@@ -81,6 +81,62 @@ describe("runBotActivityForTick - direct replies", () => {
 
     expect(result.status).toBe("cooldown");
     expect(result.scheduledAction).toBeUndefined();
+  });
+});
+
+describe("runBotActivityForTick - action weight normalization", () => {
+  it("schedules a like when only likePostOnly weight is provided", async () => {
+    const now = Date.now();
+    const bot = {
+      uid: "bot-like",
+      userName: "LikeOnly",
+      likes: ["news"],
+      behavior: {
+        baseResponseProbability: 1,
+        postDelayMinutes: { min: 1, max: 1 },
+        actionWeights: {
+          commentOnPost: 0,
+          replyToComment: 0,
+          likePostOnly: 0.6,
+          likeComment: 0,
+          ignore: 0,
+        },
+      },
+    };
+
+    const posts = [
+      {
+        id: "post-like-1",
+        authorId: "user-123",
+        createdAtMs: now - 60 * 1000,
+        title: "breaking news",
+        content: "latest update",
+        summary: "",
+        tags: [],
+        text: "breaking news latest update",
+      },
+    ];
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const result = await runBotActivityForTick({
+        db: {},
+        bot,
+        runtimeState: null,
+        now,
+        posts,
+        notifications: [],
+      });
+
+      expect(result.status).toBe("scheduled");
+      expect(result.scheduledAction).toBeTruthy();
+      expect(result.scheduledAction.type).toBe(
+        ScheduledBotActionType.LIKE_POST
+      );
+      expect(result.scheduledAction.postId).toBe(posts[0].id);
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 });
 

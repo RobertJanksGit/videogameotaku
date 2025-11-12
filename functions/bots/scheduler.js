@@ -460,6 +460,23 @@ const choosePostCandidate = (bot, candidates, now) => {
   return topSlice[Math.floor(Math.random() * topSlice.length)]?.post ?? null;
 };
 
+const normalizeActionWeights = (weights = {}) => {
+  const normalized = { ...weights };
+  if (normalized.likePost === undefined || normalized.likePost === null) {
+    const fallbacks = [normalized.likePostOnly, normalized.likeAndComment];
+    for (const fallback of fallbacks) {
+      if (Number.isFinite(fallback)) {
+        normalized.likePost = fallback;
+        break;
+      }
+    }
+    if (normalized.likePost === undefined || normalized.likePost === null) {
+      normalized.likePost = 0;
+    }
+  }
+  return normalized;
+};
+
 const chooseNotificationCandidate = (bot, candidates, now) => {
   if (!candidates.length) return null;
 
@@ -655,7 +672,7 @@ export const runBotActivityForTick = async ({
     }
   }
 
-  const weights = behavior.actionWeights || {};
+  const weights = normalizeActionWeights(behavior.actionWeights || {});
   const weightedActions = {
     commentOnPost:
       postCandidates.length > 0

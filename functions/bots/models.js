@@ -26,11 +26,15 @@ export const PendingActionType = Object.freeze({
  * @property {{ min: number, max: number }} postDelayMinutes
  * @property {{ min: number, max: number }} replyDelayMinutes
  * @property {{
- *  commentOnPost: number;
- *  replyToComment: number;
- *  likePost: number;
- *  likeComment: number;
- *  ignore: number;
+ *  commentOnPost?: number;
+ *  replyToComment?: number;
+ *  likePost?: number;
+ *  likePostOnly?: number;
+ *  likeAndComment?: number;
+ *  likeComment?: number;
+ *  ignore?: number;
+ *  // Scheduler normalizes like weights, so providing `likePostOnly` or
+ *  // `likeAndComment` without `likePost` still enables like actions.
  * }} actionWeights
  * @property {number} maxCommentsPerPost
  * @property {number} maxRepliesPerThread
