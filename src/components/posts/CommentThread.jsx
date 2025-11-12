@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Link } from "react-router-dom";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import useCommentDraft from "../../hooks/useCommentDrafts";
 
 const commentPropType = PropTypes.shape({
   id: PropTypes.string.isRequired,
@@ -97,6 +98,7 @@ const CommentItem = ({
   isDeleteDisabled = false,
   isReplyDisabled = false,
   isDeleting = false,
+  replyTooltip = "Reply to comment",
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -297,8 +299,8 @@ const CommentItem = ({
               canReply
                 ? isReplyDisabled
                   ? "Action in progress"
-                  : "Reply to comment"
-                : "Sign in to reply"
+                  : replyTooltip
+                : replyTooltip
             }
             className={`text-sm font-medium transition-colors ${
               canReply
@@ -332,6 +334,7 @@ CommentItem.propTypes = {
   isDeleteDisabled: PropTypes.bool,
   isReplyDisabled: PropTypes.bool,
   isDeleting: PropTypes.bool,
+  replyTooltip: PropTypes.string,
 };
 
 const ReplyForm = ({
@@ -342,6 +345,7 @@ const ReplyForm = ({
   isSubmitting,
   darkMode,
   inputId,
+  errorMessage = "",
 }) => (
   <form onSubmit={onSubmit} className="mt-3">
     <label htmlFor={inputId} className="sr-only">
@@ -382,6 +386,11 @@ const ReplyForm = ({
         {isSubmitting ? "Sending..." : "Post Reply"}
       </button>
     </div>
+    {errorMessage ? (
+      <p className="mt-2 text-xs text-red-500" role="alert">
+        {errorMessage}
+      </p>
+    ) : null}
   </form>
 );
 
@@ -393,6 +402,7 @@ ReplyForm.propTypes = {
   isSubmitting: PropTypes.bool.isRequired,
   darkMode: PropTypes.bool.isRequired,
   inputId: PropTypes.string.isRequired,
+  errorMessage: PropTypes.string,
 };
 
 const EditForm = ({
@@ -464,16 +474,26 @@ const CommentThread = ({
   onEdit,
   onDelete,
   currentUser = null,
+  postId,
+  replyResolutionSignal = null,
+  processingReplyTargetId = null,
+  replyErrors = {},
+  onClearReplyError = () => {},
 }) => {
   const [activeReplyTargetId, setActiveReplyTargetId] = useState(null);
-  const [replyDraft, setReplyDraft] = useState("");
   const [isReplySubmitting, setIsReplySubmitting] = useState(false);
   const [activeEditTargetId, setActiveEditTargetId] = useState(null);
   const [editDraft, setEditDraft] = useState("");
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState(null);
+  const {
+    draft: replyDraft,
+    setDraft: setReplyDraft,
+    clearDraft: clearReplyDraft,
+  } = useCommentDraft(postId, activeReplyTargetId || undefined);
+  const lastHandledResolution = useRef(0);
 
-  const canReply = Boolean(currentUser);
+  const canReply = true;
   const currentUserId = currentUser?.uid ?? null;
   const isAdmin =
     currentUser?.role === "admin" ||
@@ -492,46 +512,94 @@ const CommentThread = ({
     canEditComment(authorId) || canDeleteComment(authorId);
 
   const handleReplyClick = (commentId) => {
-    if (!canReply) return;
-    setReplyDraft("");
+    onClearReplyError(commentId);
     setActiveEditTargetId(null);
     setEditDraft("");
     setActiveReplyTargetId((prev) => (prev === commentId ? null : commentId));
   };
 
   const handleReplyCancel = () => {
-    setReplyDraft("");
+    const targetId = activeReplyTargetId || parentComment.id;
+    onClearReplyError(targetId);
+    clearReplyDraft();
     setActiveReplyTargetId(null);
   };
 
   const handleReplySubmit = async (event) => {
     event.preventDefault();
-    if (!replyDraft.trim() || !canReply) {
+    const trimmedDraft = replyDraft.trim();
+    if (!trimmedDraft) {
       return;
     }
 
     setIsReplySubmitting(true);
     try {
-      await onReply(parentComment.id, replyDraft.trim());
-      setReplyDraft("");
+      const targetId = activeReplyTargetId || parentComment.id;
+      if (replyErrors[targetId]) {
+        onClearReplyError(targetId);
+      }
+      const result = await onReply(parentComment.id, trimmedDraft, {
+        targetId,
+      });
+
+      if (result?.status === "queued" || result?.status === "error") {
+        return;
+      }
+
+      clearReplyDraft();
       setActiveReplyTargetId(null);
     } finally {
       setIsReplySubmitting(false);
     }
   };
 
-  const renderReplyForm = (targetId) => (
-    <ReplyForm
-      key={`reply-form-${targetId}`}
-      value={replyDraft}
-      onChange={(event) => setReplyDraft(event.target.value)}
-      onSubmit={handleReplySubmit}
-      onCancel={handleReplyCancel}
-      isSubmitting={isReplySubmitting}
-      darkMode={darkMode}
-      inputId={`reply-${targetId}`}
-    />
-  );
+  useEffect(() => {
+    if (!replyResolutionSignal || !replyResolutionSignal.timestamp) {
+      return;
+    }
+
+    if (replyResolutionSignal.timestamp <= lastHandledResolution.current) {
+      return;
+    }
+
+    const targetId = activeReplyTargetId || parentComment.id;
+    if (replyResolutionSignal.targetId === targetId) {
+      clearReplyDraft();
+      setActiveReplyTargetId(null);
+    }
+
+    lastHandledResolution.current = replyResolutionSignal.timestamp;
+  }, [
+    replyResolutionSignal,
+    activeReplyTargetId,
+    parentComment.id,
+    clearReplyDraft,
+  ]);
+
+  const renderReplyForm = (targetId) => {
+    const effectiveTargetId = targetId || parentComment.id;
+    const externalProcessing =
+      processingReplyTargetId !== null &&
+      processingReplyTargetId === effectiveTargetId;
+    return (
+      <ReplyForm
+        key={`reply-form-${targetId}`}
+        value={replyDraft}
+        onChange={(event) => {
+          if (replyErrors[effectiveTargetId]) {
+            onClearReplyError(effectiveTargetId);
+          }
+          setReplyDraft(event.target.value);
+        }}
+        onSubmit={handleReplySubmit}
+        onCancel={handleReplyCancel}
+        isSubmitting={isReplySubmitting || externalProcessing}
+        darkMode={darkMode}
+        inputId={`reply-${targetId}`}
+        errorMessage={replyErrors[effectiveTargetId] || ""}
+      />
+    );
+  };
 
   const handleEditClick = (comment) => {
     if (!canEditComment(comment.authorId)) {
@@ -539,7 +607,7 @@ const CommentThread = ({
     }
 
     setActiveReplyTargetId(null);
-    setReplyDraft("");
+    clearReplyDraft();
     setActiveEditTargetId((prev) => {
       if (prev === comment.id) {
         setEditDraft("");
@@ -587,7 +655,7 @@ const CommentThread = ({
     try {
       await onDelete(commentId);
       setActiveReplyTargetId(null);
-      setReplyDraft("");
+      clearReplyDraft();
       if (activeEditTargetId === commentId) {
         setActiveEditTargetId(null);
         setEditDraft("");
@@ -641,8 +709,18 @@ const CommentThread = ({
           isReplySubmitting ||
           (deletingCommentId !== null && deletingCommentId !== parentComment.id)
         }
-        isReplyDisabled={isEditSubmitting || deletingCommentId !== null}
+        isReplyDisabled={
+          isEditSubmitting ||
+          deletingCommentId !== null ||
+          (processingReplyTargetId !== null &&
+            processingReplyTargetId === parentComment.id)
+        }
         isDeleting={deletingCommentId === parentComment.id}
+        replyTooltip={
+          currentUser
+            ? "Reply to comment"
+            : "Reply to comment (choose how to post when you send)"
+        }
       />
       {activeReplyTargetId === parentComment.id && canReply && renderReplyForm(parentComment.id)}
       {currentUserId === parentComment.authorId &&
@@ -684,9 +762,17 @@ const CommentThread = ({
                       deletingCommentId !== reply.id)
                   }
                   isReplyDisabled={
-                    isEditSubmitting || deletingCommentId !== null
+                    isEditSubmitting ||
+                    deletingCommentId !== null ||
+                    (processingReplyTargetId !== null &&
+                      processingReplyTargetId === reply.id)
                   }
                   isDeleting={deletingCommentId === reply.id}
+                  replyTooltip={
+                    currentUser
+                      ? "Reply to comment"
+                      : "Reply to comment (choose how to post when you send)"
+                  }
                 />
                 {activeReplyTargetId === reply.id && canReply && renderReplyForm(reply.id)}
                 {currentUserId === reply.authorId &&
@@ -710,6 +796,15 @@ CommentThread.propTypes = {
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
   currentUser: PropTypes.object,
+  postId: PropTypes.string.isRequired,
+  replyResolutionSignal: PropTypes.shape({
+    targetId: PropTypes.string,
+    status: PropTypes.string,
+    timestamp: PropTypes.number,
+  }),
+  processingReplyTargetId: PropTypes.string,
+  replyErrors: PropTypes.objectOf(PropTypes.string),
+  onClearReplyError: PropTypes.func,
 };
 
 export default CommentThread;

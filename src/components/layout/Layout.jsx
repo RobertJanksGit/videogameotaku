@@ -175,6 +175,7 @@ const LoginIcon = () => (
 const Layout = ({ children }) => {
   const { darkMode, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
+  const isAnonymousVisitor = Boolean(user?.isAnonymous);
   const navigate = useNavigate();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("login");
@@ -192,7 +193,11 @@ const Layout = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.isAnonymous) {
+      setNotifications([]);
+      setHasUnreadNotifications(false);
+      return;
+    }
 
     // Subscribe to notifications
     const q = query(
@@ -288,81 +293,109 @@ const Layout = ({ children }) => {
             >
               VideoGameOtaku
             </Link>
-            <nav className="flex items-center space-x-4">
+            <nav className="flex items-center gap-4">
               {user ? (
-                <>
-                  <Link
-                    to="/dashboard#share-your-find"
-                    className="max-[500px]:hidden inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap flex-shrink-0 shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-                  >
-                    Post Your Find
-                  </Link>
-                  <div className="relative" ref={dropdownRef}>
-                    <button
-                      onClick={() => setShowDropdown(!showDropdown)}
-                      className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
-                    >
+                isAnonymousVisitor ? (
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    <div className="flex items-center gap-2 rounded-full border border-[#21262d] bg-[#161B22] px-3 py-1.5">
                       <ProfileIcon photoURL={user.photoURL} />
-                      <span className="text-sm text-[#7D8590] group-hover:text-white transition-colors">
-                        {user.displayName || user.email}
-                      </span>
-                      <ChevronDownIcon />
-                      {hasUnreadNotifications && (
-                        <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
-                      )}
-                    </button>
-
-                    {showDropdown && (
-                      <div className="absolute right-0 mt-2 w-48 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
-                        {user.role === "admin" ? (
-                          <Link
-                            to="/admin"
-                            onClick={() => setShowDropdown(false)}
-                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                          >
-                            Admin Dashboard
-                          </Link>
-                        ) : (
-                          <Link
-                            to="/dashboard"
-                            onClick={() => setShowDropdown(false)}
-                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                          >
-                            My Dashboard
-                          </Link>
-                        )}
-                        <button
-                          onClick={() => {
-                            setShowDropdown(false);
-                            setShowNotifications(!showNotifications);
-                          }}
-                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>Notifications</span>
-                            {hasUnreadNotifications && (
-                              <span className="h-2 w-2 rounded-full bg-red-500"></span>
-                            )}
-                          </div>
-                        </button>
-                        <Link
-                          to="/settings"
-                          onClick={() => setShowDropdown(false)}
-                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
-                        >
-                          Settings
-                        </Link>
-                        <div className="my-1 h-px bg-[#373E47]"></div>
-                        <button
-                          onClick={handleLogout}
-                          className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
-                        >
-                          Logout
-                        </button>
+                      <div className="leading-tight">
+                        <div className="text-sm text-gray-100">
+                          {user.displayName || user.name || "Guest"}
+                        </div>
+                        <div className="text-xs text-[#7D8590]">
+                          Guest account
+                        </div>
                       </div>
-                    )}
+                    </div>
+                    <button
+                      onClick={() => handleAuthClick("register")}
+                      className="inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    >
+                      Create Account
+                    </button>
+                    <button
+                      onClick={() => handleAuthClick("login")}
+                      className="text-sm text-[#7D8590] hover:text-white transition-colors"
+                    >
+                      Sign in
+                    </button>
                   </div>
-                </>
+                ) : (
+                  <>
+                    <Link
+                      to="/dashboard#share-your-find"
+                      className="max-[500px]:hidden inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap flex-shrink-0 shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    >
+                      Post Your Find
+                    </Link>
+                    <div className="relative" ref={dropdownRef}>
+                      <button
+                        onClick={() => setShowDropdown(!showDropdown)}
+                        className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
+                      >
+                        <ProfileIcon photoURL={user.photoURL} />
+                        <span className="text-sm text-[#7D8590] group-hover:text-white transition-colors">
+                          {user.displayName || user.email}
+                        </span>
+                        <ChevronDownIcon />
+                        {hasUnreadNotifications && (
+                          <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
+                        )}
+                      </button>
+
+                      {showDropdown && (
+                        <div className="absolute right-0 mt-2 w-48 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg">
+                          {user.role === "admin" ? (
+                            <Link
+                              to="/admin"
+                              onClick={() => setShowDropdown(false)}
+                              className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                            >
+                              Admin Dashboard
+                            </Link>
+                          ) : (
+                            <Link
+                              to="/dashboard"
+                              onClick={() => setShowDropdown(false)}
+                              className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                            >
+                              My Dashboard
+                            </Link>
+                          )}
+                          <button
+                            onClick={() => {
+                              setShowDropdown(false);
+                              setShowNotifications(!showNotifications);
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span>Notifications</span>
+                              {hasUnreadNotifications && (
+                                <span className="h-2 w-2 rounded-full bg-red-500"></span>
+                              )}
+                            </div>
+                          </button>
+                          <Link
+                            to="/settings"
+                            onClick={() => setShowDropdown(false)}
+                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white"
+                          >
+                            Settings
+                          </Link>
+                          <div className="my-1 h-px bg-[#373E47]"></div>
+                          <button
+                            onClick={handleLogout}
+                            className="block w-full text-left px-4 py-2 text-sm text-[#ADBAC7] hover:bg-[#316DCA] hover:text-white bg-transparent border-0 cursor-pointer"
+                          >
+                            Logout
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
               ) : (
                 <div className="flex items-center space-x-4">
                   <button
@@ -392,7 +425,7 @@ const Layout = ({ children }) => {
           </div>
         </header>
 
-        {showNotifications && (
+        {showNotifications && !isAnonymousVisitor && (
           <div
             ref={notificationsRef}
             className="fixed right-4 top-16 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg z-50"

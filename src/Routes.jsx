@@ -22,7 +22,10 @@ import ProfilePage from "./components/user/ProfilePage";
 // PrivateRoute component to protect routes that require authentication
 const PrivateRoute = ({ children }) => {
   const { user } = useAuth();
-  return user ? children : <Navigate to="/" replace />;
+  if (!user || user.isAnonymous) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
 };
 
 // AdminRoute component to protect routes that require admin access

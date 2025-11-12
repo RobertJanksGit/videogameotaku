@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
@@ -14,6 +14,7 @@ import {
   getDocs,
   serverTimestamp,
   updateDoc,
+  setDoc,
   increment,
   writeBatch,
 } from "firebase/firestore";
@@ -32,9 +33,15 @@ import OptimizedImage from "../common/OptimizedImage";
 import { getTimestampDate } from "../../utils/formatTimeAgo";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import { markStarterPackCommented } from "../../utils/starterPackStorage";
+import useCommentDraft, { buildDraftKey } from "../../hooks/useCommentDrafts";
+import InlineCommentAuthPrompt from "./InlineCommentAuthPrompt";
+import AuthModal from "../auth/AuthModal";
 
 const findParentCommentId = (comment) => {
-  if (comment.parentCommentId !== undefined && comment.parentCommentId !== null) {
+  if (
+    comment.parentCommentId !== undefined &&
+    comment.parentCommentId !== null
+  ) {
     return comment.parentCommentId;
   }
   if (comment.parentId !== undefined && comment.parentId !== null) {
@@ -71,6 +78,11 @@ const buildCommentThreads = (comments) => {
   }));
 };
 
+// COMMENT FLOW:
+// - Determines comment access by checking `user` from AuthContext (unauthenticated users see sign-in prompt).
+// - `handleSubmitComment`, `handleReply`, `handleEditComment`, `handleDeleteComment` all guard on `user`/ownership to enforce auth.
+// - New comments and replies are written via Firestore `addDoc` to the `comments` collection; counts and notifications update related docs.
+// TODO: COMMENT FLOW ENHANCEMENTS COMPLETE – see summary above.
 const PostDetail = () => {
   const { postId } = useParams();
   const navigate = useNavigate();
@@ -79,11 +91,23 @@ const PostDetail = () => {
   const { user } = useAuth();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
-  const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const hasScrolledToComment = useRef(false);
+  const {
+    draft: newCommentDraft,
+    setDraft: setNewCommentDraft,
+    clearDraft: clearNewCommentDraft,
+  } = useCommentDraft(postId);
+  const [commentError, setCommentError] = useState("");
+  const [replyErrors, setReplyErrors] = useState({});
+  const [pendingSubmission, setPendingSubmission] = useState(null);
+  const [isInlineAuthPromptOpen, setInlineAuthPromptOpen] = useState(false);
+  const [isAuthModalOpen, setAuthModalOpen] = useState(false);
+  const [replyResolutionSignal, setReplyResolutionSignal] = useState(null);
+  const [isProcessingPending, setIsProcessingPending] = useState(false);
+  const previousUserRef = useRef(user);
   const commentThreads = useMemo(
     () => buildCommentThreads(comments),
     [comments]
@@ -206,6 +230,50 @@ const PostDetail = () => {
     hasScrolledToComment.current = false;
   }, [postId, targetCommentIdFromState, targetCommentIdFromHash]);
 
+  const resolveAuthorName = useCallback((authUser) => {
+    if (!authUser) return "Guest";
+    return (
+      authUser.profile?.displayName ||
+      authUser.displayName ||
+      authUser.name ||
+      (authUser.email ? authUser.email.split("@")[0] : "Guest")
+    );
+  }, []);
+
+  const resolveAuthorPhoto = useCallback(
+    (authUser) =>
+      normalizeProfilePhoto(
+        authUser?.profile?.avatarUrl ||
+          authUser?.photoURL ||
+          authUser?.photoUrl ||
+          ""
+      ),
+    []
+  );
+
+  const interpretCommentError = useCallback((error) => {
+    if (!error) {
+      return "Unable to post comment. Please try again.";
+    }
+
+    if (error.code === "resource-exhausted") {
+      return "You’re commenting a bit fast. Please wait a moment and try again.";
+    }
+
+    if (error.code === "permission-denied") {
+      return "You’re commenting a bit fast. Please wait a moment and try again.";
+    }
+
+    if (typeof error.message === "string") {
+      const message = error.message.toLowerCase();
+      if (message.includes("rate") || message.includes("fast")) {
+        return "You’re commenting a bit fast. Please wait a moment and try again.";
+      }
+    }
+
+    return "Unable to post comment. Please try again.";
+  }, []);
+
   useEffect(() => {
     // Add styles for comment highlighting
     const style = document.createElement("style");
@@ -242,226 +310,565 @@ const PostDetail = () => {
     };
   }, []);
 
-  const handleSubmitComment = async (e) => {
-    e.preventDefault();
-    if (!user) return;
-    if (!newComment.trim()) return;
-    if (isSubmittingComment) return;
-
-    setIsSubmittingComment(true);
-
-    try {
-      const trimmedContent = newComment.trim();
-      const normalizedPhotoURL = normalizeProfilePhoto(user.photoURL || "");
-
-      const commentRef = await addDoc(collection(db, "comments"), {
-        postId,
-        content: trimmedContent,
-        authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: normalizedPhotoURL,
-        parentId: null,
-        parentCommentId: null,
-        createdAt: serverTimestamp(),
-        replyCount: 0,
-      });
-
-      const newCommentObj = {
-        id: commentRef.id,
-        postId,
-        content: trimmedContent,
-        authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: normalizedPhotoURL,
-        parentId: null,
-        parentCommentId: null,
-        createdAt: new Date(),
-        replyCount: 0,
-      };
-
-      setComments((prev) => [...prev, newCommentObj]);
-      setNewComment("");
-
-      const postRef = doc(db, "posts", postId);
-      try {
-        await updateDoc(postRef, {
-          commentCount: increment(1),
-        });
-      } catch (error) {
-        console.error("Error updating post comment count:", error);
-      }
-
-      setPost((prevPost) => {
-        if (!prevPost) return prevPost;
+  // COMMENT FLOW RULES SYNC:
+  // - Comments write to /comments/{commentId}
+  // - Payload matches isValidCommentData in firestore.rules
+  // - commentMeta/{uid}.lastCommentTime is updated with serverTimestamp()
+  // - Anonymous and regular users are both allowed, with a 10s throttle
+  const performCommentWrite = useCallback(
+    async (content) => {
+      if (!user) {
         return {
-          ...prevPost,
-          commentCount: (prevPost.commentCount || 0) + 1,
+          status: "error",
+          message: "You need to sign in before commenting.",
         };
-      });
-
-      markStarterPackCommented(user.uid);
-
-      if (post.authorId !== user.uid) {
-        try {
-          const authorDoc = await getDoc(doc(db, "users", post.authorId));
-          const authorData = authorDoc.data();
-
-          if (authorData?.notificationPrefs?.postComments !== false) {
-            await createNotification({
-              recipientId: post.authorId,
-              senderId: user.uid,
-              senderName: user.displayName || user.email.split("@")[0],
-              message: getNotificationMessage({
-                type: "post_comment",
-                senderName: user.displayName || user.email.split("@")[0],
-                postTitle: post.title,
-              }),
-              type: "post_comment",
-              link: `/post/${postId}`,
-              postId,
-              commentId: commentRef.id,
-            });
-          }
-        } catch (notificationError) {
-          console.error("Error sending comment notification:", notificationError);
-        }
-      }
-    } catch (error) {
-      console.error("Error adding comment:", error);
-    } finally {
-      setIsSubmittingComment(false);
-    }
-  };
-
-  const handleReply = async (parentId, content) => {
-    if (!user) {
-      console.log("No user found - authentication error");
-      return;
-    }
-
-    try {
-      // Get the parent comment first
-      const parentComment = comments.find((comment) => comment.id === parentId);
-      if (!parentComment) {
-        console.log("Parent comment not found:", parentId);
-        return;
       }
 
       const trimmedContent = content.trim();
       if (!trimmedContent) {
-        return;
+        return { status: "error", message: "Comment cannot be empty." };
       }
 
-      // Create the reply data
-      const replyData = {
-        postId,
-        content: trimmedContent,
-        authorId: user.uid,
-        authorName: user.displayName || user.email.split("@")[0],
-        authorPhotoURL: normalizeProfilePhoto(user.photoURL || ""),
-        parentId,
-        parentCommentId: parentId,
-        createdAt: serverTimestamp(),
-        replyCount: 0,
-      };
+      setIsSubmittingComment(true);
+      setCommentError("");
 
-      // Add the reply to Firestore
-      const replyRef = await addDoc(collection(db, "comments"), replyData);
+      try {
+        const authorName = resolveAuthorName(user);
+        const authorPhotoURL = resolveAuthorPhoto(user);
 
-      // Update the parent comment's replyCount in Firestore
-      const parentCommentRef = doc(db, "comments", parentId);
-      await updateDoc(parentCommentRef, {
-        replyCount: increment(1),
-      });
+        console.log("[Comments] submit comment auth", {
+          uid: user.uid,
+          isAnonymous: user.isAnonymous,
+        });
 
-      // Update the post's comment count in Firestore
-      const postRef = doc(db, "posts", postId);
-      await updateDoc(postRef, {
-        commentCount: increment(1),
-      });
+        const commentPayload = {
+          postId,
+          content: trimmedContent,
+          authorId: user.uid,
+          authorName,
+          authorPhotoURL,
+          parentId: null,
+          parentCommentId: null,
+          createdAt: serverTimestamp(),
+          replyCount: 0,
+        };
 
-      // Update the local post state with the new comment count
-      setPost((prevPost) => ({
-        ...prevPost,
-        commentCount: (prevPost.commentCount || 0) + 1,
-      }));
+        console.log("[Comments] payload", commentPayload);
 
-      markStarterPackCommented(user.uid);
-
-      // Create the reply object for local state
-      const newReply = {
-        id: replyRef.id,
-        ...replyData,
-        createdAt: new Date(),
-      };
-
-      // Create notification for comment author if it's not their own reply
-      if (parentComment.authorId !== user.uid) {
-        const authorDoc = await getDoc(
-          doc(db, "users", parentComment.authorId)
+        const commentRef = await addDoc(
+          collection(db, "comments"),
+          commentPayload
         );
-        const authorData = authorDoc.data();
 
-        if (authorData?.notificationPrefs?.commentReplies !== false) {
-          await createNotification({
-            recipientId: parentComment.authorId,
-            senderId: user.uid,
-            senderName: user.displayName || user.email.split("@")[0],
-            message: getNotificationMessage({
-              type: "comment_reply",
-              senderName: user.displayName || user.email.split("@")[0],
-            }),
-            type: "comment_reply",
-            link: `/post/${postId}`,
-            postId,
-            commentId: replyRef.id,
+        console.log("[Comments] wrote comment doc", {
+          path: commentRef.path,
+        });
+
+        const newCommentObj = {
+          id: commentRef.id,
+          postId,
+          content: trimmedContent,
+          authorId: user.uid,
+          authorName,
+          authorPhotoURL,
+          parentId: null,
+          parentCommentId: null,
+          createdAt: new Date(),
+          replyCount: 0,
+        };
+
+        setComments((prev) => [...prev, newCommentObj]);
+        clearNewCommentDraft();
+
+        const postRef = doc(db, "posts", postId);
+        try {
+          await updateDoc(postRef, {
+            commentCount: increment(1),
           });
+        } catch (error) {
+          console.error("Error updating post comment count:", error);
         }
-      }
 
-      // Update both the new reply and the parent comment's replyCount in local state
-      setComments((prevComments) => {
-        const replyAlreadyPresent = prevComments.some(
-          (comment) => comment.id === newReply.id
-        );
-
-        const updatedComments = prevComments.map((comment) => {
-          if (comment.id !== parentId) {
-            return comment;
-          }
-
-          if (replyAlreadyPresent) {
-            return comment;
-          }
-
+        setPost((prevPost) => {
+          if (!prevPost) return prevPost;
           return {
-            ...comment,
-            replyCount: (comment.replyCount || 0) + 1,
+            ...prevPost,
+            commentCount: (prevPost.commentCount || 0) + 1,
           };
         });
 
-        if (replyAlreadyPresent) {
-          const seenIds = new Set();
-          return updatedComments.filter((comment) => {
-            if (seenIds.has(comment.id)) {
-              return false;
-            }
-            seenIds.add(comment.id);
-            return true;
+        try {
+          console.log("[Comments] updating commentMeta", {
+            uid: user.uid,
           });
+          await setDoc(
+            doc(db, "commentMeta", user.uid),
+            {
+              lastCommentTime: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch (metaError) {
+          console.error(
+            "Error updating comment rate limit metadata:",
+            metaError
+          );
         }
 
-        return [...updatedComments, newReply];
+        markStarterPackCommented(user.uid);
+
+        if (post?.authorId && post.authorId !== user.uid) {
+          try {
+            const authorDoc = await getDoc(doc(db, "users", post.authorId));
+            const authorData = authorDoc.data();
+
+            if (authorData?.notificationPrefs?.postComments !== false) {
+              await createNotification({
+                recipientId: post.authorId,
+                senderId: user.uid,
+                senderName: authorName,
+                message: getNotificationMessage({
+                  type: "post_comment",
+                  senderName: authorName,
+                  postTitle: post.title,
+                }),
+                type: "post_comment",
+                link: `/post/${postId}`,
+                postId,
+                commentId: commentRef.id,
+              });
+            }
+          } catch (notificationError) {
+            console.error(
+              "Error sending comment notification:",
+              notificationError
+            );
+          }
+        }
+
+        return { status: "posted", comment: newCommentObj };
+      } catch (error) {
+        console.error("Error adding comment:", error);
+        const friendlyMessage = interpretCommentError(error);
+        setCommentError(friendlyMessage);
+        return { status: "error", error, message: friendlyMessage };
+      } finally {
+        setIsSubmittingComment(false);
+      }
+    },
+    [
+      user,
+      post,
+      postId,
+      clearNewCommentDraft,
+      interpretCommentError,
+      resolveAuthorName,
+      resolveAuthorPhoto,
+    ]
+  );
+
+  const performReplyWrite = useCallback(
+    async (parentId, content, { targetId } = {}) => {
+      if (!user) {
+        return {
+          status: "error",
+          message: "You need to sign in before replying.",
+        };
+      }
+
+      const parentComment = comments.find((comment) => comment.id === parentId);
+      if (!parentComment) {
+        console.warn("Parent comment not found:", parentId);
+        return {
+          status: "error",
+          message: "The comment you replied to is no longer available.",
+          targetId,
+        };
+      }
+
+      const trimmedContent = content.trim();
+      if (!trimmedContent) {
+        return { status: "error", message: "Reply cannot be empty.", targetId };
+      }
+
+      console.log("[Comments] currentUser (reply)", {
+        uid: user.uid,
+        isAnonymous: user.isAnonymous,
       });
-    } catch (error) {
-      console.error("Error adding reply:", error);
-      console.log("Error details:", {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-      });
+
+      const authorName = resolveAuthorName(user);
+      const authorPhotoURL = resolveAuthorPhoto(user);
+      const effectiveTargetId = targetId || parentId;
+
+      try {
+        const replyPayload = {
+          postId,
+          content: trimmedContent,
+          authorId: user.uid,
+          authorName,
+          authorPhotoURL,
+          parentId,
+          parentCommentId: parentId,
+          createdAt: serverTimestamp(),
+          replyCount: 0,
+        };
+
+        console.log("[Comments] reply payload", replyPayload);
+
+        const replyRef = await addDoc(collection(db, "comments"), replyPayload);
+
+        console.log("[Comments] wrote reply doc", {
+          path: replyRef.path,
+        });
+
+        const parentCommentRef = doc(db, "comments", parentId);
+        await updateDoc(parentCommentRef, {
+          replyCount: increment(1),
+        });
+
+        const postRef = doc(db, "posts", postId);
+        await updateDoc(postRef, {
+          commentCount: increment(1),
+        });
+
+        setPost((prevPost) => {
+          if (!prevPost) return prevPost;
+          return {
+            ...prevPost,
+            commentCount: (prevPost.commentCount || 0) + 1,
+          };
+        });
+
+        markStarterPackCommented(user.uid);
+
+        try {
+          console.log("[Comments] updating commentMeta (reply)", {
+            uid: user.uid,
+          });
+          await setDoc(
+            doc(db, "commentMeta", user.uid),
+            {
+              lastCommentTime: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch (metaError) {
+          console.error(
+            "Error updating comment rate limit metadata (reply):",
+            metaError
+          );
+        }
+
+        const newReply = {
+          id: replyRef.id,
+          ...replyPayload,
+          createdAt: new Date(),
+        };
+
+        if (parentComment.authorId && parentComment.authorId !== user.uid) {
+          try {
+            const authorDoc = await getDoc(
+              doc(db, "users", parentComment.authorId)
+            );
+            const authorData = authorDoc.data();
+
+            if (authorData?.notificationPrefs?.commentReplies !== false) {
+              await createNotification({
+                recipientId: parentComment.authorId,
+                senderId: user.uid,
+                senderName: authorName,
+                message: getNotificationMessage({
+                  type: "comment_reply",
+                  senderName: authorName,
+                }),
+                type: "comment_reply",
+                link: `/post/${postId}`,
+                postId,
+                commentId: replyRef.id,
+              });
+            }
+          } catch (notificationError) {
+            console.error(
+              "Error sending reply notification:",
+              notificationError
+            );
+          }
+        }
+
+        setComments((prevComments) => {
+          const replyAlreadyPresent = prevComments.some(
+            (comment) => comment.id === newReply.id
+          );
+
+          const updatedComments = prevComments.map((comment) => {
+            if (comment.id !== parentId) {
+              return comment;
+            }
+
+            if (replyAlreadyPresent) {
+              return comment;
+            }
+
+            return {
+              ...comment,
+              replyCount: (comment.replyCount || 0) + 1,
+            };
+          });
+
+          if (replyAlreadyPresent) {
+            const seenIds = new Set();
+            return updatedComments.filter((comment) => {
+              if (seenIds.has(comment.id)) {
+                return false;
+              }
+              seenIds.add(comment.id);
+              return true;
+            });
+          }
+
+          return [...updatedComments, newReply];
+        });
+
+        return {
+          status: "posted",
+          reply: newReply,
+          targetId: effectiveTargetId,
+        };
+      } catch (error) {
+        console.error("Error adding reply:", error);
+        const friendlyMessage = interpretCommentError(error);
+        return {
+          status: "error",
+          error,
+          message: friendlyMessage,
+          targetId: effectiveTargetId,
+        };
+      }
+    },
+    [
+      user,
+      comments,
+      postId,
+      interpretCommentError,
+      resolveAuthorName,
+      resolveAuthorPhoto,
+    ]
+  );
+
+  const handleClearReplyError = useCallback((targetId) => {
+    if (!targetId) return;
+    setReplyErrors((prev) => {
+      if (!prev[targetId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[targetId];
+      return next;
+    });
+  }, []);
+
+  const queueOrSubmit = useCallback(
+    async (action) => {
+      if (!user) {
+        setPendingSubmission({
+          ...action,
+          timestamp: Date.now(),
+        });
+        setInlineAuthPromptOpen(true);
+        return { status: "queued" };
+      }
+
+      if (action.type === "comment") {
+        return performCommentWrite(action.content);
+      }
+
+      if (action.type === "reply") {
+        return performReplyWrite(action.parentId, action.content, {
+          targetId: action.targetId,
+        });
+      }
+
+      return { status: "idle" };
+    },
+    [user, performCommentWrite, performReplyWrite]
+  );
+
+  const handleSubmitComment = async (event, { contentOverride } = {}) => {
+    event?.preventDefault();
+    if (isSubmittingComment || isProcessingPending) {
+      return;
+    }
+
+    const content = (contentOverride ?? newCommentDraft).trim();
+    if (!content) {
+      return;
+    }
+
+    setCommentError("");
+
+    const result = await queueOrSubmit({ type: "comment", content });
+
+    if (result?.status === "posted") {
+      setCommentError("");
+    } else if (result?.status === "error") {
+      setCommentError(result.message || interpretCommentError(result.error));
     }
   };
+
+  const handleReplyRequest = useCallback(
+    async (parentId, content, options = {}) => {
+      const targetId = options.targetId || parentId;
+      const result = await queueOrSubmit({
+        type: "reply",
+        parentId,
+        content,
+        targetId,
+      });
+
+      if (result?.status === "posted") {
+        const finalTargetId = result.targetId || options.targetId || parentId;
+        setReplyResolutionSignal({
+          targetId: finalTargetId,
+          status: "posted",
+          timestamp: Date.now(),
+        });
+        handleClearReplyError(finalTargetId);
+      } else if (result?.status === "error") {
+        const finalTargetId = result.targetId || options.targetId || parentId;
+        setReplyErrors((prev) => ({
+          ...prev,
+          [finalTargetId]:
+            result.message || interpretCommentError(result.error),
+        }));
+      } else if (result?.status === "queued") {
+        handleClearReplyError(targetId);
+      }
+
+      return result;
+    },
+    [queueOrSubmit, handleClearReplyError, interpretCommentError]
+  );
+
+  const submitPendingSubmission = useCallback(async () => {
+    if (!pendingSubmission || !user) {
+      return { status: "idle" };
+    }
+
+    setIsProcessingPending(true);
+    try {
+      let result;
+      if (pendingSubmission.type === "comment") {
+        result = await performCommentWrite(pendingSubmission.content);
+        if (result?.status === "error") {
+          setCommentError(
+            result.message || interpretCommentError(result.error)
+          );
+        }
+      } else if (pendingSubmission.type === "reply") {
+        result = await performReplyWrite(
+          pendingSubmission.parentId,
+          pendingSubmission.content,
+          { targetId: pendingSubmission.targetId }
+        );
+
+        const targetId =
+          result?.targetId ||
+          pendingSubmission.targetId ||
+          pendingSubmission.parentId;
+
+        if (result?.status === "posted") {
+          setReplyResolutionSignal({
+            targetId,
+            status: "posted",
+            timestamp: Date.now(),
+          });
+          handleClearReplyError(targetId);
+          if (typeof window !== "undefined") {
+            const draftKey = buildDraftKey(postId, targetId);
+            if (draftKey) {
+              try {
+                window.localStorage.removeItem(draftKey);
+              } catch (storageError) {
+                console.warn(
+                  "Unable to clear reply draft from storage",
+                  storageError
+                );
+              }
+            }
+          }
+        } else if (result?.status === "error") {
+          setReplyErrors((prev) => ({
+            ...prev,
+            [targetId]: result.message || interpretCommentError(result.error),
+          }));
+        }
+      }
+
+      if (result?.status === "posted" || result?.status === "error") {
+        setPendingSubmission(null);
+      }
+
+      return result;
+    } finally {
+      setIsProcessingPending(false);
+    }
+  }, [
+    pendingSubmission,
+    user,
+    performCommentWrite,
+    performReplyWrite,
+    interpretCommentError,
+    handleClearReplyError,
+    postId,
+  ]);
+
+  useEffect(() => {
+    if (
+      pendingSubmission &&
+      user &&
+      !isProcessingPending &&
+      !previousUserRef.current
+    ) {
+      submitPendingSubmission();
+    }
+    previousUserRef.current = user;
+  }, [user, pendingSubmission, isProcessingPending, submitPendingSubmission]);
+
+  const handleInlineAuthSuccess = useCallback(async () => {
+    setInlineAuthPromptOpen(false);
+    await submitPendingSubmission();
+  }, [submitPendingSubmission]);
+
+  const handleInlinePromptClose = useCallback(() => {
+    setInlineAuthPromptOpen(false);
+    setPendingSubmission(null);
+  }, []);
+
+  const handleCommentChange = (event) => {
+    if (commentError) {
+      setCommentError("");
+    }
+    setNewCommentDraft(event.target.value);
+  };
+
+  const handleCommentKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (isSubmittingComment || isProcessingPending) {
+        return;
+      }
+      handleSubmitComment(event);
+    }
+  };
+
+  const processingReplyTargetId =
+    isProcessingPending && pendingSubmission?.type === "reply"
+      ? pendingSubmission.targetId || pendingSubmission.parentId
+      : null;
+
+  const isCommentProcessing =
+    isSubmittingComment ||
+    (isProcessingPending && pendingSubmission?.type === "comment");
 
   const handleEditComment = async (commentId, updatedContent) => {
     if (!user) {
@@ -469,14 +876,19 @@ const PostDetail = () => {
       return;
     }
 
-    const commentToUpdate = comments.find((comment) => comment.id === commentId);
+    const commentToUpdate = comments.find(
+      (comment) => comment.id === commentId
+    );
     if (!commentToUpdate) {
       console.warn("Comment not found:", commentId);
       return;
     }
 
     if (commentToUpdate.authorId !== user.uid) {
-      console.warn("User attempted to edit a comment they do not own:", commentId);
+      console.warn(
+        "User attempted to edit a comment they do not own:",
+        commentId
+      );
       return;
     }
 
@@ -515,7 +927,9 @@ const PostDetail = () => {
       return;
     }
 
-    const commentToDelete = comments.find((comment) => comment.id === commentId);
+    const commentToDelete = comments.find(
+      (comment) => comment.id === commentId
+    );
     if (!commentToDelete) {
       console.warn("Comment not found:", commentId);
       return;
@@ -527,7 +941,10 @@ const PostDetail = () => {
       user?.isAdmin === true;
 
     if (!isAdmin && commentToDelete.authorId !== user.uid) {
-      console.warn("User attempted to delete a comment they do not own:", commentId);
+      console.warn(
+        "User attempted to delete a comment they do not own:",
+        commentId
+      );
       return;
     }
 
@@ -591,7 +1008,10 @@ const PostDetail = () => {
 
     setPost((prevPost) => {
       if (!prevPost) return prevPost;
-      const nextCount = Math.max((prevPost.commentCount || 0) - totalDeleted, 0);
+      const nextCount = Math.max(
+        (prevPost.commentCount || 0) - totalDeleted,
+        0
+      );
       return {
         ...prevPost,
         commentCount: nextCount,
@@ -633,16 +1053,6 @@ const PostDetail = () => {
       setPost(updatedPost);
     } catch (error) {
       console.error("Error updating post votes:", error);
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (isSubmittingComment) {
-        return;
-      }
-      handleSubmitComment(e);
     }
   };
 
@@ -922,59 +1332,67 @@ const PostDetail = () => {
                 Comments
               </h2>
 
-              {user ? (
-                <div>
-                  <h3
-                    className={`text-lg font-semibold mb-3 ${
-                      darkMode ? "text-gray-200" : "text-gray-800"
-                    }`}
-                  >
-                    Add Your Comment
-                  </h3>
-                  <form onSubmit={handleSubmitComment} className="mb-8">
-                    <label htmlFor="comment" className="sr-only">
-                      Add a comment
-                    </label>
-                    <textarea
-                      id="comment"
-                      rows="3"
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="Add a comment..."
-                      className={`w-full px-4 py-2 rounded-lg ${
-                        darkMode
-                          ? "bg-gray-700 text-white placeholder-gray-400"
-                          : "bg-white text-gray-900 placeholder-gray-500"
-                      } border ${
-                        darkMode ? "border-gray-600" : "border-gray-300"
-                      } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                      aria-label="Add a comment"
-                    />
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="submit"
-                        disabled={!newComment.trim() || isSubmittingComment}
-                        className={`px-4 py-2 rounded-lg ${
-                          darkMode
-                            ? "bg-blue-600 hover:bg-blue-700"
-                            : "bg-blue-500 hover:bg-blue-600"
-                        } text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
-                      >
-                        {isSubmittingComment ? "Posting..." : "Post Comment"}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              ) : (
-                <p
-                  className={`mb-8 ${
-                    darkMode ? "text-gray-300" : "text-gray-600"
+              <div
+                className={`mb-8 rounded-lg border ${
+                  darkMode
+                    ? "border-gray-800 bg-gray-900/60"
+                    : "border-gray-200 bg-white"
+                } p-4 md:p-5 shadow-sm`}
+              >
+                <h3
+                  className={`text-lg font-semibold mb-3 ${
+                    darkMode ? "text-gray-200" : "text-gray-800"
                   }`}
                 >
-                  Please sign in to comment.
-                </p>
-              )}
+                  Join the discussion
+                </h3>
+                <form onSubmit={handleSubmitComment}>
+                  <label htmlFor="post-comment" className="sr-only">
+                    Write a comment
+                  </label>
+                  <textarea
+                    id="post-comment"
+                    rows="3"
+                    value={newCommentDraft}
+                    onChange={handleCommentChange}
+                    onKeyDown={handleCommentKeyDown}
+                    placeholder="Share your thoughts..."
+                    className={`w-full px-4 py-2 rounded-lg text-sm ${
+                      darkMode
+                        ? "bg-gray-800 text-white placeholder-gray-400 border border-gray-700 focus:border-blue-500"
+                        : "bg-white text-gray-900 placeholder-gray-500 border border-gray-300 focus:border-blue-500"
+                    } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    aria-label="Add a comment"
+                  />
+                  {commentError ? (
+                    <p className="mt-2 text-xs text-red-500" role="alert">
+                      {commentError}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <span
+                      className={`text-xs ${
+                        darkMode ? "text-gray-400" : "text-gray-500"
+                      }`}
+                    >
+                      {user
+                        ? `Posting as ${resolveAuthorName(user)}`
+                        : "We’ll ask you to sign in or continue as guest when you post."}
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={!newCommentDraft.trim() || isCommentProcessing}
+                      className={`inline-flex justify-center px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                        darkMode
+                          ? "bg-blue-600 hover:bg-blue-500"
+                          : "bg-blue-500 hover:bg-blue-600"
+                      }`}
+                    >
+                      {isCommentProcessing ? "Posting..." : "Post Comment"}
+                    </button>
+                  </div>
+                </form>
+              </div>
 
               {/* Comments List */}
               <div className="space-y-6" role="feed" aria-label="Comments list">
@@ -1001,10 +1419,15 @@ const PostDetail = () => {
                       parentComment={parent}
                       replies={replies}
                       darkMode={darkMode}
-                      onReply={handleReply}
+                      onReply={handleReplyRequest}
                       onEdit={handleEditComment}
                       onDelete={handleDeleteComment}
                       currentUser={user}
+                      postId={postId}
+                      replyResolutionSignal={replyResolutionSignal}
+                      processingReplyTargetId={processingReplyTargetId}
+                      replyErrors={replyErrors}
+                      onClearReplyError={handleClearReplyError}
                     />
                   ))
                 )}
@@ -1013,6 +1436,26 @@ const PostDetail = () => {
           </article>
         ) : null}
       </main>
+      <InlineCommentAuthPrompt
+        isOpen={isInlineAuthPromptOpen}
+        onClose={handleInlinePromptClose}
+        onAuthenticated={handleInlineAuthSuccess}
+        onRequestEmail={() => {
+          setInlineAuthPromptOpen(false);
+          setAuthModalOpen(true);
+        }}
+        commentPreview={pendingSubmission?.content || newCommentDraft}
+      />
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => {
+          setAuthModalOpen(false);
+          if (!user && pendingSubmission) {
+            setInlineAuthPromptOpen(true);
+          }
+        }}
+        initialMode="login"
+      />
     </>
   );
 };

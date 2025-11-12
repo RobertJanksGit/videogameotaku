@@ -6,6 +6,9 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInAnonymously as firebaseSignInAnonymously,
 } from "firebase/auth";
 import {
   doc,
@@ -39,6 +42,12 @@ const formatAuthError = (error) => {
     case "auth/user-not-found":
     case "auth/wrong-password":
       return "Invalid email or password";
+    case "auth/popup-closed-by-user":
+      return "Sign-in was closed before finishing. Please try again.";
+    case "auth/cancelled-popup-request":
+      return "A sign-in is already in progress. Please complete it first.";
+    case "auth/operation-not-allowed":
+      return "This sign-in method is currently disabled. Please contact support.";
     case "auth/too-many-requests":
       return "Too many attempts. Please try again later";
     case "username/already-exists":
@@ -56,6 +65,23 @@ const getPreferredDisplayName = (authUser, userData = {}) => {
     return email.split("@")[0];
   }
   return "Community Member";
+};
+
+const buildAnonymousDisplayName = (uid) => {
+  const fallback = `Guest${Math.floor(Math.random() * 10000)
+    .toString()
+    .padStart(4, "0")}`;
+
+  if (!uid) {
+    return fallback;
+  }
+
+  const sanitized = uid.replace(/[^a-zA-Z0-9]/g, "");
+  const suffix =
+    sanitized.slice(-4).toUpperCase() ||
+    Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+
+  return `Guest${suffix}`;
 };
 
 export function AuthProvider({ children }) {
@@ -167,24 +193,96 @@ export function AuthProvider({ children }) {
 
       try {
         const userRef = doc(db, "users", authUser.uid);
-        const userDoc = await getDoc(userRef);
-        const userDataRaw = userDoc.data() || {};
+        let userDoc = await getDoc(userRef);
+
+        if (!userDoc.exists()) {
+          const defaultName = authUser.isAnonymous
+            ? buildAnonymousDisplayName(authUser.uid)
+            : getPreferredDisplayName(authUser);
+          try {
+            await setDoc(
+              userRef,
+              {
+                uid: authUser.uid,
+                email: authUser.email ?? null,
+                name: defaultName,
+                displayName: defaultName,
+                photoURL: normalizeProfilePhoto(authUser.photoURL || ""),
+                role: "user",
+                isActive: true,
+                createdAt: serverTimestamp(),
+                lastLogin: serverTimestamp(),
+                isAnonymous: authUser.isAnonymous ?? false,
+              },
+              { merge: true }
+            );
+          } catch (createError) {
+            console.error("Error creating user document:", createError);
+          }
+          userDoc = await getDoc(userRef);
+        } else if (shouldUpdateLastLogin) {
+          await setDoc(
+            userRef,
+            {
+              lastLogin: serverTimestamp(),
+              isAnonymous: authUser.isAnonymous ?? false,
+            },
+            { merge: true }
+          );
+        } else if (
+          authUser.isAnonymous !== undefined &&
+          authUser.isAnonymous !== userDoc.data()?.isAnonymous
+        ) {
+          await setDoc(
+            userRef,
+            {
+              isAnonymous: authUser.isAnonymous,
+            },
+            { merge: true }
+          );
+        }
+
+        let userDataRaw = userDoc.data() || {};
+
+        if (authUser.isAnonymous && !userDataRaw.name) {
+          const generatedGuestName = buildAnonymousDisplayName(authUser.uid);
+          try {
+            await setDoc(
+              userRef,
+              {
+                name: generatedGuestName,
+                displayName: generatedGuestName,
+              },
+              { merge: true }
+            );
+          } catch (guestNameError) {
+            console.warn("Unable to persist anonymous display name", guestNameError);
+          }
+          userDataRaw = {
+            ...userDataRaw,
+            name: generatedGuestName,
+            displayName: generatedGuestName,
+          };
+        }
+
+        const resolvedName =
+          userDataRaw.name ||
+          userDataRaw.displayName ||
+          getPreferredDisplayName(authUser, userDataRaw);
+
+        const resolvedDisplayName =
+          userDataRaw.displayName || resolvedName;
+
         const userData = {
           ...userDataRaw,
           photoURL: normalizeProfilePhoto(
             userDataRaw.photoURL || authUser.photoURL || ""
           ),
+          name: resolvedName,
+          displayName: resolvedDisplayName,
+          isAnonymous:
+            authUser.isAnonymous ?? userDataRaw.isAnonymous ?? false,
         };
-
-        if (shouldUpdateLastLogin) {
-          await setDoc(
-            userRef,
-            {
-              lastLogin: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        }
 
         const profile = await ensureProfileDocument(authUser, userData);
 
@@ -377,6 +475,47 @@ export function AuthProvider({ children }) {
     return unsubscribe;
   }, [loadUserData]);
 
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: "select_account",
+      });
+
+      const result = await signInWithPopup(auth, provider);
+      const loadedUser = await loadUserData(result.user, {
+        shouldUpdateLastLogin: true,
+      });
+
+      if (loadedUser) {
+        setUser(loadedUser);
+      }
+
+      return loadedUser;
+    } catch (error) {
+      console.error("Google sign-in error:", error);
+      throw new Error(formatAuthError(error));
+    }
+  }, [loadUserData]);
+
+  const signInAnonymously = useCallback(async () => {
+    try {
+      const result = await firebaseSignInAnonymously(auth);
+      const loadedUser = await loadUserData(result.user, {
+        shouldUpdateLastLogin: true,
+      });
+
+      if (loadedUser) {
+        setUser(loadedUser);
+      }
+
+      return loadedUser;
+    } catch (error) {
+      console.error("Anonymous sign-in error:", error);
+      throw new Error(formatAuthError(error));
+    }
+  }, [loadUserData]);
+
   const value = {
     user,
     loading,
@@ -385,6 +524,8 @@ export function AuthProvider({ children }) {
     logout,
     isUsernameTaken,
     refreshUser,
+    signInWithGoogle,
+    signInAnonymously,
   };
 
   return (

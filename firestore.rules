@@ -112,6 +112,17 @@ service cloud.firestore {
       return onlyReplyCountChanged && updated.replyCount is number && updated.replyCount >= 0;
     }
 
+    function isUnderCommentRateLimit() {
+      let metaRef = /databases/$(database)/documents/commentMeta/$(request.auth.uid);
+      let meta = exists(metaRef) ? get(metaRef).data : null;
+      return meta == null ||
+             !('lastCommentTime' in meta) ||
+             (
+               meta.lastCommentTime is timestamp &&
+               request.time.toMillis() - meta.lastCommentTime.toMillis() >= 10 * 1000
+             );
+    }
+
     // Rate limiting functions
     function isWithinRateLimit() {
       let rateLimit = get(/databases/$(database)/documents/rateLimits/$(request.auth.uid)).data;
@@ -168,7 +179,8 @@ service cloud.firestore {
       // Only signed-in users can create comments and replies
       allow create: if isSignedIn() && 
                    isValidCommentData(request.resource.data) &&
-                   request.resource.data.authorId == request.auth.uid;
+                   request.resource.data.authorId == request.auth.uid &&
+                   isUnderCommentRateLimit();
       // Users can edit/delete their own comments, and anyone can update replyCount
       allow update: if isSignedIn() && (
                      (resource.data.authorId == request.auth.uid) || 
@@ -177,6 +189,13 @@ service cloud.firestore {
                    );
       allow delete: if isSignedIn() && 
                    (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
+    match /commentMeta/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) &&
+        request.resource.data.lastCommentTime is timestamp;
+      allow delete: if false;
     }
 
     // Users collection rules
