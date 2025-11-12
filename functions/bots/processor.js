@@ -1,20 +1,17 @@
 import admin from "firebase-admin";
 import {
-  pendingActionsDueQuery,
-  pendingActionsCollection,
-  toPendingAction,
+  scheduledBotActionsCollection,
+  toScheduledBotAction,
   botProfilesCollection,
   toBotProfile,
-  PendingActionType,
+  ScheduledBotActionType,
   MAX_PENDING_ACTION_ATTEMPTS,
   BOT_COOLDOWN_MINUTES,
 } from "./models.js";
-import { handlePendingAction } from "./decision.js";
 import {
   nowMs,
   minutesToMs,
   isWithinCooldown,
-  weightedChoice,
 } from "./utils.js";
 import { maybeAddTypos } from "./typoUtils.js";
 import { generateInCharacterComment } from "./commentGenerator.js";
@@ -23,6 +20,11 @@ const COMMENTS_COLLECTION = "comments";
 const POSTS_COLLECTION = "posts";
 const USERS_COLLECTION = "users";
 const NOTIFICATIONS_COLLECTION = "notifications";
+
+const scheduledActionsDueQuery = (db, now) =>
+  scheduledBotActionsCollection(db)
+    .where("scheduledAt", "<=", now)
+    .orderBy("scheduledAt", "asc");
 
 const THREAD_CONTEXT_LIMIT = 5;
 
@@ -335,6 +337,36 @@ const likePostHelper = async (db, { bot, post }) => {
   return true;
 };
 
+const likeCommentHelper = async (db, { bot, comment }) => {
+  if (!comment || !comment.id) return false;
+
+  const likes = new Set(
+    Array.isArray(comment.usersThatLiked) ? comment.usersThatLiked : []
+  );
+
+  if (likes.has(bot.uid)) {
+    return false;
+  }
+
+  likes.add(bot.uid);
+
+  const updatedLikes = Array.from(likes);
+
+  await db.collection(COMMENTS_COLLECTION).doc(comment.id).set(
+    {
+      usersThatLiked: updatedLikes,
+      likeCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  comment.usersThatLiked = updatedLikes;
+  comment.likeCount = (comment.likeCount ?? 0) + 1;
+
+  return true;
+};
+
 const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
   const now = admin.firestore.FieldValue.serverTimestamp();
   const commentData = {
@@ -427,7 +459,7 @@ const createReplyHelper = async (
 
 const rescheduleForCooldown = async (actionRef, millis) => {
   await actionRef.update({
-    triggerAt: nowMs() + Math.max(millis, minutesToMs(1)),
+    scheduledAt: nowMs() + Math.max(millis, minutesToMs(1)),
   });
 };
 
@@ -441,7 +473,7 @@ const rescheduleWithBackoff = async (actionRef, action, attempts) => {
   const delayMinutes = Math.min(30, Math.pow(2, nextAttempts));
   await actionRef.update({
     attempts: nextAttempts,
-    triggerAt: nowMs() + minutesToMs(delayMinutes),
+    scheduledAt: nowMs() + minutesToMs(delayMinutes),
   });
   return { rescheduled: true };
 };
@@ -470,7 +502,7 @@ const processSingleAction = async ({
 
   if (contextResult.unpublished) {
     await actionDoc.ref.update({
-      triggerAt: nowMs() + minutesToMs(10),
+      scheduledAt: nowMs() + minutesToMs(10),
     });
     return { status: "post_unpublished" };
   }
@@ -480,63 +512,148 @@ const processSingleAction = async ({
     repliesByBotInThread: contextResult.repliesByBotInThread,
   };
 
-  const result = await handlePendingAction({
-    action,
-    bot,
-    context: {
-      post: contextResult.post,
-      parentComment: contextResult.parentComment,
-      threadRootCommentId: contextResult.threadRootCommentId,
-      threadContext: contextResult.threadContext,
-      commentsByBotOnPost: state.commentsByBotOnPost,
-      repliesByBotInThread: state.repliesByBotInThread,
-      triggeringComment: contextResult.parentComment,
-    },
-    helpers: {
-      random: Math.random,
-      weightedChoice,
-      generateComment: async ({ mode, post, parentComment, threadContext }) =>
-        generateInCharacterComment({
+  const metadata = action.metadata ?? {};
+  const behavior = bot.behavior || {};
+
+  const sanitizedThreadContext = Array.isArray(contextResult.threadContext)
+    ? contextResult.threadContext
+        .map((entry) => prepareCommentForPrompt(entry))
+        .filter(Boolean)
+    : [];
+
+  const sanitizedParentComment = prepareCommentForPrompt(contextResult.parentComment);
+
+  let outcome = { status: "ignored" };
+
+  try {
+    switch (action.type) {
+      case ScheduledBotActionType.COMMENT_ON_POST: {
+        const maxPerPost = behavior.maxCommentsPerPost;
+        if (Number.isFinite(maxPerPost) && state.commentsByBotOnPost >= maxPerPost) {
+          outcome = { status: "ignored", reason: "post_quota_reached" };
+          break;
+        }
+
+        const rawComment = await generateInCharacterComment({
           openAI,
           bot,
-          mode,
-          post,
-          parentComment: prepareCommentForPrompt(parentComment),
-          threadContext: Array.isArray(threadContext)
-            ? threadContext
-                .map((entry) => prepareCommentForPrompt(entry))
-                .filter(Boolean)
-            : [],
-        }),
-      maybeAddTypos,
-      createCommentOnPost: ({ post, text }) =>
-        createCommentOnPostHelper(db, state, { bot, post, text }),
-      createReplyToComment: ({ post, parentComment, threadRootCommentId, text }) =>
-        createReplyHelper(db, state, {
+          mode: metadata.mode ?? "TOP_LEVEL",
+          post: contextResult.post,
+          parentComment: null,
+          threadContext: sanitizedThreadContext,
+          metadata,
+        });
+        const finalComment = maybeAddTypos(bot, rawComment);
+        const commentId = await createCommentOnPostHelper(db, state, {
           bot,
-          post,
-          parentComment,
-          threadRootCommentId,
-          text,
-        }),
-      likePost: ({ post }) => likePostHelper(db, { bot, post }),
-      logger,
-    },
-  });
+          post: contextResult.post,
+          text: finalComment,
+        });
+
+        outcome = {
+          status: "engaged",
+          action: "commentOnPost",
+          commentId,
+        };
+        break;
+      }
+      case ScheduledBotActionType.REPLY_TO_COMMENT: {
+        if (!contextResult.parentComment) {
+          outcome = { status: "ignored", reason: "missing_parent_comment" };
+          break;
+        }
+
+        const maxReplies = behavior.maxRepliesPerThread;
+        if (Number.isFinite(maxReplies) && state.repliesByBotInThread >= maxReplies) {
+          outcome = { status: "ignored", reason: "thread_quota_reached" };
+          break;
+        }
+
+        if (
+          contextResult.parentComment.isBotAuthor &&
+          state.repliesByBotInThread >= 2
+        ) {
+          outcome = { status: "ignored", reason: "bot_loop_guard" };
+          break;
+        }
+
+        const rawComment = await generateInCharacterComment({
+          openAI,
+          bot,
+          mode: metadata.mode ?? "REPLY",
+          post: contextResult.post,
+          parentComment: sanitizedParentComment,
+          threadContext: sanitizedThreadContext,
+          metadata,
+        });
+        const finalComment = maybeAddTypos(bot, rawComment);
+        const commentId = await createReplyHelper(db, state, {
+          bot,
+          post: contextResult.post,
+          parentComment: contextResult.parentComment,
+          threadRootCommentId: contextResult.threadRootCommentId,
+          text: finalComment,
+        });
+
+        outcome = {
+          status: "engaged",
+          action: "replyToComment",
+          commentId,
+        };
+        break;
+      }
+      case ScheduledBotActionType.LIKE_POST: {
+        const liked = await likePostHelper(db, {
+          bot,
+          post: contextResult.post,
+        });
+
+        outcome = {
+          status: liked ? "engaged" : "ignored",
+          action: "likePost",
+        };
+        break;
+      }
+      case ScheduledBotActionType.LIKE_COMMENT: {
+        const liked = await likeCommentHelper(db, {
+          bot,
+          comment: contextResult.parentComment,
+        });
+
+        outcome = {
+          status: liked ? "engaged" : "ignored",
+          action: "likeComment",
+        };
+        break;
+      }
+      default: {
+        logger.warn?.("Unknown scheduled bot action type", {
+          actionType: action.type,
+          actionId: action.id,
+        });
+        outcome = { status: "ignored", reason: "unknown_action" };
+        break;
+      }
+    }
+  } catch (error) {
+    logger.error?.("Failed to execute scheduled bot action", {
+      actionId: action.id,
+      actionType: action.type,
+      error: error.message,
+    });
+    throw error;
+  }
 
   await actionDoc.ref.delete();
 
-  if (result.status === "engaged") {
+  if (outcome.status === "engaged") {
     await updateBotCooldown(db, bot, nowMs());
   }
 
-  return {
-    status: result.status,
-    action: result.action,
-  };
+  return outcome;
 };
 
-export const processPendingActions = async ({
+export const processScheduledBotActions = async ({
   db,
   openAI,
   limit = 10,
@@ -550,10 +667,13 @@ export const processPendingActions = async ({
     rescheduled: 0,
     deleted: 0,
     errors: 0,
+    likes: 0,
   };
 
   const now = nowMs();
-  const snapshot = await pendingActionsDueQuery(db, now).limit(limit).get();
+  const snapshot = await scheduledActionsDueQuery(db, now)
+    .limit(limit)
+    .get();
 
   if (snapshot.empty) {
     return stats;
@@ -561,7 +681,7 @@ export const processPendingActions = async ({
 
   for (const doc of snapshot.docs) {
     stats.total += 1;
-    const action = toPendingAction(doc);
+    const action = toScheduledBotAction(doc);
 
     if ((action.attempts ?? 0) >= MAX_PENDING_ACTION_ATTEMPTS) {
       await doc.ref.delete();
@@ -570,7 +690,7 @@ export const processPendingActions = async ({
     }
 
     try {
-      const botSnap = await botProfilesCollection(db).doc(action.userUid).get();
+      const botSnap = await botProfilesCollection(db).doc(action.botId).get();
       const bot = toBotProfile(botSnap);
 
       if (!bot || !bot.isActive) {
@@ -597,6 +717,9 @@ export const processPendingActions = async ({
 
       if (outcome.status === "engaged") {
         stats.engaged += 1;
+        if (outcome.action === "likePost" || outcome.action === "likeComment") {
+          stats.likes += 1;
+        }
       } else if (outcome.status === "ignored") {
         stats.ignored += 1;
       } else if (outcome.status === "missing_post") {
@@ -607,7 +730,7 @@ export const processPendingActions = async ({
     } catch (error) {
       logger.error?.("Failed to process pending action", {
         actionId: doc.id,
-        userUid: action.userUid,
+        botId: action.botId,
         error: error.message,
       });
 
@@ -623,3 +746,5 @@ export const processPendingActions = async ({
 
   return stats;
 };
+
+export const processPendingActions = processScheduledBotActions;

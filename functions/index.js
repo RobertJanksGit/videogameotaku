@@ -33,7 +33,7 @@ import puppeteer from "puppeteer";
 import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
-import { schedulePostNotifications, scheduleReplyNotifications, processPendingActions } from "./bots/index.js";
+import { runBotActivityTick, processScheduledBotActions } from "./bots/index.js";
 
 // Define all secrets at the top of the file
 const bucketName = defineSecret("STORAGE_BUCKET_NAME");
@@ -3167,127 +3167,30 @@ export const prerender = onRequest(
   }
 );
 
-export const enqueueBotPostNotifications = onDocumentCreated(
+
+
+export const runBotActivityScheduler = onSchedule(
   {
-    document: "posts/{postId}",
-    maxInstances: 10,
+    schedule: "*/5 * * * *",
+    maxInstances: 1,
+    memory: "512MiB",
+    timeZone: "UTC",
   },
-  async (event) => {
-    const snapshot = event.data;
-    if (!snapshot) {
-      return;
-    }
-
-    const postData = snapshot.data();
-    if (!postData) {
-      return;
-    }
-
-    const status = postData.status ?? "published";
-    if (status !== "published") {
-      return;
-    }
-
+  async () => {
     try {
-      const scheduled = await schedulePostNotifications({
+      const stats = await runBotActivityTick({
         db,
-        postId: event.params.postId,
-        postData,
-        nowMs: Date.now(),
+        now: Date.now(),
       });
-      if (scheduled > 0) {
-        console.log(
-          `Scheduled ${scheduled} bot pending actions for post ${event.params.postId}`
-        );
-      }
+      console.log("Bot activity tick completed", stats);
     } catch (error) {
-      console.error("Failed to schedule bot actions for post create", {
-        postId: event.params.postId,
-        error: error.message,
-      });
+      console.error("Bot activity tick failed", error);
+      throw error;
     }
   }
 );
 
-export const enqueueBotPostNotificationsOnPublish = onDocumentUpdated(
-  {
-    document: "posts/{postId}",
-    maxInstances: 10,
-  },
-  async (event) => {
-    const beforeData = event.data.before?.data();
-    const afterData = event.data.after?.data();
-
-    if (!beforeData || !afterData) {
-      return;
-    }
-
-    const beforeStatus = beforeData.status ?? "pending";
-    const afterStatus = afterData.status ?? "pending";
-
-    if (beforeStatus === afterStatus || afterStatus !== "published") {
-      return;
-    }
-
-    try {
-      const scheduled = await schedulePostNotifications({
-        db,
-        postId: event.params.postId,
-        postData: afterData,
-        nowMs: Date.now(),
-      });
-      if (scheduled > 0) {
-        console.log(
-          `Scheduled ${scheduled} bot pending actions after publish for post ${event.params.postId}`
-        );
-      }
-    } catch (error) {
-      console.error("Failed to schedule bot actions on publish", {
-        postId: event.params.postId,
-        error: error.message,
-      });
-    }
-  }
-);
-
-export const enqueueBotReplyNotifications = onDocumentCreated(
-  {
-    document: "comments/{commentId}",
-    maxInstances: 20,
-  },
-  async (event) => {
-    const snapshot = event.data;
-    if (!snapshot) {
-      return;
-    }
-
-    const commentData = snapshot.data();
-    if (!commentData || !commentData.postId) {
-      return;
-    }
-
-    try {
-      const scheduled = await scheduleReplyNotifications({
-        db,
-        commentId: event.params.commentId,
-        commentData,
-        nowMs: Date.now(),
-      });
-      if (scheduled > 0) {
-        console.log(
-          `Scheduled ${scheduled} bot pending actions for comment ${event.params.commentId}`
-        );
-      }
-    } catch (error) {
-      console.error("Failed to schedule bot reply actions", {
-        commentId: event.params.commentId,
-        error: error.message,
-      });
-    }
-  }
-);
-
-export const processBotPendingActions = onSchedule(
+export const processBotScheduledActions = onSchedule(
   {
     schedule: "*/5 * * * *",
     maxInstances: 1,
@@ -3297,15 +3200,15 @@ export const processBotPendingActions = onSchedule(
   },
   async () => {
     try {
-      const stats = await processPendingActions({
+      const stats = await processScheduledBotActions({
         db,
         openAI: getOpenAIClient(),
         limit: 20,
         logger: console,
       });
-      console.log("Bot pending actions processed", stats);
+      console.log("Bot scheduled actions processed", stats);
     } catch (error) {
-      console.error("Bot pending action processor failed", error);
+      console.error("Bot scheduled action processor failed", error);
       throw error;
     }
   }
