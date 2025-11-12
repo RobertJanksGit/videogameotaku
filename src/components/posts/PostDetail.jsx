@@ -11,12 +11,12 @@ import {
   query,
   where,
   orderBy,
-  getDocs,
   serverTimestamp,
   updateDoc,
   setDoc,
   increment,
   writeBatch,
+  onSnapshot,
 } from "firebase/firestore";
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
@@ -168,62 +168,64 @@ const PostDetail = () => {
   };
 
   useEffect(() => {
-    const fetchPost = async () => {
-      try {
-        const postDoc = await getDoc(doc(db, "posts", postId));
-        if (postDoc.exists()) {
-          const postData = { id: postDoc.id, ...postDoc.data() };
-          setPost(postData);
+    if (!postId) return;
 
-          // Set page title and meta description
-          document.title = `${postData.title} | Video Game Otaku`;
-        } else {
+    setLoading(true);
+    const postRef = doc(db, "posts", postId);
+
+    const unsubscribe = onSnapshot(
+      postRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setLoading(false);
           navigate("/");
+          return;
         }
-      } catch (error) {
-        console.error("Error fetching post:", error);
-        navigate("/");
-      } finally {
+
+        const postData = { id: snapshot.id, ...snapshot.data() };
+        setPost(postData);
+        document.title = `${postData.title} | Video Game Otaku`;
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error listening to post:", error);
         setLoading(false);
       }
-    };
+    );
 
-    fetchPost();
+    return () => unsubscribe();
   }, [postId, navigate]);
 
-  // Add a new useEffect to fetch comments when the post is loaded
   useEffect(() => {
-    const fetchComments = async () => {
-      if (!postId) return;
+    if (!postId) return;
 
-      setCommentsLoading(true);
-      try {
-        const commentsQuery = query(
-          collection(db, "comments"),
-          where("postId", "==", postId),
-          orderBy("createdAt", "asc")
-        );
+    setCommentsLoading(true);
+    const commentsQueryRef = query(
+      collection(db, "comments"),
+      where("postId", "==", postId),
+      orderBy("createdAt", "asc")
+    );
 
-        const commentsSnapshot = await getDocs(commentsQuery);
-
-        const fetchedComments = commentsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          replyCount: doc.data().replyCount ?? 0,
+    const unsubscribe = onSnapshot(
+      commentsQueryRef,
+      (snapshot) => {
+        const fetchedComments = snapshot.docs.map((docSnapshot) => ({
+          id: docSnapshot.id,
+          ...docSnapshot.data(),
+          replyCount: docSnapshot.data().replyCount ?? 0,
         }));
 
         setComments(fetchedComments);
-      } catch (error) {
-        console.error("Error fetching comments:", error);
-      } finally {
+        setCommentsLoading(false);
+      },
+      (error) => {
+        console.error("Error listening to comments:", error);
         setCommentsLoading(false);
       }
-    };
+    );
 
-    if (!loading && post) {
-      fetchComments();
-    }
-  }, [postId, loading, post]);
+    return () => unsubscribe();
+  }, [postId]);
 
   // Separate useEffect for handling comment scrolling
   useEffect(() => {
@@ -401,7 +403,6 @@ const PostDetail = () => {
           replyCount: 0,
         };
 
-        setComments((prev) => [...prev, newCommentObj]);
         clearNewCommentDraft();
 
         const postRef = doc(db, "posts", postId);
@@ -545,6 +546,12 @@ const PostDetail = () => {
           path: replyRef.path,
         });
 
+        const newReply = {
+          id: replyRef.id,
+          ...replyPayload,
+          createdAt: new Date(),
+        };
+
         const parentCommentRef = doc(db, "comments", parentId);
         await updateDoc(parentCommentRef, {
           replyCount: increment(1),
@@ -583,12 +590,6 @@ const PostDetail = () => {
           );
         }
 
-        const newReply = {
-          id: replyRef.id,
-          ...replyPayload,
-          createdAt: new Date(),
-        };
-
         if (parentComment.authorId && parentComment.authorId !== user.uid) {
           try {
             const authorDoc = await getDoc(
@@ -618,40 +619,6 @@ const PostDetail = () => {
             );
           }
         }
-
-        setComments((prevComments) => {
-          const replyAlreadyPresent = prevComments.some(
-            (comment) => comment.id === newReply.id
-          );
-
-          const updatedComments = prevComments.map((comment) => {
-            if (comment.id !== parentId) {
-              return comment;
-            }
-
-            if (replyAlreadyPresent) {
-              return comment;
-            }
-
-            return {
-              ...comment,
-              replyCount: (comment.replyCount || 0) + 1,
-            };
-          });
-
-          if (replyAlreadyPresent) {
-            const seenIds = new Set();
-            return updatedComments.filter((comment) => {
-              if (seenIds.has(comment.id)) {
-                return false;
-              }
-              seenIds.add(comment.id);
-              return true;
-            });
-          }
-
-          return [...updatedComments, newReply];
-        });
 
         return {
           status: "posted",

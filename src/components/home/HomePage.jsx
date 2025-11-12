@@ -11,6 +11,7 @@ import {
   doc,
   updateDoc,
   where,
+  onSnapshot,
 } from "firebase/firestore";
 import { Link, useNavigate } from "react-router-dom";
 import VoteButtons from "../posts/VoteButtons";
@@ -34,6 +35,7 @@ import CommunityActivityWidget from "../activity/CommunityActivityWidget";
 
 const createEmptyTabState = () => ({
   posts: [],
+  loadMorePostIds: [],
   lastVisible: null,
   hasMore: true,
   isLoading: false,
@@ -56,11 +58,18 @@ const HomePage = () => {
   const [selectedPlatform, setSelectedPlatform] = useState("all");
   const [activeTab, setActiveTab] = useState(FEED_TAB_KEYS.NEW);
   const [tabData, setTabData] = useState(() => buildInitialTabData());
+  const tabDataRef = useRef(tabData);
+  const postListenersRef = useRef(new Map());
+  const tabQueryListenersRef = useRef(new Map());
 
   const tabs = useMemo(() => getFeedTabs(), []);
   const currentTabState = tabData[activeTab] || createEmptyTabState();
   const postsToRender = currentTabState.posts;
   const firstPostId = postsToRender[0]?.id;
+
+  useEffect(() => {
+    tabDataRef.current = tabData;
+  }, [tabData]);
 
   const authorIds = useMemo(() => {
     const ids = new Set();
@@ -74,6 +83,182 @@ const HomePage = () => {
   }, [postsToRender, featuredPosts]);
 
   const authorRanks = useAuthorRanks(authorIds);
+
+  const getPostCreatedAtMillis = useCallback(
+    (post) => {
+      const date = getTimestampDate(post?.createdAt);
+      return date ? date.getTime() : 0;
+    },
+    []
+  );
+
+  const sortFeaturedPostsList = useCallback(
+    (posts) =>
+      [...posts].sort((a, b) => {
+        const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
+        if (voteDiff !== 0) return voteDiff;
+        return getPostCreatedAtMillis(b) - getPostCreatedAtMillis(a);
+      }),
+    [getPostCreatedAtMillis]
+  );
+
+  const detachAllPostListeners = useCallback(() => {
+    postListenersRef.current.forEach((unsubscribe, postId) => {
+      try {
+        unsubscribe();
+      } catch (error) {
+        console.error(`Error detaching listener for post ${postId}:`, error);
+      }
+    });
+    postListenersRef.current.clear();
+  }, []);
+
+  const detachAllTabQueryListeners = useCallback(() => {
+    tabQueryListenersRef.current.forEach((unsubscribe, key) => {
+      try {
+        unsubscribe();
+      } catch (error) {
+        console.error(`Error detaching listener for tab ${key}:`, error);
+      }
+    });
+    tabQueryListenersRef.current.clear();
+  }, []);
+
+  const updatePostInTabState = useCallback(
+    (updatedPost) => {
+      if (!updatedPost?.id) {
+        return;
+      }
+
+      setTabData((prev) => {
+        let changed = false;
+        const nextState = {};
+
+        Object.entries(prev).forEach(([key, state]) => {
+          if (!state.posts?.length) {
+            nextState[key] = state;
+            return;
+          }
+
+          const hasPost = state.posts.some((post) => post.id === updatedPost.id);
+          if (!hasPost) {
+            nextState[key] = state;
+            return;
+          }
+
+          changed = true;
+          const updatedPosts = state.posts.map((post) =>
+            post.id === updatedPost.id ? { ...post, ...updatedPost } : post
+          );
+
+          nextState[key] = {
+            ...state,
+            posts: processPostsForTab(key, updatedPosts),
+          };
+        });
+
+        return changed ? nextState : prev;
+      });
+
+      setFeaturedPosts((prev) => {
+        const index = prev.findIndex((post) => post.id === updatedPost.id);
+        if (index === -1) return prev;
+
+        const updated = [...prev];
+        updated[index] = { ...updated[index], ...updatedPost };
+        return sortFeaturedPostsList(updated);
+      });
+    },
+    [sortFeaturedPostsList]
+  );
+
+  const removePostFromState = useCallback(
+    (postId) => {
+      if (!postId) return;
+
+      setTabData((prev) => {
+        let changed = false;
+        const nextState = {};
+
+        Object.entries(prev).forEach(([key, state]) => {
+          if (!state.posts?.length) {
+            nextState[key] = state;
+            return;
+          }
+
+          const filteredPosts = state.posts.filter((post) => post.id !== postId);
+          if (filteredPosts.length === state.posts.length) {
+            nextState[key] = state;
+            return;
+          }
+
+          changed = true;
+          const nextLoadMoreIds = (state.loadMorePostIds || []).filter(
+            (id) => id !== postId
+          );
+
+          nextState[key] = {
+            ...state,
+            posts: processPostsForTab(key, filteredPosts),
+            loadMorePostIds: nextLoadMoreIds,
+          };
+        });
+
+        return changed ? nextState : prev;
+      });
+
+      setFeaturedPosts((prev) => {
+        const filtered = prev.filter((post) => post.id !== postId);
+        return filtered.length === prev.length ? prev : filtered;
+      });
+    },
+    []
+  );
+
+  const attachPostListener = useCallback(
+    (postId) => {
+      if (!postId) return;
+      if (postListenersRef.current.has(postId)) return;
+
+      const postRef = doc(db, "posts", postId);
+      const unsubscribe = onSnapshot(
+        postRef,
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            removePostFromState(postId);
+            unsubscribe();
+            postListenersRef.current.delete(postId);
+            return;
+          }
+
+          const data = snapshot.data();
+          if (data.status !== "published") {
+            removePostFromState(postId);
+            unsubscribe();
+            postListenersRef.current.delete(postId);
+            return;
+          }
+
+          const updatedPost = { id: snapshot.id, ...data };
+          updatePostInTabState(updatedPost);
+        },
+        (error) => {
+          console.error(`Error listening to post ${postId}:`, error);
+        }
+      );
+
+      postListenersRef.current.set(postId, unsubscribe);
+    },
+    [db, removePostFromState, updatePostInTabState]
+  );
+
+  useEffect(
+    () => () => {
+      detachAllTabQueryListeners();
+      detachAllPostListeners();
+    },
+    [detachAllPostListeners, detachAllTabQueryListeners]
+  );
 
   const siteUrl =
     import.meta.env.VITE_APP_URL ||
@@ -219,9 +404,13 @@ const HomePage = () => {
           })
         );
 
-        setFeaturedPosts(extendedPosts);
+        const sortedExtendedPosts = sortFeaturedPostsList(extendedPosts);
+        setFeaturedPosts(sortedExtendedPosts);
+        sortedExtendedPosts.forEach((post) => attachPostListener(post.id));
       } else {
-        setFeaturedPosts(featuredPosts);
+        const sortedFeaturedPosts = sortFeaturedPostsList(featuredPosts);
+        setFeaturedPosts(sortedFeaturedPosts);
+        sortedFeaturedPosts.forEach((post) => attachPostListener(post.id));
       }
     } catch (error) {
       console.error("Error fetching featured posts:", error);
@@ -230,62 +419,128 @@ const HomePage = () => {
 
   const fetchPostsForTab = useCallback(
     async (tabKey, { isLoadMore = false } = {}) => {
-      const existingState = tabData[tabKey] || createEmptyTabState();
-      const effectiveLastVisible = isLoadMore
-        ? existingState.lastVisible
-        : null;
+      const existingState = tabDataRef.current[tabKey] || createEmptyTabState();
 
-      setTabData((prev) => {
-        const previous = prev[tabKey] || createEmptyTabState();
-        return {
-          ...prev,
-          [tabKey]: {
-            ...previous,
-            posts: isLoadMore ? previous.posts : [],
-            lastVisible: isLoadMore ? previous.lastVisible : null,
-            hasMore: isLoadMore ? previous.hasMore : true,
-            isLoading: true,
-            error: null,
-          },
-        };
-      });
+      if (!isLoadMore) {
+        setTabData((prev) => {
+          const previous = prev[tabKey] || createEmptyTabState();
+          return {
+            ...prev,
+            [tabKey]: {
+              ...previous,
+              posts: [],
+              loadMorePostIds: [],
+              lastVisible: null,
+              hasMore: true,
+              isLoading: true,
+              error: null,
+            },
+          };
+        });
 
-      try {
+        const existingListener = tabQueryListenersRef.current.get(tabKey);
+        if (existingListener) {
+          existingListener();
+          tabQueryListenersRef.current.delete(tabKey);
+        }
+
         const { queryRef, config } = buildFeedQuery({
           db,
           tabKey,
           selectedCategory,
           selectedPlatform,
-          lastVisible: effectiveLastVisible,
+          lastVisible: null,
         });
 
-        const postsSnapshot = await getDocs(queryRef);
+        const pageSize = config?.pageSize ?? 10;
 
-        const fetchedPosts = await Promise.all(
-          postsSnapshot.docs.map(async (docSnapshot) => {
-            const post = { id: docSnapshot.id, ...docSnapshot.data() };
-            const migratedPost = await migratePost(post);
-            const commentsQuery = query(
-              collection(db, "comments"),
-              where("postId", "==", docSnapshot.id)
-            );
-            const commentsSnapshot = await getDocs(commentsQuery);
-            const commentCount = commentsSnapshot.size;
+        const unsubscribe = onSnapshot(
+          queryRef,
+          (snapshot) => {
+            const lastDoc =
+              snapshot.docs.length > 0
+                ? snapshot.docs[snapshot.docs.length - 1]
+                : null;
 
-            return { ...migratedPost, commentCount };
-          })
+            Promise.all(
+              snapshot.docs.map(async (docSnapshot) => {
+                const post = { id: docSnapshot.id, ...docSnapshot.data() };
+                const migratedPost = await migratePost(post);
+                return migratedPost;
+              })
+            )
+              .then((posts) => {
+                posts.forEach((post) => attachPostListener(post.id));
+                setTabData((prev) => {
+                  const previous = prev[tabKey] || createEmptyTabState();
+                  const loadMoreIds = previous.loadMorePostIds || [];
+                  const loadMoreSet = new Set(loadMoreIds);
+                  const retainedLoadMorePosts = previous.posts.filter((post) =>
+                    loadMoreSet.has(post.id)
+                  );
+
+                  const mergedPosts = mergePostsForTab(
+                    tabKey,
+                    retainedLoadMorePosts,
+                    posts
+                  );
+
+                  return {
+                    ...prev,
+                    [tabKey]: {
+                      ...previous,
+                      posts: mergedPosts,
+                      lastVisible: lastDoc || previous.lastVisible,
+                      hasMore: snapshot.docs.length === pageSize,
+                      isLoading: false,
+                      error: null,
+                      loadMorePostIds: loadMoreIds,
+                    },
+                  };
+                });
+              })
+              .catch((error) => {
+                console.error(`Error processing posts for ${tabKey}:`, error);
+                setTabData((prev) => {
+                  const previous = prev[tabKey] || createEmptyTabState();
+                  return {
+                    ...prev,
+                    [tabKey]: {
+                      ...previous,
+                      isLoading: false,
+                      error:
+                        "Unable to load posts right now. Please refresh or try again shortly.",
+                    },
+                  };
+                });
+              });
+          },
+          (error) => {
+            console.error(`Error listening to ${tabKey} posts:`, error);
+            setTabData((prev) => {
+              const previous = prev[tabKey] || createEmptyTabState();
+              return {
+                ...prev,
+                [tabKey]: {
+                  ...previous,
+                  isLoading: false,
+                  error:
+                    "Unable to load posts right now. Please refresh or try again shortly.",
+                },
+              };
+            });
+          }
         );
 
-        const mergedPosts = mergePostsForTab(
+        tabQueryListenersRef.current.set(tabKey, unsubscribe);
+      } else {
+        const { queryRef, config } = buildFeedQuery({
+          db,
           tabKey,
-          isLoadMore ? existingState.posts : [],
-          fetchedPosts
-        );
-
-        const newLastVisible =
-          postsSnapshot.docs.length > 0
-            ? postsSnapshot.docs[postsSnapshot.docs.length - 1]
-            : effectiveLastVisible;
+          selectedCategory,
+          selectedPlatform,
+          lastVisible: existingState.lastVisible,
+        });
 
         const pageSize = config?.pageSize ?? 10;
 
@@ -295,37 +550,86 @@ const HomePage = () => {
             ...prev,
             [tabKey]: {
               ...previous,
-              posts: mergedPosts,
-              lastVisible: newLastVisible,
-              hasMore: postsSnapshot.docs.length === pageSize,
-              isLoading: false,
+              isLoading: true,
               error: null,
             },
           };
         });
-      } catch (error) {
-        console.error(`Error fetching ${tabKey} posts:`, error);
-        setTabData((prev) => {
-          const previous = prev[tabKey] || createEmptyTabState();
-          return {
-            ...prev,
-            [tabKey]: {
-              ...previous,
-              isLoading: false,
-              error:
-                "Unable to load posts right now. Please refresh or try again shortly.",
-            },
-          };
-        });
+
+        try {
+          const postsSnapshot = await getDocs(queryRef);
+          const fetchedPosts = await Promise.all(
+            postsSnapshot.docs.map(async (docSnapshot) => {
+              const post = { id: docSnapshot.id, ...docSnapshot.data() };
+              const migratedPost = await migratePost(post);
+              return migratedPost;
+            })
+          );
+
+          fetchedPosts.forEach((post) => attachPostListener(post.id));
+
+          const newLastVisible =
+            postsSnapshot.docs.length > 0
+              ? postsSnapshot.docs[postsSnapshot.docs.length - 1]
+              : existingState.lastVisible;
+
+          setTabData((prev) => {
+            const previous = prev[tabKey] || createEmptyTabState();
+            const mergedPosts = mergePostsForTab(
+              tabKey,
+              previous.posts,
+              fetchedPosts
+            );
+            const updatedLoadMoreIds = Array.from(
+              new Set([
+                ...(previous.loadMorePostIds || []),
+                ...fetchedPosts.map((post) => post.id),
+              ])
+            );
+
+            return {
+              ...prev,
+              [tabKey]: {
+                ...previous,
+                posts: mergedPosts,
+                lastVisible: newLastVisible,
+                hasMore: postsSnapshot.docs.length === pageSize,
+                isLoading: false,
+                loadMorePostIds: updatedLoadMoreIds,
+              },
+            };
+          });
+        } catch (error) {
+          console.error(`Error fetching more ${tabKey} posts:`, error);
+          setTabData((prev) => {
+            const previous = prev[tabKey] || createEmptyTabState();
+            return {
+              ...prev,
+              [tabKey]: {
+                ...previous,
+                isLoading: false,
+                error:
+                  "Unable to load posts right now. Please refresh or try again shortly.",
+              },
+            };
+          });
+        }
       }
     },
-    [db, migratePost, selectedCategory, selectedPlatform, tabData]
+    [
+      attachPostListener,
+      db,
+      migratePost,
+      selectedCategory,
+      selectedPlatform,
+    ]
   );
 
   // Effect for initial load and category/platform changes
   useEffect(() => {
+    detachAllTabQueryListeners();
     setTabData(buildInitialTabData());
-  }, [selectedCategory, selectedPlatform]);
+  }, [selectedCategory, selectedPlatform, detachAllTabQueryListeners]);
 
   useEffect(() => {
     const state = tabData[activeTab];
@@ -342,7 +646,7 @@ const HomePage = () => {
   // Separate effect for featured posts
   useEffect(() => {
     fetchFeaturedPosts();
-  }, [user]);
+  }, [user, attachPostListener, migratePost, sortFeaturedPostsList]);
 
   useEffect(() => {
     const container = featuredCarouselRef.current;
@@ -454,13 +758,9 @@ const HomePage = () => {
 
     setFeaturedPosts((posts) => {
       const updatedPosts = posts.map((post) =>
-        post.id === updatedPost.id ? updatedPost : post
+        post.id === updatedPost.id ? { ...post, ...updatedPost } : post
       );
-      return [...updatedPosts].sort((a, b) => {
-        const voteDiff = (b.totalVotes || 0) - (a.totalVotes || 0);
-        if (voteDiff !== 0) return voteDiff;
-        return b.createdAt?.toMillis() - a.createdAt?.toMillis();
-      });
+      return sortFeaturedPostsList(updatedPosts);
     });
   };
 
