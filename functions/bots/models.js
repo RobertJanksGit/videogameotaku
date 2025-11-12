@@ -37,7 +37,8 @@ export const PendingActionType = Object.freeze({
  * @property {number} typoChance
  * @property {number} maxTyposPerComment
  * @property {string} activeTimeZone
- * @property {{ startHour: number, endHour: number }} activeHours
+ * @property {{ start: string, end: string }[]=} activeWindows
+ * @property {{ startHour: number, endHour: number }=} activeHours
  * @property {number} questionProbability
  * @property {number} disagreementProbability
  */

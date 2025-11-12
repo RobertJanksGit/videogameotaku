@@ -6,6 +6,13 @@ import PropTypes from "prop-types";
 const UserManager = ({ darkMode }) => {
   const [users, setUsers] = useState([]);
 
+  const getDisplayName = (user) =>
+    user?.displayName ||
+    user?.username ||
+    user?.userName ||
+    user?.name ||
+    "N/A";
+
   // Fetch users
   useEffect(() => {
     const fetchUsers = async () => {
@@ -120,6 +127,13 @@ const UserManager = ({ darkMode }) => {
                   darkMode ? "text-gray-200" : "text-gray-500"
                 } uppercase tracking-wider`}
               >
+                Bot Presence
+              </th>
+              <th
+                className={`px-6 py-3 text-left text-xs font-medium ${
+                  darkMode ? "text-gray-200" : "text-gray-500"
+                } uppercase tracking-wider`}
+              >
                 Actions
               </th>
             </tr>
@@ -136,7 +150,7 @@ const UserManager = ({ darkMode }) => {
                     darkMode ? "text-gray-200" : "text-gray-900"
                   }`}
                 >
-                  {user.name || "N/A"}
+                  {getDisplayName(user)}
                 </td>
                 <td
                   className={`px-6 py-4 whitespace-nowrap text-sm ${
@@ -161,16 +175,47 @@ const UserManager = ({ darkMode }) => {
                   </select>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      user.isActive
-                        ? "bg-green-100 text-green-800"
-                        : "bg-red-100 text-red-800"
-                    }`}
-                  >
-                    {user.isActive ? "Active" : "Inactive"}
+                  <span className="flex items-center">
+                    <span
+                      className={`mr-2 inline-flex h-2.5 w-2.5 rounded-full ${
+                        user.isActive ? "bg-green-500" : "bg-red-500"
+                      }`}
+                    />
+                    <span
+                      className={`text-sm font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
+                    >
+                      {user.isActive ? "Active" : "Inactive"}
+                    </span>
                   </span>
                 </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                {user.isBot ? (
+                  <span className="flex items-center">
+                    <span
+                      className={`mr-2 inline-flex h-2.5 w-2.5 rounded-full ${
+                        user.isOnline ? "bg-green-500" : "bg-red-500"
+                      }`}
+                    />
+                    <span
+                      className={`text-sm font-medium ${
+                        darkMode ? "text-gray-200" : "text-gray-900"
+                      }`}
+                    >
+                      {user.isOnline ? "Online" : "Offline"}
+                    </span>
+                  </span>
+                ) : (
+                  <span
+                    className={`text-sm ${
+                      darkMode ? "text-gray-400" : "text-gray-500"
+                    }`}
+                  >
+                    N/A
+                  </span>
+                )}
+              </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <button
                     onClick={() => handleToggleActive(user.id, user.isActive)}

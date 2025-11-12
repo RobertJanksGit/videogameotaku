@@ -2,11 +2,11 @@ import { PendingActionType } from "./models.js";
 import { clamp01, weightedChoice as defaultWeightedChoice } from "./utils.js";
 
 const DEFAULT_ACTION_WEIGHTS = {
-  commentOnPost: 0.4,
-  commentOnComment: 0.2,
-  likePostOnly: 0.2,
-  likeAndComment: 0.15,
-  ignore: 0.05,
+  commentOnPost: 0.25,
+  commentOnComment: 0.15,
+  likePostOnly: 0.1,
+  likeAndComment: 0.1,
+  ignore: 0.4,
 };
 
 const normalizeText = (value) => (value ?? "").toString().toLowerCase();

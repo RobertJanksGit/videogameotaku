@@ -27,6 +27,7 @@ const scheduledActionsDueQuery = (db, now) =>
     .orderBy("scheduledAt", "asc");
 
 const THREAD_CONTEXT_LIMIT = 5;
+const TOP_LEVEL_CONTEXT_LIMIT = 10;
 
 const timestampToMillis = (value) => {
   if (!value) return 0;
@@ -57,6 +58,17 @@ const prepareCommentForPrompt = (comment) => {
   const content = comment.content ?? comment.text ?? "";
   if (!content) return null;
   return {
+    authorName: comment.authorName ?? comment.author ?? "",
+    content,
+  };
+};
+
+const prepareTopLevelCommentForPrompt = (comment) => {
+  if (!comment || !comment.id) return null;
+  const content = comment.content ?? comment.text ?? "";
+  if (!content) return null;
+  return {
+    id: String(comment.id),
     authorName: comment.authorName ?? comment.author ?? "",
     content,
   };
@@ -106,6 +118,46 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
     authorName,
     content,
   }));
+};
+
+const buildTopLevelContext = async (db, action, bot) => {
+  if (!action?.postId) {
+    return [];
+  }
+
+  try {
+    const snapshot = await db
+      .collection(COMMENTS_COLLECTION)
+      .where("postId", "==", action.postId)
+      .where("parentCommentId", "==", null)
+      .orderBy("createdAt", "asc")
+      .limit(TOP_LEVEL_CONTEXT_LIMIT * 2)
+      .get();
+
+    const entries = [];
+    for (const doc of snapshot.docs) {
+      const data = { id: doc.id, ...doc.data() };
+      if (!data) continue;
+      if (data.authorId === bot?.uid) continue;
+
+      const sanitized = sanitizeCommentForContext(data);
+      if (!sanitized) continue;
+
+      entries.push({
+        ...sanitized,
+        isBotAuthor: Boolean(data.isBotAuthor),
+        threadRootCommentId: data.threadRootCommentId ?? data.id ?? doc.id,
+      });
+    }
+
+    return entries.slice(-TOP_LEVEL_CONTEXT_LIMIT);
+  } catch (error) {
+    console.error?.("Failed to load top-level comments for bot prompt context", {
+      postId: action.postId,
+      error: error.message,
+    });
+    return [];
+  }
 };
 
 const getCount = async (query) => {
@@ -276,6 +328,7 @@ const fetchContext = async (db, action, bot) => {
   const threadRootCommentId = computeThreadRoot(action, parentComment);
 
   const threadContext = await buildThreadContext(db, parentComment, threadRootCommentId);
+  const topLevelContext = await buildTopLevelContext(db, action, bot);
 
   const commentsByBotOnPost = await getCount(
     db
@@ -299,6 +352,7 @@ const fetchContext = async (db, action, bot) => {
     parentComment,
     threadRootCommentId,
     threadContext,
+    topLevelContext,
     commentsByBotOnPost,
     repliesByBotInThread,
   };
@@ -521,6 +575,12 @@ const processSingleAction = async ({
         .filter(Boolean)
     : [];
 
+  const sanitizedTopLevelContext = Array.isArray(contextResult.topLevelContext)
+    ? contextResult.topLevelContext
+        .map((entry) => prepareTopLevelCommentForPrompt(entry))
+        .filter(Boolean)
+    : [];
+
   const sanitizedParentComment = prepareCommentForPrompt(contextResult.parentComment);
 
   let outcome = { status: "ignored" };
@@ -534,16 +594,82 @@ const processSingleAction = async ({
           break;
         }
 
-        const rawComment = await generateInCharacterComment({
+        const generation = await generateInCharacterComment({
           openAI,
           bot,
           mode: metadata.mode ?? "TOP_LEVEL",
           post: contextResult.post,
           parentComment: null,
           threadContext: sanitizedThreadContext,
+          topLevelComments: sanitizedTopLevelContext,
           metadata,
         });
-        const finalComment = maybeAddTypos(bot, rawComment);
+        const finalComment = maybeAddTypos(bot, generation.comment);
+
+        const wantsReply =
+          generation.mode === "REPLY" && typeof generation.targetCommentId === "string";
+
+        if (wantsReply) {
+          if (!Array.isArray(contextResult.topLevelContext)) {
+            outcome = { status: "ignored", reason: "reply_context_unavailable" };
+            break;
+          }
+
+          const targetId = generation.targetCommentId?.trim();
+          const replyTarget = contextResult.topLevelContext.find(
+            (entry) => String(entry.id) === targetId
+          );
+
+          if (!replyTarget) {
+            outcome = { status: "ignored", reason: "reply_target_not_found" };
+            break;
+          }
+
+          const threadRootId = replyTarget.threadRootCommentId ?? replyTarget.id;
+          if (!threadRootId) {
+            outcome = { status: "ignored", reason: "reply_thread_missing" };
+            break;
+          }
+
+          const repliesByBotForTarget = await getCount(
+            db
+              .collection(COMMENTS_COLLECTION)
+              .where("threadRootCommentId", "==", threadRootId)
+              .where("authorId", "==", bot.uid)
+          );
+
+          const maxReplies = behavior.maxRepliesPerThread;
+          const exceedsThreadLimit =
+            Number.isFinite(maxReplies) && repliesByBotForTarget >= maxReplies;
+
+          if (exceedsThreadLimit) {
+            outcome = { status: "ignored", reason: "thread_quota_reached" };
+            break;
+          }
+
+          state.repliesByBotInThread = repliesByBotForTarget;
+
+          const parentForReply = {
+            ...replyTarget,
+            threadRootCommentId: threadRootId,
+          };
+
+          const commentId = await createReplyHelper(db, state, {
+            bot,
+            post: contextResult.post,
+            parentComment: parentForReply,
+            threadRootCommentId: threadRootId,
+            text: finalComment,
+          });
+
+          outcome = {
+            status: "engaged",
+            action: "replyToComment",
+            commentId,
+          };
+          break;
+        }
+
         const commentId = await createCommentOnPostHelper(db, state, {
           bot,
           post: contextResult.post,
@@ -577,16 +703,17 @@ const processSingleAction = async ({
           break;
         }
 
-        const rawComment = await generateInCharacterComment({
+        const generation = await generateInCharacterComment({
           openAI,
           bot,
           mode: metadata.mode ?? "REPLY",
           post: contextResult.post,
           parentComment: sanitizedParentComment,
           threadContext: sanitizedThreadContext,
+          topLevelComments: sanitizedTopLevelContext,
           metadata,
         });
-        const finalComment = maybeAddTypos(bot, rawComment);
+        const finalComment = maybeAddTypos(bot, generation.comment);
         const commentId = await createReplyHelper(db, state, {
           bot,
           post: contextResult.post,
@@ -674,8 +801,30 @@ export const processScheduledBotActions = async ({
   const snapshot = await scheduledActionsDueQuery(db, now)
     .limit(limit)
     .get();
+  const nowIso = new Date(now).toISOString();
+  const firstScheduledMs = snapshot.empty
+    ? null
+    : timestampToMillis(snapshot.docs[0]?.get("scheduledAt"));
+  console.log(
+    JSON.stringify({
+      type: "scheduled_actions_query",
+      nowIso,
+      range: {
+        from: firstScheduledMs ? new Date(firstScheduledMs).toISOString() : null,
+        to: nowIso,
+      },
+      limit,
+      count: snapshot.size,
+    })
+  );
 
   if (snapshot.empty) {
+    console.log(
+      JSON.stringify({
+        type: "empty_queue",
+        timestamp: nowIso,
+      })
+    );
     return stats;
   }
 
@@ -744,7 +893,20 @@ export const processScheduledBotActions = async ({
     }
   }
 
+  if (stats.total === 0) {
+    console.log(
+      JSON.stringify({
+        type: "empty_queue",
+        timestamp: nowIso,
+      })
+    );
+  }
+
   return stats;
 };
 
 export const processPendingActions = processScheduledBotActions;
+
+export const __testables = {
+  processSingleAction,
+};

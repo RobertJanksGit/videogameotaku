@@ -17,6 +17,33 @@ import {
   nowMs as getNowMs,
 } from "./utils.js";
 
+/* global Intl */
+
+export const resolveBotTimezone = (bot = {}) =>
+  bot?.behavior?.activeTimeZone || bot?.timeZone || "America/Chicago";
+
+const parseHHmm = (hhmm) => {
+  if (typeof hhmm !== "string") {
+    return NaN;
+  }
+  const trimmed = hhmm.trim();
+  if (!trimmed) {
+    return NaN;
+  }
+  const [hourPart, minutePart = "0"] = trimmed.split(":");
+  const rawHour = Number.parseInt(hourPart, 10);
+  const rawMinute = Number.parseInt(minutePart, 10);
+  if (!Number.isFinite(rawHour) || !Number.isFinite(rawMinute)) {
+    return NaN;
+  }
+  if (rawHour === 24 && rawMinute === 0) {
+    return 0;
+  }
+  const hour = Math.max(0, Math.min(23, rawHour));
+  const minute = Math.max(0, Math.min(59, rawMinute));
+  return hour * 60 + minute;
+};
+
 const POSTS_COLLECTION = "posts";
 const COMMENTS_COLLECTION = "comments";
 
@@ -28,8 +55,9 @@ const INITIAL_SCAN_MINUTES = 180;
 const MAX_POSTS_TO_SCAN = 60;
 const MAX_NOTIFICATIONS_TO_SCAN = 120;
 const MIN_ACTION_SPACING_MINUTES = 3;
+const BOT_DECISION_LOG_SAMPLE_RATE = 0.1;
 
-const mentionRegex = /@([A-Za-z0-9_\-]+)/g;
+const mentionRegex = /@([A-Za-z0-9_-]+)/g;
 
 const timestampToMillis = (value) => {
   if (!value) return 0;
@@ -52,7 +80,7 @@ const extractMentionedUsernames = (text = "") => {
 };
 
 const getPostText = (post = {}) =>
-  TEXT_FIELDS.map((field) => (post[field] ?? ""))
+  TEXT_FIELDS.map((field) => post[field] ?? "")
     .join(" \n")
     .toLowerCase();
 
@@ -100,34 +128,183 @@ const getLocalHour = (nowDate, timeZone) => {
   }
 };
 
-const isWithinActiveWindow = (behavior = {}, nowDate) => {
-  if (!behavior.activeTimeZone || !behavior.activeHours) {
-    return true;
+const getLocalMinutes = (nowDate, timeZone) => {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "numeric",
+      hour12: false,
+      timeZone,
+    });
+    const parts = formatter.formatToParts(nowDate);
+    const hour = Number.parseInt(
+      parts.find((part) => part.type === "hour")?.value ?? "",
+      10
+    );
+    const minute = Number.parseInt(
+      parts.find((part) => part.type === "minute")?.value ?? "",
+      10
+    );
+    if (Number.isFinite(hour) && Number.isFinite(minute)) {
+      return hour * 60 + minute;
+    }
+  } catch (error) {
+    console.warn?.("Failed to resolve minutes for bot", {
+      timeZone,
+      error: error.message,
+    });
+  }
+  const fallbackHour = getLocalHour(nowDate, timeZone);
+  const fallbackMinute = nowDate.getUTCMinutes();
+  if (Number.isFinite(fallbackHour) && Number.isFinite(fallbackMinute)) {
+    return fallbackHour * 60 + fallbackMinute;
+  }
+  return nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
+};
+
+const parseTimeToMinutes = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value >= 0 && value < 24) {
+      return Math.round(value * 60);
+    }
+    if (value >= 0 && value < 1440) {
+      return Math.round(value);
+    }
+    return null;
   }
 
-  const { startHour, endHour } = behavior.activeHours;
+  if (typeof value === "string") {
+    const minutes = parseHHmm(value);
+    return Number.isFinite(minutes) ? minutes : null;
+  }
+
+  return null;
+};
+
+const isMinuteWithinWindow = (value, start, end) => {
   if (
-    !Number.isFinite(startHour) ||
-    !Number.isFinite(endHour) ||
-    startHour < 0 ||
-    startHour > 23 ||
-    endHour < 0 ||
-    endHour > 23
+    !Number.isFinite(value) ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end)
   ) {
+    return false;
+  }
+
+  if (start === end) {
+    return false;
+  }
+
+  if (start < end) {
+    return value >= start && value < end;
+  }
+
+  return value >= start || value < end;
+};
+
+export const isWithinActiveWindow = (bot = {}, nowDate, window = {}) => {
+  if (!window) {
+    return false;
+  }
+
+  const tz = window.timeZone || resolveBotTimezone(bot);
+
+  let hourPart = 0;
+  let minutePart = 0;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: tz,
+    });
+    const parts = formatter.formatToParts(nowDate);
+    hourPart = Number.parseInt(
+      parts.find((part) => part.type === "hour")?.value ?? "",
+      10
+    );
+    minutePart = Number.parseInt(
+      parts.find((part) => part.type === "minute")?.value ?? "",
+      10
+    );
+  } catch (error) {
+    console.warn?.("Failed to format local time for window", {
+      error: error.message,
+      timeZone: tz,
+    });
+    hourPart = nowDate.getUTCHours();
+    minutePart = nowDate.getUTCMinutes();
+  }
+
+  if (!Number.isFinite(hourPart) || !Number.isFinite(minutePart)) {
+    return false;
+  }
+
+  const localMinutes = hourPart * 60 + minutePart;
+  const startMinutes = parseTimeToMinutes(window.start);
+  const endMinutes = parseTimeToMinutes(window.end);
+
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) {
+    return false;
+  }
+
+  if (startMinutes === endMinutes) {
+    return false;
+  }
+
+  if (endMinutes > startMinutes) {
+    return localMinutes >= startMinutes && localMinutes < endMinutes;
+  }
+
+  return localMinutes >= startMinutes || localMinutes < endMinutes;
+};
+
+const isBotActiveNow = (bot = {}, nowDate) => {
+  const behavior = bot.behavior || {};
+  const activeWindows = Array.isArray(behavior.activeWindows)
+    ? behavior.activeWindows
+    : null;
+  const timeZone = resolveBotTimezone(bot);
+
+  if (activeWindows?.length) {
+    let hasValidWindow = false;
+    for (const window of activeWindows) {
+      const startMinutes = parseTimeToMinutes(window?.start);
+      const endMinutes = parseTimeToMinutes(window?.end);
+      if (startMinutes === null || endMinutes === null) {
+        continue;
+      }
+      hasValidWindow = true;
+      if (
+        isWithinActiveWindow(
+          bot,
+          nowDate,
+          window?.timeZone ? window : { ...window, timeZone }
+        )
+      ) {
+        return true;
+      }
+    }
+    return hasValidWindow ? false : true;
+  }
+
+  const legacyActiveHours = behavior.activeHours || bot.activeHours || null;
+
+  if (!timeZone || !legacyActiveHours) {
     return true;
   }
 
-  const localHour = getLocalHour(nowDate, behavior.activeTimeZone);
-
-  if (startHour === endHour) {
+  const startMinutes = parseTimeToMinutes(
+    legacyActiveHours.startHour ?? legacyActiveHours.start
+  );
+  const endMinutes = parseTimeToMinutes(
+    legacyActiveHours.endHour ?? legacyActiveHours.end
+  );
+  if (startMinutes === null || endMinutes === null) {
     return true;
   }
 
-  if (startHour < endHour) {
-    return localHour >= startHour && localHour < endHour;
-  }
-
-  return localHour >= startHour || localHour < endHour;
+  const localMinutes = getLocalMinutes(nowDate, timeZone);
+  return isMinuteWithinWindow(localMinutes, startMinutes, endMinutes);
 };
 
 const defaultSinceMs = (now, timestamp, fallbackMinutes) => {
@@ -136,7 +313,10 @@ const defaultSinceMs = (now, timestamp, fallbackMinutes) => {
   if (!valueMs) {
     return fallbackMs;
   }
-  return Math.min(now, Math.max(fallbackMs, valueMs - minutesToMs(STATE_BUFFER_MINUTES)));
+  return Math.min(
+    now,
+    Math.max(fallbackMs, valueMs - minutesToMs(STATE_BUFFER_MINUTES))
+  );
 };
 
 const loadActiveBotsWithState = async (db) => {
@@ -224,7 +404,9 @@ const fetchRecentNotifications = async (db, sinceMs) => {
 
   let parentAuthorById = new Map();
   if (parentIds.length) {
-    const parentRefs = parentIds.map((id) => db.collection(COMMENTS_COLLECTION).doc(id));
+    const parentRefs = parentIds.map((id) =>
+      db.collection(COMMENTS_COLLECTION).doc(id)
+    );
     const parentSnaps = await db.getAll(...parentRefs);
     parentAuthorById = new Map(
       parentSnaps
@@ -247,7 +429,9 @@ const fetchRecentNotifications = async (db, sinceMs) => {
       ...comment,
       parentAuthorId: parentMeta.authorId ?? null,
       threadRootCommentId:
-        comment.threadRootCommentId ?? parentMeta.threadRootCommentId ?? comment.parentCommentId,
+        comment.threadRootCommentId ??
+        parentMeta.threadRootCommentId ??
+        comment.parentCommentId,
     };
   });
 };
@@ -303,14 +487,22 @@ const chooseNotificationCandidate = (bot, candidates, now) => {
   return topSlice[Math.floor(Math.random() * topSlice.length)]?.comment ?? null;
 };
 
-const buildRuntimeUpdate = ({ now, latestPostSeenMs, latestNotificationSeenMs, lastActionAt }) => {
+const buildRuntimeUpdate = ({
+  now,
+  latestPostSeenMs,
+  latestNotificationSeenMs,
+  lastActionAt,
+}) => {
   const update = {};
   if (Number.isFinite(latestPostSeenMs) && latestPostSeenMs > 0) {
     update.lastSeenPostAt = admin.firestore.Timestamp.fromMillis(
       Math.max(now, latestPostSeenMs)
     );
   }
-  if (Number.isFinite(latestNotificationSeenMs) && latestNotificationSeenMs > 0) {
+  if (
+    Number.isFinite(latestNotificationSeenMs) &&
+    latestNotificationSeenMs > 0
+  ) {
     update.lastSeenNotificationAt = admin.firestore.Timestamp.fromMillis(
       Math.max(now, latestNotificationSeenMs)
     );
@@ -322,10 +514,10 @@ const buildRuntimeUpdate = ({ now, latestPostSeenMs, latestNotificationSeenMs, l
   return update;
 };
 
-const randomBoolean = (probability) => Math.random() < clamp01(probability ?? 0);
+const randomBoolean = (probability) =>
+  Math.random() < clamp01(probability ?? 0);
 
 export const runBotActivityForTick = async ({
-  db,
   bot,
   runtimeState,
   now,
@@ -371,6 +563,10 @@ export const runBotActivityForTick = async ({
     return targetsBot;
   });
 
+  const directReplyCandidates = notificationCandidates.filter(
+    (comment) => comment.parentAuthorId === bot.uid
+  );
+
   const latestPostSeenMs = postCandidates.reduce(
     (acc, post) => Math.max(acc, post.createdAtMs),
     lastSeenPostAtMs
@@ -380,7 +576,7 @@ export const runBotActivityForTick = async ({
     lastSeenNotificationAtMs
   );
 
-  if (!isWithinActiveWindow(behavior, nowDate)) {
+  if (!isBotActiveNow(bot, nowDate)) {
     return {
       status: "offline",
       runtimeUpdate: buildRuntimeUpdate({
@@ -392,10 +588,72 @@ export const runBotActivityForTick = async ({
     };
   }
 
-  const baseResponseProbability = clamp01(behavior.baseResponseProbability ?? 0);
+  const baseResponseProbability = clamp01(
+    behavior.baseResponseProbability ?? 0
+  );
   const replyResponseProbability = clamp01(
     behavior.replyResponseProbability ?? behavior.baseResponseProbability ?? 0
   );
+
+  if (directReplyCandidates.length) {
+    if (
+      runtimeState?.lastActionScheduledAt &&
+      now - runtimeState.lastActionScheduledAt <
+        minutesToMs(MIN_ACTION_SPACING_MINUTES)
+    ) {
+      return {
+        status: "cooldown",
+        runtimeUpdate: buildRuntimeUpdate({
+          now,
+          latestPostSeenMs,
+          latestNotificationSeenMs,
+          lastActionAt: runtimeState.lastActionScheduledAt,
+        }),
+      };
+    }
+
+    const target = chooseNotificationCandidate(bot, directReplyCandidates, now);
+
+    if (target) {
+      const delayMs = getDelayFromRange(
+        behavior.replyDelayMinutes ?? { min: 2, max: 15 }
+      );
+      const scheduledAt = now + delayMs;
+      const shouldAskQuestion = randomBoolean(behavior.questionProbability);
+      const shouldDisagree = randomBoolean(behavior.disagreementProbability);
+
+      const scheduledAction = buildScheduledBotActionPayload(
+        ScheduledBotActionType.REPLY_TO_COMMENT,
+        {
+          botId: bot.uid,
+          postId: target.postId,
+          scheduledAt,
+          parentCommentId: target.id,
+          threadRootCommentId: target.threadRootCommentId ?? target.id,
+          metadata: {
+            mode: "REPLY",
+            targetType: "comment",
+            shouldAskQuestion,
+            intent: shouldDisagree ? "disagree" : "default",
+            repliedToBotId: target.parentAuthorId ?? null,
+            triggeredByMention: target.mentions?.has(botUserNameLower) ?? false,
+            origin: "activity_tick",
+          },
+        }
+      );
+
+      return {
+        status: "scheduled",
+        scheduledAction,
+        runtimeUpdate: buildRuntimeUpdate({
+          now,
+          latestPostSeenMs,
+          latestNotificationSeenMs,
+          lastActionAt: scheduledAt,
+        }),
+      };
+    }
+  }
 
   const weights = behavior.actionWeights || {};
   const weightedActions = {
@@ -408,7 +666,9 @@ export const runBotActivityForTick = async ({
         ? (weights.replyToComment ?? 0.3) * replyResponseProbability
         : 0,
     likePost:
-      postCandidates.length > 0 ? (weights.likePost ?? 0) * baseResponseProbability : 0,
+      postCandidates.length > 0
+        ? (weights.likePost ?? 0) * baseResponseProbability
+        : 0,
     likeComment:
       notificationCandidates.length > 0
         ? (weights.likeComment ?? 0) * replyResponseProbability
@@ -428,7 +688,8 @@ export const runBotActivityForTick = async ({
   if (
     chosenAction !== "ignore" &&
     runtimeState?.lastActionScheduledAt &&
-    now - runtimeState.lastActionScheduledAt < minutesToMs(MIN_ACTION_SPACING_MINUTES)
+    now - runtimeState.lastActionScheduledAt <
+      minutesToMs(MIN_ACTION_SPACING_MINUTES)
   ) {
     return {
       status: "cooldown",
@@ -474,7 +735,11 @@ export const runBotActivityForTick = async ({
       lastActionAt = scheduledAt;
     }
   } else if (chosenAction === "replyToComment") {
-    const target = chooseNotificationCandidate(bot, notificationCandidates, now);
+    const target = chooseNotificationCandidate(
+      bot,
+      notificationCandidates,
+      now
+    );
     if (target) {
       const delayMs = getDelayFromRange(
         behavior.replyDelayMinutes ?? { min: 2, max: 15 }
@@ -525,7 +790,11 @@ export const runBotActivityForTick = async ({
       lastActionAt = scheduledAt;
     }
   } else if (chosenAction === "likeComment") {
-    const target = chooseNotificationCandidate(bot, notificationCandidates, now);
+    const target = chooseNotificationCandidate(
+      bot,
+      notificationCandidates,
+      now
+    );
     if (target) {
       const delayMs = getDelayFromRange(
         behavior.replyDelayMinutes ?? { min: 1, max: 5 }
@@ -572,11 +841,22 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
 
   const { bots, runtimeStateByBot } = await loadActiveBotsWithState(db);
   if (!bots.length) {
-    return { botsProcessed: 0, actionsScheduled: 0 };
+    return {
+      botsProcessed: 0,
+      actionsScheduled: 0,
+      breakdown: {
+        inactive_window: 0,
+        cooldown: 0,
+        no_targets: 0,
+        below_threshold: 0,
+        scheduled: 0,
+      },
+    };
   }
 
   const baselinePostSince = nowValue - minutesToMs(POST_LOOKBACK_MINUTES);
-  const baselineNotificationSince = nowValue - minutesToMs(NOTIFICATION_LOOKBACK_MINUTES);
+  const baselineNotificationSince =
+    nowValue - minutesToMs(NOTIFICATION_LOOKBACK_MINUTES);
 
   const [recentPosts, recentNotifications] = await Promise.all([
     fetchRecentPosts(db, baselinePostSince),
@@ -586,6 +866,21 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
   const batch = db.batch();
   let actionsScheduled = 0;
   let statesUpdated = 0;
+  const breakdown = {
+    inactive_window: 0,
+    cooldown: 0,
+    no_targets: 0,
+    below_threshold: 0,
+    scheduled: 0,
+  };
+  const statusToReason = {
+    offline: "inactive_window",
+    cooldown: "cooldown",
+    no_target: "no_targets",
+    ignored: "below_threshold",
+    scheduled: "scheduled",
+  };
+  const nowIso = new Date(nowValue).toISOString();
 
   for (const bot of bots) {
     const runtimeState = runtimeStateByBot.get(bot.uid) ?? null;
@@ -598,6 +893,32 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
       posts: recentPosts,
       notifications: recentNotifications,
     });
+
+    const reason = statusToReason[result.status] ?? null;
+    if (reason) {
+      breakdown[reason] += 1;
+      if (Math.random() < BOT_DECISION_LOG_SAMPLE_RATE) {
+        const timeZone = resolveBotTimezone(bot);
+        console.log(
+          JSON.stringify({
+            type: "bot_decision",
+            botId: bot.uid,
+            reason,
+            tz: timeZone,
+            nowIso,
+          })
+        );
+      }
+    }
+
+    const userRef = db.collection("users").doc(bot.uid);
+    batch.set(
+      userRef,
+      {
+        isOnline: result.status !== "offline",
+      },
+      { merge: true }
+    );
 
     const stateRef = botRuntimeStateCollection(db).doc(bot.uid);
     if (result.runtimeUpdate) {
@@ -619,6 +940,7 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
   return {
     botsProcessed: bots.length,
     actionsScheduled,
+    breakdown,
   };
 };
 

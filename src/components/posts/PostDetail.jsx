@@ -72,10 +72,34 @@ const buildCommentThreads = (comments) => {
     .filter((comment) => findParentCommentId(comment) === null)
     .sort(sortByCreatedAtAsc);
 
-  return parentComments.map((comment) => ({
-    parent: comment,
-    replies: (repliesByParent[comment.id] || []).sort(sortByCreatedAtAsc),
-  }));
+  const visited = new Set();
+
+  const collectReplies = (parentId, depth = 1) => {
+    const children = (repliesByParent[parentId] || []).sort(sortByCreatedAtAsc);
+    const results = [];
+
+    for (const child of children) {
+      if (!child?.id || visited.has(child.id)) {
+        continue;
+      }
+
+      visited.add(child.id);
+      results.push({ comment: child, depth: Math.max(1, depth) });
+      results.push(...collectReplies(child.id, depth + 1));
+    }
+
+    return results;
+  };
+
+  return parentComments.map((comment) => {
+    if (comment?.id) {
+      visited.add(comment.id);
+    }
+    return {
+      parent: comment,
+      replies: collectReplies(comment.id, 1),
+    };
+  });
 };
 
 // COMMENT FLOW:

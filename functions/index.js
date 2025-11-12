@@ -3182,7 +3182,27 @@ export const runBotActivityScheduler = onSchedule(
         db,
         now: Date.now(),
       });
-      console.log("Bot activity tick completed", stats);
+      const breakdown =
+        stats.breakdown ?? {
+          inactive_window: 0,
+          cooldown: 0,
+          no_targets: 0,
+          below_threshold: 0,
+          scheduled: 0,
+        };
+      const summary = {
+        botsProcessed: stats.botsProcessed ?? 0,
+        actionsScheduled: stats.actionsScheduled ?? 0,
+        breakdown,
+      };
+      console.log("Bot activity tick completed", summary);
+      console.log(
+        JSON.stringify({
+          type: "bot_activity_summary",
+          ...summary,
+          timestamp: new Date().toISOString(),
+        })
+      );
     } catch (error) {
       console.error("Bot activity tick failed", error);
       throw error;

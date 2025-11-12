@@ -511,6 +511,29 @@ const CommentThread = ({
   const canManageComment = (authorId) =>
     canEditComment(authorId) || canDeleteComment(authorId);
 
+  const replyNodes = useMemo(() => {
+    if (!Array.isArray(replies)) {
+      return [];
+    }
+
+    return replies
+      .map((entry) => {
+        if (!entry) return null;
+        if (entry.comment && entry.comment.id) {
+          return {
+            comment: entry.comment,
+            depth:
+              Number.isFinite(entry.depth) && entry.depth > 0 ? entry.depth : 1,
+          };
+        }
+        if (entry.id) {
+          return { comment: entry, depth: 1 };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [replies]);
+
   const handleReplyClick = (commentId) => {
     onClearReplyError(commentId);
     setActiveEditTargetId(null);
@@ -727,18 +750,28 @@ const CommentThread = ({
         activeEditTargetId === parentComment.id &&
         renderEditForm(parentComment.id)}
 
-      {replies.length > 0 && (
+      {replyNodes.length > 0 && (
         <div
           className={`mt-5 space-y-4 border-l ${
             darkMode ? "border-gray-800" : "border-gray-200"
           } pl-6 md:pl-8`}
         >
-          {replies.map((reply) => {
+          {replyNodes.map(({ comment: reply, depth }) => {
             const replyCanEdit = canEditComment(reply.authorId);
             const replyCanDelete = canDeleteComment(reply.authorId);
             const replyCanManage = canManageComment(reply.authorId);
+            const indentLevel = Math.max(0, (depth || 1) - 1);
+            const indentationRem = Math.min(indentLevel, 6) * 1.5;
             return (
-              <div key={reply.id} className="relative">
+              <div
+                key={reply.id}
+                className="relative"
+                style={
+                  indentLevel > 0
+                    ? { marginLeft: `${indentationRem}rem` }
+                    : undefined
+                }
+              >
                 <CommentItem
                   comment={reply}
                   darkMode={darkMode}
@@ -774,7 +807,9 @@ const CommentThread = ({
                       : "Reply to comment (choose how to post when you send)"
                   }
                 />
-                {activeReplyTargetId === reply.id && canReply && renderReplyForm(reply.id)}
+                {activeReplyTargetId === reply.id &&
+                  canReply &&
+                  renderReplyForm(reply.id)}
                 {currentUserId === reply.authorId &&
                   activeEditTargetId === reply.id &&
                   renderEditForm(reply.id)}
@@ -790,7 +825,15 @@ const CommentThread = ({
 
 CommentThread.propTypes = {
   parentComment: commentPropType.isRequired,
-  replies: PropTypes.arrayOf(commentPropType),
+  replies: PropTypes.arrayOf(
+    PropTypes.oneOfType([
+      commentPropType,
+      PropTypes.shape({
+        comment: commentPropType.isRequired,
+        depth: PropTypes.number,
+      }),
+    ])
+  ),
   darkMode: PropTypes.bool.isRequired,
   onReply: PropTypes.func.isRequired,
   onEdit: PropTypes.func.isRequired,
