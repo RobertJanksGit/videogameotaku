@@ -75,6 +75,23 @@
       "collectionGroup": "comments",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "postId", "order": "ASCENDING" },
+        { "fieldPath": "score", "order": "DESCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "read", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "comments",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "threadRootCommentId", "order": "ASCENDING" },
         { "fieldPath": "authorId", "order": "ASCENDING" }
       ]

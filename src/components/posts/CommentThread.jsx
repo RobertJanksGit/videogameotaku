@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Link } from "react-router-dom";
 import formatTimeAgo, { getTimestampDate } from "../../utils/formatTimeAgo";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 import useCommentDraft from "../../hooks/useCommentDrafts";
+import MentionTextarea from "./MentionTextarea";
+import { getBadgeMeta } from "../../constants/badges";
+import useCommentLikedByMe from "../../lib/comments/useCommentLikedByMe";
 
 const commentPropType = PropTypes.shape({
   id: PropTypes.string.isRequired,
@@ -84,8 +87,99 @@ CommentAvatar.propTypes = {
   darkMode: PropTypes.bool.isRequired,
 };
 
+const MentionLink = ({ mention, darkMode, authorMetaMap }) => {
+  if (!mention?.handle) {
+    return null;
+  }
+
+  const meta = mention.userId ? authorMetaMap?.[mention.userId] || {} : {};
+  const badgeId = Array.isArray(meta.badges)
+    ? meta.badges[meta.badges.length - 1]
+    : null;
+  const badgeMeta = badgeId ? getBadgeMeta(badgeId) : null;
+  const avatar = normalizeProfilePhoto(
+    mention.avatarUrl || meta.avatarUrl || "",
+    64
+  );
+  const mentionLabel = `@${mention.handle}`;
+  const displayName =
+    mention.displayName || meta.displayName || mentionLabel.slice(1);
+
+  const tooltipClasses = darkMode
+    ? "border-gray-700 bg-gray-900 text-gray-100"
+    : "border-gray-200 bg-white text-gray-700";
+
+  return (
+    <span className="relative inline-flex group">
+      {mention.userId ? (
+        <Link
+          to={`/user/${mention.userId}`}
+          className={`font-semibold ${
+            darkMode ? "text-blue-300 hover:text-blue-200" : "text-blue-600"
+          }`}
+        >
+          {mentionLabel}
+        </Link>
+      ) : (
+        <span
+          className={`font-semibold ${
+            darkMode ? "text-blue-300" : "text-blue-600"
+          }`}
+        >
+          {mentionLabel}
+        </span>
+      )}
+      {mention.userId && (
+        <span
+          className={`pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-60 rounded-xl border px-3 py-2 text-xs shadow-lg group-hover:flex ${tooltipClasses}`}
+        >
+          <span className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-gray-700 bg-gray-800">
+            {avatar ? (
+              <img
+                src={avatar}
+                alt={displayName}
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <span className="text-sm font-semibold">
+                {displayName.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </span>
+          <span className="ml-3 flex flex-col space-y-1">
+            <span className="text-sm font-semibold">{displayName}</span>
+            {Number.isFinite(meta.dailyStreak) && meta.dailyStreak > 0 && (
+              <span className="text-[11px] text-gray-400">
+                Streak {meta.dailyStreak} days
+              </span>
+            )}
+            {badgeMeta && (
+              <span className="text-[11px] text-gray-400">
+                Last badge: {badgeMeta.label}
+              </span>
+            )}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+};
+
+MentionLink.propTypes = {
+  mention: PropTypes.shape({
+    handle: PropTypes.string,
+    userId: PropTypes.string,
+    displayName: PropTypes.string,
+    avatarUrl: PropTypes.string,
+  }),
+  darkMode: PropTypes.bool.isRequired,
+  authorMetaMap: PropTypes.object,
+};
+
 const CommentItem = ({
   comment,
+  postId,
   darkMode,
   onReplyClick,
   canReply,
@@ -99,7 +193,21 @@ const CommentItem = ({
   isReplyDisabled = false,
   isDeleting = false,
   replyTooltip = "Reply to comment",
+  isTopThread = false,
+  isTopReply = false,
+  isLikePending = false,
+  onLikeToggle = () => {},
+  canAuthorPick = false,
+  onAuthorPickToggle = () => {},
+  isAuthorPickPending = false,
+  authorProfile = {},
+  authorMetaMap = {},
 }) => {
+  const likedByMe = useCommentLikedByMe({
+    postId,
+    commentId: comment.id,
+    documentPath: comment.documentPath,
+  });
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -147,7 +255,57 @@ const CommentItem = ({
   const relativeTime = commentDate ? formatTimeAgo(commentDate) : "";
   const fullDateLabel = commentDate?.toLocaleString();
 
-  const isMenuButtonDisabled = isDeleting || (isEditDisabled && isDeleteDisabled);
+  const mentionLookup = useMemo(() => {
+    const lookup = new Map();
+    if (Array.isArray(comment.mentionHandles)) {
+      comment.mentionHandles.forEach((entry) => {
+        if (entry?.handle) {
+          lookup.set(entry.handle.toLowerCase(), entry);
+        }
+      });
+    }
+    return lookup;
+  }, [comment.mentionHandles]);
+
+  const badgeList = useMemo(() => {
+    const badges = Array.isArray(authorProfile.badges)
+      ? authorProfile.badges.slice(-3)
+      : [];
+    return badges;
+  }, [authorProfile.badges]);
+
+  const contentNodes = useMemo(() => {
+    if (!comment.content) {
+      return null;
+    }
+    const parts = comment.content.split(/(@[A-Za-z0-9_-]+)/g);
+    return parts.map((part, index) => {
+      if (!part) {
+        return null;
+      }
+      if (part.startsWith("@")) {
+        const handle = part.slice(1);
+        const mention =
+          mentionLookup.get(handle.toLowerCase()) || {
+            handle,
+          };
+        return (
+          <MentionLink
+            key={`mention-${comment.id}-${handle}-${index}`}
+            mention={mention}
+            darkMode={darkMode}
+            authorMetaMap={authorMetaMap}
+          />
+        );
+      }
+      return (
+        <span key={`text-${comment.id}-${index}`}>{part}</span>
+      );
+    });
+  }, [comment.content, comment.id, darkMode, mentionLookup, authorMetaMap]);
+
+  const isMenuButtonDisabled =
+    isDeleting || (isEditDisabled && isDeleteDisabled);
 
   const handleMenuToggle = () => {
     if (isMenuButtonDisabled) return;
@@ -166,6 +324,33 @@ const CommentItem = ({
     onDeleteClick();
   };
 
+  const chipClasses = darkMode
+    ? "bg-blue-900/30 text-blue-200 border border-blue-800"
+    : "bg-blue-50 text-blue-700 border border-blue-200";
+
+  const authorChipClasses = darkMode
+    ? "bg-amber-900/30 text-amber-200 border border-amber-800"
+    : "bg-amber-50 text-amber-800 border border-amber-200";
+
+  const reactionButtonClasses = likedByMe
+    ? darkMode
+      ? "text-pink-300"
+      : "text-pink-600"
+    : darkMode
+    ? "text-gray-400 hover:text-pink-200"
+    : "text-gray-500 hover:text-pink-600";
+
+  const bodyClasses = [
+    "flex-1 min-w-0",
+    isTopThread
+      ? darkMode
+        ? "rounded-2xl border border-blue-900/40 bg-blue-900/30 p-4"
+        : "rounded-2xl border border-blue-200 bg-blue-50/70 p-4"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
       id={`comment-${comment.id}`}
@@ -179,7 +364,7 @@ const CommentItem = ({
         authorPhotoURL={comment.authorPhotoURL}
         darkMode={darkMode}
       />
-      <div className="flex-1 min-w-0">
+      <div className={bodyClasses}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {comment.authorId ? (
@@ -202,6 +387,37 @@ const CommentItem = ({
                 {comment.authorName || "Anonymous"}
               </span>
             )}
+            {authorProfile.dailyStreak > 2 && (
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  darkMode
+                    ? "bg-orange-900/40 text-orange-200"
+                    : "bg-orange-50 text-orange-700"
+                }`}
+              >
+                Streak {authorProfile.dailyStreak}d
+              </span>
+            )}
+            {badgeList.length > 0 && (
+              <span className="inline-flex items-center gap-1">
+                {badgeList.map((badgeId) => {
+                  const badge = getBadgeMeta(badgeId);
+                  return (
+                    <span
+                      key={`${comment.id}-${badgeId}`}
+                      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
+                        darkMode
+                          ? "bg-gray-800 text-yellow-200"
+                          : "bg-gray-100 text-yellow-700"
+                      }`}
+                      title={badge.label}
+                    >
+                      {badge.icon}
+                    </span>
+                  );
+                })}
+              </span>
+            )}
             {relativeTime && (
               <time
                 className={`text-xs ${
@@ -213,6 +429,27 @@ const CommentItem = ({
                 {relativeTime}
               </time>
             )}
+            {isTopThread && (
+              <span
+                className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 ${chipClasses}`}
+              >
+                Top comment
+              </span>
+            )}
+            {isTopReply && (
+              <span
+                className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 ${chipClasses}`}
+              >
+                Top reply
+              </span>
+            )}
+            {comment.likedByAuthor && (
+              <span
+                className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 ${authorChipClasses}`}
+              >
+                Author liked
+              </span>
+            )}
           </div>
           {canManage && (
             <div className="relative" ref={menuRef}>
@@ -220,17 +457,11 @@ const CommentItem = ({
                 type="button"
                 onClick={handleMenuToggle}
                 disabled={isMenuButtonDisabled}
-                aria-haspopup="menu"
-                aria-expanded={isMenuOpen}
-                className={`inline-flex h-7 w-7 items-center justify-center rounded-full bg-transparent transition-colors focus:outline-none ${
-                  darkMode
-                    ? "text-gray-300 hover:text-gray-100 hover:bg-gray-800/60"
-                    : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/40"
-                } ${
-                  isMenuButtonDisabled
-                    ? "opacity-50 cursor-not-allowed"
-                    : ""
+                className={`text-gray-400 hover:text-gray-200 focus:outline-none bg-transparent ${
+                  isMenuButtonDisabled ? "cursor-not-allowed" : ""
                 }`}
+                aria-haspopup="true"
+                aria-expanded={isMenuOpen}
                 title="Open comment options"
               >
                 <span className="sr-only">Open comment options</span>
@@ -272,9 +503,7 @@ const CommentItem = ({
                       isDeleteDisabled || isDeleting
                         ? "cursor-not-allowed opacity-50"
                         : "cursor-pointer"
-                    } ${
-                      darkMode ? "text-red-400" : "text-red-500"
-                    }`}
+                    } ${darkMode ? "text-red-400" : "text-red-500"}`}
                   >
                     {isDeleting ? "Deleting..." : "Delete"}
                   </button>
@@ -288,9 +517,32 @@ const CommentItem = ({
             darkMode ? "text-gray-200" : "text-gray-700"
           }`}
         >
-          {comment.content}
+          {contentNodes}
         </p>
-        <div className="mt-3 flex items-center gap-4">
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
+          <button
+            type="button"
+            onClick={onLikeToggle}
+            disabled={isLikePending}
+            className={`inline-flex items-center gap-1 font-medium transition-colors disabled:opacity-40 bg-transparent ${reactionButtonClasses}`}
+            aria-pressed={likedByMe}
+          >
+            <svg
+              className="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill={likedByMe ? "currentColor" : "none"}
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.636l1.318-1.318a4.5 4.5 0 116.364 6.364L12 21.364 4.318 12.682a4.5 4.5 0 010-6.364z"
+              />
+            </svg>
+            <span>{comment.likeCount || 0}</span>
+          </button>
           <button
             type="button"
             onClick={onReplyClick}
@@ -314,6 +566,37 @@ const CommentItem = ({
           >
             Reply
           </button>
+          {!isReply &&
+            Number.isFinite(comment.replyCount) &&
+            comment.replyCount > 0 && (
+              <span
+                className={`text-xs ${
+                  darkMode ? "text-gray-400" : "text-gray-500"
+                }`}
+              >
+                {comment.replyCount} repl{comment.replyCount === 1 ? "y" : "ies"}
+              </span>
+            )}
+          {canAuthorPick && (
+            <button
+              type="button"
+              onClick={onAuthorPickToggle}
+              disabled={isAuthorPickPending}
+              className={`text-xs font-semibold uppercase tracking-wide transition-colors disabled:opacity-50 ${
+                comment.likedByAuthor
+                  ? darkMode
+                    ? "text-amber-200"
+                    : "text-amber-700"
+                  : darkMode
+                  ? "text-gray-500 hover:text-amber-200"
+                  : "text-gray-500 hover:text-amber-600"
+              }`}
+            >
+              {comment.likedByAuthor
+                ? "Remove Author Pick"
+                : "Mark Author Pick"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -322,6 +605,7 @@ const CommentItem = ({
 
 CommentItem.propTypes = {
   comment: commentPropType.isRequired,
+  postId: PropTypes.string.isRequired,
   darkMode: PropTypes.bool.isRequired,
   onReplyClick: PropTypes.func.isRequired,
   canReply: PropTypes.bool.isRequired,
@@ -335,6 +619,18 @@ CommentItem.propTypes = {
   isReplyDisabled: PropTypes.bool,
   isDeleting: PropTypes.bool,
   replyTooltip: PropTypes.string,
+  isTopThread: PropTypes.bool,
+  isTopReply: PropTypes.bool,
+  isLikePending: PropTypes.bool,
+  onLikeToggle: PropTypes.func,
+  canAuthorPick: PropTypes.bool,
+  onAuthorPickToggle: PropTypes.func,
+  isAuthorPickPending: PropTypes.bool,
+  authorProfile: PropTypes.shape({
+    badges: PropTypes.arrayOf(PropTypes.string),
+    dailyStreak: PropTypes.number,
+  }),
+  authorMetaMap: PropTypes.object,
 };
 
 const ReplyForm = ({
@@ -351,18 +647,19 @@ const ReplyForm = ({
     <label htmlFor={inputId} className="sr-only">
       Reply to comment
     </label>
-    <textarea
+    <MentionTextarea
       id={inputId}
-      rows="3"
+      rows={3}
       value={value}
       onChange={onChange}
       className={`w-full px-3 py-2 rounded-lg border text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
         darkMode
-          ? "bg-gray-800 text-white border-gray-700 placeholder-gray-500"
-          : "bg-white text-gray-900 border-gray-300 placeholder-gray-500"
+          ? "bg-gray-900 border-gray-700 text-gray-100 placeholder-gray-500"
+          : "bg-white border-gray-200 text-gray-900 placeholder-gray-400"
       }`}
       placeholder="Write a reply..."
       aria-label="Reply to comment"
+      disabled={isSubmitting}
     />
     <div className="mt-2 flex items-center justify-end gap-2">
       <button
@@ -479,6 +776,14 @@ const CommentThread = ({
   processingReplyTargetId = null,
   replyErrors = {},
   onClearReplyError = () => {},
+  onToggleLike = () => {},
+  likeBusyMap = {},
+  highlightedReplyIds = [],
+  topThreadParentId = null,
+  canAuthorPick = false,
+  authorPickBusyMap = {},
+  onAuthorPickToggle = () => {},
+  authorMetaMap = {},
 }) => {
   const [activeReplyTargetId, setActiveReplyTargetId] = useState(null);
   const [isReplySubmitting, setIsReplySubmitting] = useState(false);
@@ -533,6 +838,11 @@ const CommentThread = ({
       })
       .filter(Boolean);
   }, [replies]);
+
+  const highlightedReplySet = useMemo(
+    () => new Set(highlightedReplyIds || []),
+    [highlightedReplyIds]
+  );
 
   const handleReplyClick = (commentId) => {
     onClearReplyError(commentId);
@@ -707,6 +1017,19 @@ const CommentThread = ({
   const parentCanDelete = canDeleteComment(parentComment.authorId);
   const parentCanManage = canManageComment(parentComment.authorId);
 
+  const buildItemProps = (comment, { isReply = false } = {}) => ({
+    isLikePending: Boolean(likeBusyMap?.[comment.id]),
+    onLikeToggle: () => onToggleLike(comment),
+    canAuthorPick,
+    onAuthorPickToggle: () =>
+      onAuthorPickToggle(comment.id, !comment.likedByAuthor),
+    isAuthorPickPending: Boolean(authorPickBusyMap?.[comment.id]),
+    authorProfile: authorMetaMap?.[comment.authorId] || {},
+    authorMetaMap,
+    isTopThread: !isReply && topThreadParentId === comment.id,
+    isTopReply: isReply && highlightedReplySet.has(comment.id),
+  });
+
   return (
     <article
       className={`p-5 rounded-xl border ${
@@ -715,6 +1038,7 @@ const CommentThread = ({
     >
       <CommentItem
         comment={parentComment}
+        postId={postId}
         darkMode={darkMode}
         onReplyClick={() => handleReplyClick(parentComment.id)}
         canReply={canReply}
@@ -744,6 +1068,7 @@ const CommentThread = ({
             ? "Reply to comment"
             : "Reply to comment (choose how to post when you send)"
         }
+        {...buildItemProps(parentComment, { isReply: false })}
       />
       {activeReplyTargetId === parentComment.id && canReply && renderReplyForm(parentComment.id)}
       {currentUserId === parentComment.authorId &&
@@ -774,6 +1099,7 @@ const CommentThread = ({
               >
                 <CommentItem
                   comment={reply}
+                  postId={postId}
                   darkMode={darkMode}
                   onReplyClick={() => handleReplyClick(reply.id)}
                   canReply={canReply}
@@ -806,6 +1132,7 @@ const CommentThread = ({
                       ? "Reply to comment"
                       : "Reply to comment (choose how to post when you send)"
                   }
+                  {...buildItemProps(reply, { isReply: true })}
                 />
                 {activeReplyTargetId === reply.id &&
                   canReply &&
@@ -848,7 +1175,17 @@ CommentThread.propTypes = {
   processingReplyTargetId: PropTypes.string,
   replyErrors: PropTypes.objectOf(PropTypes.string),
   onClearReplyError: PropTypes.func,
+  onToggleLike: PropTypes.func,
+  likeBusyMap: PropTypes.object,
+  highlightedReplyIds: PropTypes.arrayOf(PropTypes.string),
+  topThreadParentId: PropTypes.string,
+  canAuthorPick: PropTypes.bool,
+  authorPickBusyMap: PropTypes.object,
+  onAuthorPickToggle: PropTypes.func,
+  authorMetaMap: PropTypes.object,
 };
 
 export default CommentThread;
+
+
 

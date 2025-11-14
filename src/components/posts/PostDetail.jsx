@@ -2,14 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
-import { db } from "../../config/firebase";
+import { db, functions } from "../../config/firebase";
 import {
   doc,
-  getDoc,
-  collection,
   addDoc,
   query,
-  where,
   orderBy,
   serverTimestamp,
   updateDoc,
@@ -17,14 +14,13 @@ import {
   increment,
   writeBatch,
   onSnapshot,
+  collection,
+  where,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import VoteButtons from "./VoteButtons";
 import ShareButtons from "../common/ShareButtons";
 import CommentThread from "./CommentThread";
-import {
-  createNotification,
-  getNotificationMessage,
-} from "../../utils/notifications";
 import RichContent from "./RichContent";
 import SEO, { createTeaser } from "../common/SEO";
 import StructuredData from "../common/StructuredData";
@@ -36,6 +32,17 @@ import { markStarterPackCommented } from "../../utils/starterPackStorage";
 import useCommentDraft, { buildDraftKey } from "../../hooks/useCommentDrafts";
 import InlineCommentAuthPrompt from "./InlineCommentAuthPrompt";
 import AuthModal from "../auth/AuthModal";
+import MentionTextarea from "./MentionTextarea";
+import {
+  postCommentsCollection,
+  postCommentDoc,
+  commentDocFromPath,
+} from "../../utils/commentRefs";
+import { buildMentionPayload } from "../../utils/mentions";
+import useAuthorRanks from "../../hooks/useAuthorRanks";
+import { useToast } from "../../contexts/ToastContext";
+import { getBadgeMeta } from "../../constants/badges";
+import toggleCommentLikeAction from "../../lib/comments/toggleLike";
 
 const findParentCommentId = (comment) => {
   if (
@@ -56,7 +63,18 @@ const sortByCreatedAtAsc = (a, b) => {
   return dateA.getTime() - dateB.getTime();
 };
 
-const buildCommentThreads = (comments) => {
+const sortByCreatedAtDesc = (a, b) => -sortByCreatedAtAsc(a, b);
+
+const sortByScoreDesc = (a, b) => {
+  const scoreA = Number.isFinite(a.score) ? a.score : 0;
+  const scoreB = Number.isFinite(b.score) ? b.score : 0;
+  if (scoreB !== scoreA) {
+    return scoreB - scoreA;
+  }
+  return sortByCreatedAtDesc(a, b);
+};
+
+const buildCommentThreads = (comments, sortMode = "newest") => {
   const repliesByParent = comments.reduce((acc, comment) => {
     const parentId = findParentCommentId(comment);
     if (parentId) {
@@ -70,7 +88,7 @@ const buildCommentThreads = (comments) => {
 
   const parentComments = comments
     .filter((comment) => findParentCommentId(comment) === null)
-    .sort(sortByCreatedAtAsc);
+    .sort(sortMode === "top" ? sortByScoreDesc : sortByCreatedAtDesc);
 
   const visited = new Set();
 
@@ -102,22 +120,50 @@ const buildCommentThreads = (comments) => {
   });
 };
 
+const TOP_REPLY_THRESHOLD = 5;
+
+const collectTopReplies = (threads) => {
+  const topReplyIds = new Set();
+  threads.forEach(({ replies }) => {
+    if (!Array.isArray(replies) || replies.length === 0) {
+      return;
+    }
+    const sortedReplies = [...replies].sort((a, b) =>
+      sortByScoreDesc(a.comment, b.comment)
+    );
+    const candidate = sortedReplies[0]?.comment;
+    if (!candidate) {
+      return;
+    }
+    const qualifies =
+      (candidate.score || 0) >= TOP_REPLY_THRESHOLD || candidate.likedByAuthor;
+    if (qualifies && candidate.id) {
+      topReplyIds.add(candidate.id);
+    }
+  });
+  return topReplyIds;
+};
+
 // COMMENT FLOW:
 // - Determines comment access by checking `user` from AuthContext (unauthenticated users see sign-in prompt).
 // - `handleSubmitComment`, `handleReply`, `handleEditComment`, `handleDeleteComment` all guard on `user`/ownership to enforce auth.
 // - New comments and replies are written via Firestore `addDoc` to the `comments` collection; counts and notifications update related docs.
-// TODO: COMMENT FLOW ENHANCEMENTS COMPLETE – see summary above.
+// TODO: COMMENT FLOW ENHANCEMENTS COMPLETE GÇô see summary above.
 const PostDetail = () => {
   const { postId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const { darkMode } = useTheme();
   const { user } = useAuth();
+  const { showErrorToast } = useToast();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [commentSort, setCommentSort] = useState("top");
+  const [likeBusyMap, setLikeBusyMap] = useState({});
+  const [authorPickBusyMap, setAuthorPickBusyMap] = useState({});
   const hasScrolledToComment = useRef(false);
   const {
     draft: newCommentDraft,
@@ -133,8 +179,63 @@ const PostDetail = () => {
   const [isProcessingPending, setIsProcessingPending] = useState(false);
   const previousUserRef = useRef(user);
   const commentThreads = useMemo(
-    () => buildCommentThreads(comments),
-    [comments]
+    () => buildCommentThreads(comments, commentSort),
+    [comments, commentSort]
+  );
+  const highlightedReplyIds = useMemo(
+    () => collectTopReplies(commentThreads),
+    [commentThreads]
+  );
+  const highlightedReplyIdsArray = useMemo(
+    () => Array.from(highlightedReplyIds),
+    [highlightedReplyIds]
+  );
+  const topThreadParentId =
+    commentSort === "top" && commentThreads.length > 0
+      ? commentThreads[0].parent?.id || null
+      : null;
+  const canAuthorPick = Boolean(post?.authorId && user?.uid === post?.authorId);
+  const authorPickSummary = useMemo(() => {
+    const liked = comments.filter((comment) => comment.likedByAuthor);
+    if (!liked.length) {
+      return null;
+    }
+    const sorted = [...liked].sort(sortByScoreDesc);
+    const top = sorted[0];
+    if (!top) {
+      return null;
+    }
+    return {
+      commentId: top.id,
+      authorName: top.authorName,
+    };
+  }, [comments]);
+  const authorIdsForMeta = useMemo(() => {
+    const ids = new Set();
+    comments.forEach((comment) => {
+      if (comment.authorId) {
+        ids.add(comment.authorId);
+      }
+      if (Array.isArray(comment.mentions)) {
+        comment.mentions.forEach((mentionedId) => ids.add(mentionedId));
+      }
+    });
+    if (post?.authorId) {
+      ids.add(post.authorId);
+    }
+    return Array.from(ids);
+  }, [comments, post?.authorId]);
+  const authorMeta = useAuthorRanks(authorIdsForMeta);
+  const postAuthorMeta = post?.authorId ? authorMeta[post.authorId] : null;
+  const postAuthorLastBadgeId = postAuthorMeta?.badges?.length
+    ? postAuthorMeta.badges[postAuthorMeta.badges.length - 1]
+    : postAuthorMeta?.lastBadge || "";
+  const postAuthorLastBadgeMeta = postAuthorLastBadgeId
+    ? getBadgeMeta(postAuthorLastBadgeId)
+    : null;
+  const authorLikeCallable = useMemo(
+    () => httpsCallable(functions, "authorLikeToggle"),
+    []
   );
   const targetCommentIdFromState = location.state?.targetCommentId ?? null;
   const targetCommentIdFromHash = useMemo(() => {
@@ -167,6 +268,26 @@ const PostDetail = () => {
     attemptScroll();
   };
 
+  const resolveCommentDocRef = useCallback(
+    (comment) => {
+      if (!comment) {
+        return null;
+      }
+      if (comment.documentPath) {
+        try {
+          return commentDocFromPath(db, comment.documentPath);
+        } catch (error) {
+          console.warn("Failed to resolve comment path", comment.documentPath, error);
+        }
+      }
+      if (postId && comment.id) {
+        return postCommentDoc(db, postId, comment.id);
+      }
+      return null;
+    },
+    [postId]
+  );
+
   useEffect(() => {
     if (!postId) return;
 
@@ -197,34 +318,79 @@ const PostDetail = () => {
   }, [postId, navigate]);
 
   useEffect(() => {
-    if (!postId) return;
+    if (!postId) return undefined;
 
     setCommentsLoading(true);
-    const commentsQueryRef = query(
+    let scopedComments = [];
+    let legacyComments = [];
+
+    const mergeAndSet = () => {
+      const mergedMap = new Map();
+      scopedComments.forEach((comment) => {
+        mergedMap.set(comment.documentPath || comment.id, comment);
+      });
+      legacyComments.forEach((comment) => {
+        if (!mergedMap.has(comment.documentPath || comment.id)) {
+          mergedMap.set(comment.documentPath || comment.id, comment);
+        }
+      });
+      const mergedList = Array.from(mergedMap.values()).sort(sortByCreatedAtAsc);
+      setComments(mergedList);
+      setCommentsLoading(false);
+    };
+
+    const formatSnapshot = (snapshot) =>
+      snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data() || {};
+        return {
+          id: docSnapshot.id,
+          ...data,
+          replyCount: data.replyCount ?? 0,
+          likeCount: data.likeCount ?? 0,
+          likedByAuthor: Boolean(data.likedByAuthor),
+          score: Number.isFinite(data.score) ? data.score : 0,
+          documentPath: docSnapshot.ref.path,
+        };
+      });
+
+    const scopedQueryRef = query(
+      postCommentsCollection(db, postId),
+      orderBy("createdAt", "asc")
+    );
+
+    const legacyQueryRef = query(
       collection(db, "comments"),
       where("postId", "==", postId),
       orderBy("createdAt", "asc")
     );
 
-    const unsubscribe = onSnapshot(
-      commentsQueryRef,
+    const unsubscribeScoped = onSnapshot(
+      scopedQueryRef,
       (snapshot) => {
-        const fetchedComments = snapshot.docs.map((docSnapshot) => ({
-          id: docSnapshot.id,
-          ...docSnapshot.data(),
-          replyCount: docSnapshot.data().replyCount ?? 0,
-        }));
-
-        setComments(fetchedComments);
-        setCommentsLoading(false);
+        scopedComments = formatSnapshot(snapshot);
+        mergeAndSet();
       },
       (error) => {
-        console.error("Error listening to comments:", error);
+        console.error("Error listening to scoped comments:", error);
         setCommentsLoading(false);
       }
     );
 
-    return () => unsubscribe();
+    const unsubscribeLegacy = onSnapshot(
+      legacyQueryRef,
+      (snapshot) => {
+        legacyComments = formatSnapshot(snapshot);
+        mergeAndSet();
+      },
+      (error) => {
+        console.error("Error listening to legacy comments:", error);
+      }
+    );
+
+    return () => {
+      unsubscribeScoped();
+      unsubscribeLegacy();
+    };
   }, [postId]);
 
   // Separate useEffect for handling comment scrolling
@@ -283,17 +449,17 @@ const PostDetail = () => {
     }
 
     if (error.code === "resource-exhausted") {
-      return "You’re commenting a bit fast. Please wait a moment and try again.";
+      return "You're commenting a bit fast. Please wait a moment and try again.";
     }
 
     if (error.code === "permission-denied") {
-      return "You’re commenting a bit fast. Please wait a moment and try again.";
+      return "You're commenting a bit fast. Please wait a moment and try again.";
     }
 
     if (typeof error.message === "string") {
       const message = error.message.toLowerCase();
       if (message.includes("rate") || message.includes("fast")) {
-        return "You’re commenting a bit fast. Please wait a moment and try again.";
+        return "You're commenting a bit fast. Please wait a moment and try again.";
       }
     }
 
@@ -361,11 +527,12 @@ const PostDetail = () => {
       try {
         const authorName = resolveAuthorName(user);
         const authorPhotoURL = resolveAuthorPhoto(user);
-
-        console.log("[Comments] submit comment auth", {
-          uid: user.uid,
-          isAnonymous: user.isAnonymous,
-        });
+        let mentionPayload = { mentionUserIds: [], mentionMetadata: [] };
+        try {
+          mentionPayload = await buildMentionPayload(db, trimmedContent);
+        } catch (mentionError) {
+          console.warn("Unable to resolve mentions before submit", mentionError);
+        }
 
         const commentPayload = {
           postId,
@@ -375,32 +542,25 @@ const PostDetail = () => {
           authorPhotoURL,
           parentId: null,
           parentCommentId: null,
+          threadRootCommentId: null,
           createdAt: serverTimestamp(),
           replyCount: 0,
+          likeCount: 0,
+          likedByAuthor: false,
+          score: 0,
+          mentions: mentionPayload.mentionUserIds,
+          mentionHandles: mentionPayload.mentionMetadata,
         };
 
-        console.log("[Comments] payload", commentPayload);
-
         const commentRef = await addDoc(
-          collection(db, "comments"),
+          postCommentsCollection(db, postId),
           commentPayload
         );
 
-        console.log("[Comments] wrote comment doc", {
-          path: commentRef.path,
-        });
-
         const newCommentObj = {
           id: commentRef.id,
-          postId,
-          content: trimmedContent,
-          authorId: user.uid,
-          authorName,
-          authorPhotoURL,
-          parentId: null,
-          parentCommentId: null,
+          ...commentPayload,
           createdAt: new Date(),
-          replyCount: 0,
         };
 
         clearNewCommentDraft();
@@ -423,9 +583,6 @@ const PostDetail = () => {
         });
 
         try {
-          console.log("[Comments] updating commentMeta", {
-            uid: user.uid,
-          });
           await setDoc(
             doc(db, "commentMeta", user.uid),
             {
@@ -442,35 +599,6 @@ const PostDetail = () => {
 
         markStarterPackCommented(user.uid);
 
-        if (post?.authorId && post.authorId !== user.uid) {
-          try {
-            const authorDoc = await getDoc(doc(db, "users", post.authorId));
-            const authorData = authorDoc.data();
-
-            if (authorData?.notificationPrefs?.postComments !== false) {
-              await createNotification({
-                recipientId: post.authorId,
-                senderId: user.uid,
-                senderName: authorName,
-                message: getNotificationMessage({
-                  type: "post_comment",
-                  senderName: authorName,
-                  postTitle: post.title,
-                }),
-                type: "post_comment",
-                link: `/post/${postId}`,
-                postId,
-                commentId: commentRef.id,
-              });
-            }
-          } catch (notificationError) {
-            console.error(
-              "Error sending comment notification:",
-              notificationError
-            );
-          }
-        }
-
         return { status: "posted", comment: newCommentObj };
       } catch (error) {
         console.error("Error adding comment:", error);
@@ -483,7 +611,6 @@ const PostDetail = () => {
     },
     [
       user,
-      post,
       postId,
       clearNewCommentDraft,
       interpretCommentError,
@@ -526,6 +653,13 @@ const PostDetail = () => {
       const effectiveTargetId = targetId || parentId;
 
       try {
+        let mentionPayload = { mentionUserIds: [], mentionMetadata: [] };
+        try {
+          mentionPayload = await buildMentionPayload(db, trimmedContent);
+        } catch (mentionError) {
+          console.warn("Unable to resolve mentions before reply", mentionError);
+        }
+
         const replyPayload = {
           postId,
           content: trimmedContent,
@@ -534,13 +668,23 @@ const PostDetail = () => {
           authorPhotoURL,
           parentId,
           parentCommentId: parentId,
+          threadRootCommentId:
+            parentComment.threadRootCommentId || parentComment.parentCommentId || parentComment.id,
           createdAt: serverTimestamp(),
           replyCount: 0,
+          likeCount: 0,
+          likedByAuthor: false,
+          score: 0,
+          mentions: mentionPayload.mentionUserIds,
+          mentionHandles: mentionPayload.mentionMetadata,
         };
 
         console.log("[Comments] reply payload", replyPayload);
 
-        const replyRef = await addDoc(collection(db, "comments"), replyPayload);
+        const replyRef = await addDoc(
+          postCommentsCollection(db, postId),
+          replyPayload
+        );
 
         console.log("[Comments] wrote reply doc", {
           path: replyRef.path,
@@ -552,10 +696,12 @@ const PostDetail = () => {
           createdAt: new Date(),
         };
 
-        const parentCommentRef = doc(db, "comments", parentId);
-        await updateDoc(parentCommentRef, {
-          replyCount: increment(1),
-        });
+        const parentCommentRef = resolveCommentDocRef(parentComment);
+        if (parentCommentRef) {
+          await updateDoc(parentCommentRef, {
+            replyCount: increment(1),
+          });
+        }
 
         const postRef = doc(db, "posts", postId);
         await updateDoc(postRef, {
@@ -590,36 +736,6 @@ const PostDetail = () => {
           );
         }
 
-        if (parentComment.authorId && parentComment.authorId !== user.uid) {
-          try {
-            const authorDoc = await getDoc(
-              doc(db, "users", parentComment.authorId)
-            );
-            const authorData = authorDoc.data();
-
-            if (authorData?.notificationPrefs?.commentReplies !== false) {
-              await createNotification({
-                recipientId: parentComment.authorId,
-                senderId: user.uid,
-                senderName: authorName,
-                message: getNotificationMessage({
-                  type: "comment_reply",
-                  senderName: authorName,
-                }),
-                type: "comment_reply",
-                link: `/post/${postId}`,
-                postId,
-                commentId: replyRef.id,
-              });
-            }
-          } catch (notificationError) {
-            console.error(
-              "Error sending reply notification:",
-              notificationError
-            );
-          }
-        }
-
         return {
           status: "posted",
           reply: newReply,
@@ -640,6 +756,7 @@ const PostDetail = () => {
       user,
       comments,
       postId,
+      resolveCommentDocRef,
       interpretCommentError,
       resolveAuthorName,
       resolveAuthorPhoto,
@@ -889,10 +1006,21 @@ const PostDetail = () => {
     }
 
     try {
-      const commentRef = doc(db, "comments", commentId);
+      const commentRef = resolveCommentDocRef(commentToUpdate);
+      if (!commentRef) {
+        throw new Error("Unable to resolve comment reference");
+      }
+      let mentionPayload = { mentionUserIds: [], mentionMetadata: [] };
+      try {
+        mentionPayload = await buildMentionPayload(db, trimmedContent);
+      } catch (mentionError) {
+        console.warn("Unable to resolve mentions before edit", mentionError);
+      }
       await updateDoc(commentRef, {
         content: trimmedContent,
         updatedAt: serverTimestamp(),
+        mentions: mentionPayload.mentionUserIds,
+        mentionHandles: mentionPayload.mentionMetadata,
       });
 
       setComments((prevComments) =>
@@ -901,6 +1029,8 @@ const PostDetail = () => {
             ? {
                 ...comment,
                 content: trimmedContent,
+                mentions: mentionPayload.mentionUserIds,
+                mentionHandles: mentionPayload.mentionMetadata,
                 updatedAt: new Date(),
               }
             : comment
@@ -926,7 +1056,7 @@ const PostDetail = () => {
       return;
     }
 
-    const isAdmin =
+  const isAdmin =
       user?.role === "admin" ||
       user?.role === "ADMIN" ||
       user?.isAdmin === true;
@@ -962,21 +1092,30 @@ const PostDetail = () => {
 
     const repliesToDelete = collectDescendants(commentId);
 
-    const batch = writeBatch(db);
+  const batch = writeBatch(db);
 
     repliesToDelete.forEach((reply) => {
-      const replyRef = doc(db, "comments", reply.id);
-      batch.delete(replyRef);
+      const replyRef = resolveCommentDocRef(reply);
+      if (replyRef) {
+        batch.delete(replyRef);
+      }
     });
 
-    const commentRef = doc(db, "comments", commentId);
-    batch.delete(commentRef);
+    const commentRef = resolveCommentDocRef(commentToDelete);
+    if (commentRef) {
+      batch.delete(commentRef);
+    }
 
     if (parentCommentId) {
-      const parentCommentRef = doc(db, "comments", parentCommentId);
-      batch.update(parentCommentRef, {
-        replyCount: increment(-1),
-      });
+      const parentComment = comments.find((comment) => comment.id === parentCommentId);
+      const parentCommentRef = resolveCommentDocRef(
+        parentComment || { id: parentCommentId }
+      );
+      if (parentCommentRef) {
+        batch.update(parentCommentRef, {
+          replyCount: increment(-1),
+        });
+      }
     }
 
     try {
@@ -1031,6 +1170,110 @@ const PostDetail = () => {
     });
   };
 
+  const handleToggleCommentLike = useCallback(
+    async (comment) => {
+      if (!comment?.id) {
+        return;
+      }
+
+      if (likeBusyMap[comment.id]) {
+        return;
+      }
+
+      setLikeBusyMap((prev) => ({ ...prev, [comment.id]: true }));
+      const fallbackPostId = comment.postId || postId;
+
+      try {
+        const payload = await toggleCommentLikeAction({
+          commentPath: comment.documentPath,
+          postId: fallbackPostId,
+          commentId: comment.id,
+        });
+        setComments((prevComments) =>
+          prevComments.map((existing) =>
+            existing.id === comment.id
+              ? {
+                  ...existing,
+                  likeCount:
+                    typeof payload.likeCount === "number"
+                      ? payload.likeCount
+                      : existing.likeCount ?? 0,
+                  score:
+                    typeof payload.score === "number"
+                      ? payload.score
+                      : existing.score ?? 0,
+                }
+              : existing
+          )
+        );
+      } catch (error) {
+        console.error("Failed to toggle comment like", error);
+        showErrorToast("Unable to update like. Please try again.");
+      } finally {
+        setLikeBusyMap((prev) => {
+          const next = { ...prev };
+          delete next[comment.id];
+          return next;
+        });
+      }
+    },
+    [likeBusyMap, postId, showErrorToast]
+  );
+
+  const handleAuthorPickToggle = useCallback(
+    async (commentId, nextValue) => {
+      if (!canAuthorPick) {
+        return;
+      }
+      if (authorPickBusyMap[commentId]) {
+        return;
+      }
+      setAuthorPickBusyMap((prev) => ({ ...prev, [commentId]: true }));
+
+      try {
+        const response = await authorLikeCallable({
+          postId,
+          commentId,
+          liked: nextValue,
+        });
+        const payload = response?.data || response;
+        setComments((prevComments) =>
+          prevComments.map((comment) =>
+            comment.id === commentId
+              ? {
+                  ...comment,
+                  likedByAuthor:
+                    typeof payload.likedByAuthor === "boolean"
+                      ? payload.likedByAuthor
+                      : nextValue,
+                  score:
+                    typeof payload.score === "number"
+                      ? payload.score
+                      : comment.score ?? 0,
+                }
+              : comment
+          )
+        );
+      } catch (error) {
+        console.error("Failed to toggle author pick", error);
+        showErrorToast("Unable to update author pick. Please try again.");
+      } finally {
+        setAuthorPickBusyMap((prev) => {
+          const next = { ...prev };
+          delete next[commentId];
+          return next;
+        });
+      }
+    },
+    [
+      canAuthorPick,
+      authorPickBusyMap,
+      authorLikeCallable,
+      postId,
+      showErrorToast,
+    ]
+  );
+
   const handleVoteChange = async (updatedPost) => {
     try {
       const postRef = doc(db, "posts", postId);
@@ -1067,6 +1310,7 @@ const PostDetail = () => {
 
   if (!post) return null;
 
+  // LIKES-AUTH-GUARD: per-user likes reads are now gated behind auth to satisfy Firestore rules.
   return (
     <>
       {post && (
@@ -1226,6 +1470,36 @@ const PostDetail = () => {
                         </div>
                       )}
                     </div>
+                    {postAuthorMeta &&
+                    (postAuthorMeta.dailyStreak > 0 || postAuthorLastBadgeMeta) ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                        {postAuthorMeta.dailyStreak > 0 ? (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 ${
+                              darkMode
+                                ? "bg-orange-900/40 text-orange-200"
+                                : "bg-orange-100 text-orange-800"
+                            }`}
+                          >
+                            🔥 {postAuthorMeta.dailyStreak} day streak
+                          </span>
+                        ) : null}
+                        {postAuthorLastBadgeMeta ? (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+                              darkMode
+                                ? "bg-gray-800 text-yellow-200"
+                                : "bg-gray-100 text-yellow-700"
+                            }`}
+                          >
+                            <span aria-hidden="true">
+                              {postAuthorLastBadgeMeta.icon}
+                            </span>
+                            <span>{postAuthorLastBadgeMeta.label}</span>
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div
                       className="flex items-center space-x-2"
                       role="list"
@@ -1341,13 +1615,15 @@ const PostDetail = () => {
                   <label htmlFor="post-comment" className="sr-only">
                     Write a comment
                   </label>
-                  <textarea
+                  <MentionTextarea
                     id="post-comment"
-                    rows="3"
+                    rows={3}
                     value={newCommentDraft}
                     onChange={handleCommentChange}
                     onKeyDown={handleCommentKeyDown}
                     placeholder="Share your thoughts..."
+                    darkMode={darkMode}
+                    disabled={isCommentProcessing}
                     className={`w-full px-4 py-2 rounded-lg text-sm ${
                       darkMode
                         ? "bg-gray-800 text-white placeholder-gray-400 border border-gray-700 focus:border-blue-500"
@@ -1368,7 +1644,7 @@ const PostDetail = () => {
                     >
                       {user
                         ? `Posting as ${resolveAuthorName(user)}`
-                        : "We’ll ask you to sign in or continue as guest when you post."}
+                        : "We'll ask you to sign in or continue as guest when you post."}
                     </span>
                     <button
                       type="submit"
@@ -1383,6 +1659,42 @@ const PostDetail = () => {
                     </button>
                   </div>
                 </form>
+              </div>
+
+              {/* ENGAGEMENT: canonical listeners live at posts/${postId}/comments (legacy top-level fallback keeps older threads visible), auth = (anonymous allowed) */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="inline-flex rounded-full border border-gray-200 bg-white p-1 dark:border-gray-800 dark:bg-gray-900">
+                  {[
+                    { id: "top", label: "Top Replies" },
+                    { id: "newest", label: "Newest" },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setCommentSort(option.id)}
+                      className={`px-4 py-1.5 text-sm font-semibold rounded-full transition-colors ${
+                        commentSort === option.id
+                          ? darkMode
+                            ? "bg-blue-600 text-white"
+                            : "bg-blue-600 text-white"
+                          : darkMode
+                          ? "text-gray-300"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                {authorPickSummary ? (
+                  <span
+                    className={`text-xs font-medium ${
+                      darkMode ? "text-gray-300" : "text-gray-600"
+                    }`}
+                  >
+                    Top reply earned Author’s Pick ({authorPickSummary.authorName})
+                  </span>
+                ) : null}
               </div>
 
               {/* Comments List */}
@@ -1419,6 +1731,14 @@ const PostDetail = () => {
                       processingReplyTargetId={processingReplyTargetId}
                       replyErrors={replyErrors}
                       onClearReplyError={handleClearReplyError}
+                      onToggleLike={handleToggleCommentLike}
+                      likeBusyMap={likeBusyMap}
+                      highlightedReplyIds={highlightedReplyIdsArray}
+                      topThreadParentId={topThreadParentId}
+                      canAuthorPick={canAuthorPick}
+                      authorPickBusyMap={authorPickBusyMap}
+                      onAuthorPickToggle={handleAuthorPickToggle}
+                      authorMetaMap={authorMeta}
                     />
                   ))
                 )}
@@ -1452,3 +1772,19 @@ const PostDetail = () => {
 };
 
 export default PostDetail;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

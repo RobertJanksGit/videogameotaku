@@ -1,20 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
+import { useToast } from "../../contexts/ToastContext";
+import useNotifications from "../../hooks/useNotifications";
 import PropTypes from "prop-types";
 import AuthModal from "../auth/AuthModal";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  doc,
-  deleteDoc,
-} from "firebase/firestore";
-import { db } from "../../config/firebase";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
 
 const SunIcon = () => (
@@ -100,6 +91,30 @@ ProfileIcon.propTypes = {
   photoURL: PropTypes.string,
 };
 
+const toMillis = (value) => {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.seconds === "number") {
+    return value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1e6);
+  }
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  return 0;
+};
+
+const getNotificationDescription = (notification) => {
+  switch (notification.type) {
+    case "reply":
+      return "Someone replied to your comment";
+    case "mention":
+      return "You were mentioned in a discussion";
+    case "like":
+      return "Your comment received a like";
+    default:
+      return "You have a new notification";
+  }
+};
+
 const ChevronDownIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -181,10 +196,18 @@ const Layout = ({ children }) => {
   const [authMode, setAuthMode] = useState("login");
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const dropdownRef = useRef(null);
   const notificationsRef = useRef(null);
+  const { showInfoToast } = useToast();
+  const {
+    notifications: engagementNotifications,
+    unreadCount,
+    markAsRead,
+    markAllAsRead,
+  } = useNotifications(!user || user.isAnonymous ? null : user.uid);
+  const hasUnreadNotifications = unreadCount > 0;
+  const notificationsInitializedRef = useRef(false);
+  const latestNotificationTsRef = useRef(0);
 
   // Reset dropdowns when user changes
   useEffect(() => {
@@ -193,31 +216,40 @@ const Layout = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
-    if (!user || user.isAnonymous) {
-      setNotifications([]);
-      setHasUnreadNotifications(false);
+    notificationsInitializedRef.current = false;
+    latestNotificationTsRef.current = 0;
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!engagementNotifications.length) {
       return;
     }
-
-    // Subscribe to notifications
-    const q = query(
-      collection(db, "notifications"),
-      where("recipientId", "==", user.uid),
-      orderBy("createdAt", "desc"),
-      limit(10)
+    const timestamps = engagementNotifications.map((notification) =>
+      toMillis(notification.createdAt)
     );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const notificationData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setNotifications(notificationData);
-      setHasUnreadNotifications(notificationData.some((n) => !n.read));
+    const newest = Math.max(...timestamps);
+    if (!notificationsInitializedRef.current) {
+      notificationsInitializedRef.current = true;
+      latestNotificationTsRef.current = newest;
+      return;
+    }
+    const freshNotifications = engagementNotifications.filter(
+      (notification) =>
+        !notification.read &&
+        toMillis(notification.createdAt) > latestNotificationTsRef.current
+    );
+    freshNotifications.forEach((notification) => {
+      if (notification.type === "reply" || notification.type === "mention") {
+        showInfoToast(getNotificationDescription(notification));
+      }
     });
-
-    return () => unsubscribe();
-  }, [user]);
+    if (freshNotifications.length > 0) {
+      latestNotificationTsRef.current = Math.max(
+        newest,
+        latestNotificationTsRef.current
+      );
+    }
+  }, [engagementNotifications, showInfoToast]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -256,21 +288,25 @@ const Layout = ({ children }) => {
 
   const handleNotificationClick = async (notification) => {
     try {
-      const notificationRef = doc(db, "notifications", notification.id);
-
-      // Delete the notification from Firestore
-      await deleteDoc(notificationRef);
-
-      // Remove notification from local state
-      setNotifications(notifications.filter((n) => n.id !== notification.id));
-
-      // Close notifications dropdown
+      if (notification.id) {
+        await markAsRead(notification.id);
+      }
       setShowNotifications(false);
 
-      // Navigate to the relevant post/comment with the target comment ID
-      navigate(notification.link, {
-        state: { targetCommentId: notification.commentId },
-      });
+      if (notification.link) {
+        navigate(notification.link, {
+          state: { targetCommentId: notification.commentId },
+        });
+        return;
+      }
+
+      if (notification.postId) {
+        navigate(`/post/${notification.postId}`, {
+          state: notification.commentId
+            ? { targetCommentId: notification.commentId }
+            : undefined,
+        });
+      }
     } catch (error) {
       console.error("Error handling notification click:", error);
     }
@@ -424,30 +460,62 @@ const Layout = ({ children }) => {
             ref={notificationsRef}
             className="fixed right-4 top-16 w-80 rounded-md bg-[#2D333B] ring-1 ring-[#1C2128] ring-opacity-5 py-1 shadow-lg z-50"
           >
-            <div className="px-4 py-2 border-b border-[#373E47]">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-[#373E47]">
               <h3 className="text-sm font-medium text-[#ADBAC7]">
                 Notifications
               </h3>
+              {engagementNotifications.length > 0 && (
+                <button
+                  onClick={markAllAsRead}
+                  className="text-xs font-semibold text-[#58A6FF] hover:text-white transition-colors"
+                  type="button"
+                >
+                  Mark all as read
+                </button>
+              )}
             </div>
             <div className="max-h-96 overflow-y-auto">
-              {notifications.length === 0 ? (
+              {engagementNotifications.length === 0 ? (
                 <div className="px-4 py-3 text-sm text-[#7D8590]">
-                  No notifications
+                  You're all caught up.
                 </div>
               ) : (
-                notifications.map((notification) => (
-                  <button
-                    key={notification.id}
-                    onClick={() => handleNotificationClick(notification)}
-                    className={`w-full block px-4 py-3 text-left text-sm border-0 rounded-none bg-[#2D333B] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#316DCA]/60 hover:bg-[#316DCA] ${
-                      notification.read
-                        ? "text-[#7D8590] hover:text-white"
-                        : "text-[#ADBAC7] font-medium hover:text-white"
-                    }`}
-                  >
-                    {notification.message}
-                  </button>
-                ))
+                engagementNotifications.map((notification) => {
+                  const description = getNotificationDescription(notification);
+                  const createdAtMs = toMillis(notification.createdAt);
+                  const timestampLabel = createdAtMs
+                    ? new Date(createdAtMs).toLocaleString()
+                    : "";
+                  return (
+                    <button
+                      key={notification.id}
+                      onClick={() => handleNotificationClick(notification)}
+                      type="button"
+                      className={`w-full block px-4 py-3 text-left text-sm border-0 rounded-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#316DCA]/60 ${
+                        notification.read
+                          ? "bg-[#2D333B] text-[#7D8590] hover:text-white hover:bg-[#316DCA]/30"
+                          : "bg-[#316DCA]/15 text-[#ADBAC7] font-semibold hover:bg-[#316DCA]/25"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span>{description}</span>
+                        {!notification.read && (
+                          <span className="mt-1 inline-flex h-2 w-2 rounded-full bg-[#58A6FF]" />
+                        )}
+                      </div>
+                      {notification.snippet ? (
+                        <p className="mt-1 text-xs text-[#7D8590] line-clamp-2">
+                          {notification.snippet}
+                        </p>
+                      ) : null}
+                      {timestampLabel ? (
+                        <p className="mt-1 text-[11px] uppercase tracking-wider text-[#6E7681]">
+                          {timestampLabel}
+                        </p>
+                      ) : null}
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>

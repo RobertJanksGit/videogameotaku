@@ -7,30 +7,54 @@ const authorCache = new Map();
 
 const fetchAuthorMeta = async (authorId) => {
   try {
-    const profileSnap = await getDoc(doc(db, "profiles", authorId));
-    if (profileSnap.exists()) {
-      const data = profileSnap.data() || {};
-      return {
-        karma: Number.isFinite(data.karma) ? data.karma : 0,
-        avatarUrl: normalizeProfilePhoto(
-          data.avatarUrl || data.photoURL || ""
-        ),
-      };
-    }
+    const [profileSnap, userSnap, statsSnap] = await Promise.all([
+      getDoc(doc(db, "profiles", authorId)),
+      getDoc(doc(db, "users", authorId)),
+      getDoc(doc(db, "user_stats", authorId)),
+    ]);
 
-    const userSnap = await getDoc(doc(db, "users", authorId));
-    if (userSnap.exists()) {
-      const data = userSnap.data() || {};
-      return {
-        karma: Number.isFinite(data.karma) ? data.karma : 0,
-        avatarUrl: normalizeProfilePhoto(data.photoURL || ""),
-      };
-    }
+    const profileData = profileSnap.exists() ? profileSnap.data() || {} : {};
+    const userData = userSnap.exists() ? userSnap.data() || {} : {};
+    const statsData = statsSnap.exists() ? statsSnap.data() || {} : {};
+
+    const karma = Number.isFinite(profileData.karma)
+      ? profileData.karma
+      : Number.isFinite(userData.karma)
+      ? userData.karma
+      : 0;
+
+    const avatarUrl = normalizeProfilePhoto(
+      profileData.avatarUrl || profileData.photoURL || userData.photoURL || ""
+    );
+
+    const badges = Array.isArray(statsData.badges)
+      ? statsData.badges
+      : Array.isArray(profileData.badges)
+      ? profileData.badges
+      : [];
+
+    const dailyStreak = Number.isFinite(statsData.dailyStreak)
+      ? statsData.dailyStreak
+      : 0;
+
+    const lastBadge =
+      badges.length > 0 ? badges[badges.length - 1] : statsData.lastBadge || "";
+
+    return {
+      karma,
+      avatarUrl,
+      badges,
+      dailyStreak,
+      lastBadge,
+      commentCount: Number.isFinite(statsData.commentCount)
+        ? statsData.commentCount
+        : 0,
+    };
   } catch (error) {
     console.error("Failed to fetch author profile for", authorId, error);
   }
 
-  return { karma: 0, avatarUrl: "" };
+  return { karma: 0, avatarUrl: "", badges: [], dailyStreak: 0, lastBadge: "" };
 };
 
 export const useAuthorRanks = (ids) => {

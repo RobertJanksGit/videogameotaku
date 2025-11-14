@@ -85,7 +85,7 @@ service cloud.firestore {
     // Helper function to validate notification data
     function isValidNotificationData(data) {
       return data.keys().hasAll(['recipientId', 'senderId', 'message', 'type', 'read']) &&
-             data.type in ['post_comment', 'comment_reply'] &&
+             data.type in ['post_comment', 'comment_reply', 'reply', 'mention', 'like'] &&
              data.read is bool;
     }
 
@@ -110,6 +110,36 @@ service cloud.firestore {
     function isValidCommentUpdate(existing, updated) {
       let onlyReplyCountChanged = updated.diff(existing).affectedKeys().hasOnly(['replyCount']);
       return onlyReplyCountChanged && updated.replyCount is number && updated.replyCount >= 0;
+    }
+
+    // RULES: engagement
+    function isPostAuthor(postId) {
+      let postRef = /databases/$(database)/documents/posts/$(postId);
+      return exists(postRef) && get(postRef).data.authorId == request.auth.uid;
+    }
+
+    function isValidMentionsField(list) {
+      return list == null || list is list;
+    }
+
+    function isValidMentionHandlesField(list) {
+      return list == null || list is list;
+    }
+
+    function isValidEngagementCommentData(data) {
+      let hasEngagementFields = data.keys().hasAll(['likeCount', 'score', 'replyCount', 'likedByAuthor']);
+
+      return isValidCommentData(data) &&
+             hasEngagementFields &&
+             data.likeCount is number &&
+             data.score is number &&
+             data.replyCount is number &&
+             data.likedByAuthor is bool &&
+             isValidMentionsField(data.mentions) &&
+             isValidMentionHandlesField(data.mentionHandles) &&
+             (!('threadRootCommentId' in data) ||
+                data.threadRootCommentId == null ||
+                data.threadRootCommentId is string);
     }
 
     function isUnderCommentRateLimit() {
@@ -172,6 +202,39 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isSignedIn() && resource.data.authorId == request.auth.uid);
     }
 
+    // Comments (per-post subcollection)
+    match /posts/{postId}/comments/{commentId} {
+      allow read: if true;
+      allow create: if request.auth != null &&
+                    request.resource.data.authorId == request.auth.uid &&
+                    isValidEngagementCommentData(request.resource.data) &&
+                    request.resource.data.postId == postId &&
+                    request.resource.data.likeCount == 0 &&
+                    request.resource.data.replyCount == 0 &&
+                    isUnderCommentRateLimit();
+      allow update: if isAdmin() ||
+                    (
+                      request.auth != null &&
+                      resource.data.authorId == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['content', 'updatedAt', 'mentions', 'mentionHandles'])
+                    );
+      allow delete: if request.auth != null &&
+                    (resource.data.authorId == request.auth.uid || isAdmin());
+
+      // Per-comment likes subcollection
+      match /likes/{uid} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
+    // Legacy/top-level comments: per-comment likes subcollection
+    match /comments/{commentId}/likes/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
     // Comments collection rules
     match /comments/{commentId} {
       // Anyone can read comments
@@ -196,6 +259,20 @@ service cloud.firestore {
       allow create, update: if isOwner(userId) &&
         request.resource.data.lastCommentTime is timestamp;
       allow delete: if false;
+    }
+
+    match /user_stats/{userId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /user_handles/{handle} {
+      allow read: if true;
+      allow create, update: if isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.handleLower == handle &&
+        request.resource.data.handle is string;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // Users collection rules
@@ -243,7 +320,17 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // Notifications collection rules
+    // Notifications collection rules (per-user subcollection)
+    match /notifications/{userId}/items/{notificationId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if false; // Server-only
+      allow update: if isSignedIn() &&
+                    request.auth.uid == userId &&
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Legacy notifications collection rules
     match /notifications/{notificationId} {
       // Users can read their own notifications
       allow read: if isSignedIn() && resource.data.recipientId == request.auth.uid;

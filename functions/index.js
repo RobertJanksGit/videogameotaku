@@ -18,7 +18,7 @@ import {
 import fetch from "node-fetch";
 import { defineInt, defineSecret } from "firebase-functions/params";
 import admin from "firebase-admin";
-import { onRequest } from "firebase-functions/v2/https";
+import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { Buffer } from "buffer";
 import { randomBytes } from "crypto";
 import OpenAI from "openai";
@@ -34,6 +34,15 @@ import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
 import { runBotActivityTick, processScheduledBotActions } from "./bots/index.js";
+import {
+  buildMentionPayload,
+  computeScore,
+  createNotificationItem,
+  maybeAwardAuthorsPickBadge,
+  maybeAwardHelpfulBadge,
+  normalizeCommentFields,
+  updateUserStatsOnComment,
+} from "./engagement.js";
 
 // Define all secrets at the top of the file
 const bucketName = defineSecret("STORAGE_BUCKET_NAME");
@@ -2438,13 +2447,72 @@ async function generateEmbedding(article) {
   }
 }
 
+const SOCIAL_EMBED_HOSTS = {
+  youtube: ["youtube.com", "youtu.be"],
+  twitter: ["twitter.com", "x.com"],
+};
+
+const hostMatchesDomain = (host, domain) =>
+  host === domain || host.endsWith(`.${domain}`);
+
+function getSocialEmbedType(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
+
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+
+    if (
+      SOCIAL_EMBED_HOSTS.youtube.some((domain) =>
+        hostMatchesDomain(host, domain)
+      )
+    ) {
+      return "youtube";
+    }
+
+    if (
+      SOCIAL_EMBED_HOSTS.twitter.some((domain) =>
+        hostMatchesDomain(host, domain)
+      )
+    ) {
+      return "twitter";
+    }
+  } catch (error) {
+    console.warn("Invalid social URL provided for embed:", rawUrl, error);
+    return null;
+  }
+
+  return null;
+}
+
+function buildSocialEmbedSnippet(rawUrl) {
+  const socialUrl = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (!socialUrl) return null;
+
+  const embedType = getSocialEmbedType(socialUrl);
+  if (!embedType) return null;
+
+  return `{{embed type="${embedType}" url="${socialUrl}"}}`;
+}
+
+function buildPostContent(article) {
+  const baseContent = `${article.summary}`;
+  const sourceSection = `[Source](${article.sourceUrl})`;
+  const embedSnippet = buildSocialEmbedSnippet(article.socialUrl);
+
+  if (embedSnippet) {
+    return `${baseContent}\n\n${embedSnippet}\n\n${sourceSection}`;
+  }
+
+  return `${baseContent}\n\n${sourceSection}`;
+}
+
 async function createPost(article, SYSTEM_USER, embedding, options = {}) {
   const { publishAt: requestedPublishAt } = options;
 
   // Validate and sanitize content
-  const sanitizedContent = sanitizeContent(
-    `${article.summary}\n\n[Source](${article.sourceUrl})`
-  );
+  const contentWithSource = buildPostContent(article);
+  const sanitizedContent = sanitizeContent(contentWithSource);
   await validateContent(article.title, sanitizedContent);
 
   // Check rate limit
@@ -3231,5 +3299,411 @@ export const processBotScheduledActions = onSchedule(
       console.error("Bot scheduled action processor failed", error);
       throw error;
     }
+  }
+);
+
+const getCommentRefs = (postId, commentId) => {
+  const postRef = db.collection("posts").doc(postId);
+  const commentRef = postRef.collection("comments").doc(commentId);
+  const legacyCommentRef = db.collection("comments").doc(commentId);
+  return { postRef, commentRef, legacyCommentRef };
+};
+
+const normalizeDocPath = (path) => {
+  if (typeof path !== "string") {
+    return "";
+  }
+  return path.replace(/^\/+/, "");
+};
+
+const resolveCommentDocRef = async ({
+  commentPath,
+  postId,
+  commentId,
+} = {}) => {
+  const attemptDoc = async (path) => {
+    if (!path) {
+      return null;
+    }
+    const ref = db.doc(path);
+    try {
+      const snapshot = await ref.get();
+      return snapshot.exists ? ref : null;
+    } catch (error) {
+      console.warn("resolveCommentDocRef get failed", {
+        path,
+        error: error.message,
+      });
+      return null;
+    }
+  };
+
+  if (commentPath) {
+    const normalizedPath = normalizeDocPath(commentPath);
+    const directRef = await attemptDoc(normalizedPath);
+    if (directRef) {
+      return directRef;
+    }
+  }
+
+  if (postId && commentId) {
+    const nestedPath = `posts/${postId}/comments/${commentId}`;
+    const nestedRef = await attemptDoc(nestedPath);
+    if (nestedRef) {
+      return nestedRef;
+    }
+
+    const legacyPath = `comments/${commentId}`;
+    const legacyRef = await attemptDoc(legacyPath);
+    if (legacyRef) {
+      return legacyRef;
+    }
+  }
+
+  return null;
+};
+
+const getNotificationSnippet = (content = "") =>
+  content.length > 140 ? `${content.slice(0, 137)}...` : content;
+
+export const onCommentWrite = onDocumentWritten(
+  "posts/{postId}/comments/{commentId}",
+  async (event) => {
+    const { postId, commentId } = event.params;
+    const before = event.data.before.exists ? event.data.before.data() : null;
+    const after = event.data.after.exists ? event.data.after.data() : null;
+
+    if (!after) {
+      return;
+    }
+
+    const commentRef = event.data.after.ref;
+    const normalized = normalizeCommentFields(after);
+    const updates = {};
+
+    if (!normalized.threadRootCommentId) {
+      updates.threadRootCommentId =
+        normalized.parentCommentId || normalized.parentId || commentId;
+    }
+
+    if (!Array.isArray(normalized.mentions) || normalized.mentions.length === 0) {
+      try {
+        const mentionResult = await buildMentionPayload(
+          db,
+          normalized.content || "",
+          Array.isArray(normalized.mentionHandles)
+            ? normalized.mentionHandles.map((entry) =>
+                (entry?.handle || "").toLowerCase()
+              )
+            : []
+        );
+        if (mentionResult.userIds.length) {
+          updates.mentions = mentionResult.userIds;
+        }
+        if (mentionResult.metadata.length) {
+          updates.mentionHandles = mentionResult.metadata;
+        }
+      } catch (error) {
+        console.error("Failed to resolve mentions", {
+          postId,
+          commentId,
+          error: error.message,
+        });
+      }
+    }
+
+    const nextScore = computeScore({
+      ...normalized,
+      ...updates,
+    });
+    if (!Number.isFinite(normalized.score) || normalized.score !== nextScore) {
+      updates.score = nextScore;
+    }
+
+    if (!Number.isFinite(normalized.likeCount)) {
+      updates.likeCount = 0;
+    }
+    if (!Number.isFinite(normalized.replyCount)) {
+      updates.replyCount = 0;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await commentRef.set(updates, { merge: true });
+    }
+
+    const isCreate = !before;
+    if (!isCreate) {
+      return;
+    }
+
+    const parentCommentId =
+      normalized.parentCommentId || normalized.parentId || null;
+    if (parentCommentId) {
+      const parentRef = commentRef.parent.doc(parentCommentId);
+      await parentRef
+        .update({
+          replyCount: admin.firestore.FieldValue.increment(1),
+        })
+        .catch((error) => {
+          console.error("Failed to increment parent replyCount", {
+            parentCommentId,
+            postId,
+            error: error.message,
+          });
+        });
+    }
+
+    await updateUserStatsOnComment({
+      db,
+      userId: normalized.authorId,
+      createdAt: normalized.createdAt,
+    });
+
+    const snippet = getNotificationSnippet(normalized.content);
+
+    if (parentCommentId) {
+      const parentSnap = await commentRef.parent.doc(parentCommentId).get();
+      const parentAuthorId = parentSnap.exists
+        ? parentSnap.get("authorId")
+        : null;
+      if (parentAuthorId && parentAuthorId !== normalized.authorId) {
+        await createNotificationItem({
+          db,
+          recipientId: parentAuthorId,
+          type: "reply",
+          actorId: normalized.authorId,
+          postId,
+          commentId,
+          snippet,
+        });
+      }
+    } else {
+      const postSnap = await commentRef.parent.parent.get();
+      const postAuthorId = postSnap.exists ? postSnap.get("authorId") : null;
+      if (postAuthorId && postAuthorId !== normalized.authorId) {
+        await createNotificationItem({
+          db,
+          recipientId: postAuthorId,
+          type: "reply",
+          actorId: normalized.authorId,
+          postId,
+          commentId,
+          snippet,
+        });
+      }
+    }
+
+    const mentionTargets = updates.mentions || normalized.mentions || [];
+    await Promise.all(
+      mentionTargets
+        .filter((userId) => userId && userId !== normalized.authorId)
+        .map((userId) =>
+          createNotificationItem({
+            db,
+            recipientId: userId,
+            type: "mention",
+            actorId: normalized.authorId,
+            postId,
+            commentId,
+            snippet,
+          })
+        )
+    );
+  }
+);
+
+export const toggleCommentLike = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    const uid = request.auth?.uid || null;
+    const { commentPath, postId, commentId } = request.data || {};
+
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign in to like comments.");
+    }
+
+    if (
+      !commentPath &&
+      (!postId || !commentId)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Provide commentPath or postId/commentId."
+      );
+    }
+
+    try {
+      const commentRef = await resolveCommentDocRef({
+        commentPath,
+        postId,
+        commentId,
+      });
+
+      if (!commentRef) {
+        throw new HttpsError("not-found", "Comment not found.");
+      }
+
+      const likeRef = commentRef.collection("likes").doc(uid);
+
+      const result = await db.runTransaction(async (tx) => {
+        const [commentSnap, likeSnap] = await Promise.all([
+          tx.get(commentRef),
+          tx.get(likeRef),
+        ]);
+
+        if (!commentSnap.exists) {
+          throw new HttpsError(
+            "not-found",
+            "Comment missing during transaction."
+          );
+        }
+
+        const commentData = commentSnap.data() || {};
+        const baseLikeCount = Number.isFinite(commentData.likeCount)
+          ? commentData.likeCount
+          : 0;
+        const resolvedPostId = commentData.postId || postId || null;
+        const resolvedCommentId =
+          commentData.id || commentId || commentRef.id;
+
+        let liked;
+        let nextLikeCount;
+        let nextScore;
+
+        if (likeSnap.exists) {
+          liked = false;
+          nextLikeCount = Math.max(0, baseLikeCount - 1);
+          const scoreInput = { ...commentData, likeCount: nextLikeCount };
+          nextScore = computeScore(scoreInput);
+          tx.delete(likeRef);
+          tx.update(commentRef, {
+            likeCount: admin.firestore.FieldValue.increment(-1),
+            score: nextScore,
+          });
+        } else {
+          liked = true;
+          nextLikeCount = baseLikeCount + 1;
+          const scoreInput = { ...commentData, likeCount: nextLikeCount };
+          nextScore = computeScore(scoreInput);
+          tx.set(likeRef, {
+            userId: uid,
+            postId: resolvedPostId,
+            commentId: resolvedCommentId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          tx.update(commentRef, {
+            likeCount: admin.firestore.FieldValue.increment(1),
+            score: nextScore,
+          });
+        }
+
+        return {
+          liked,
+          likeCount: nextLikeCount,
+          score: nextScore,
+          commentAuthorId: commentData.authorId,
+          content: commentData.content || "",
+          postId: resolvedPostId,
+          commentId: resolvedCommentId,
+          path: commentRef.path,
+        };
+      });
+
+      if (result.liked && result.commentAuthorId) {
+        await Promise.all([
+          createNotificationItem({
+            db,
+            recipientId: result.commentAuthorId,
+            type: "like",
+            actorId: uid,
+            postId: result.postId || postId || null,
+            commentId: result.commentId || commentId || null,
+            snippet: getNotificationSnippet(result.content),
+          }),
+          maybeAwardHelpfulBadge({
+            db,
+            userId: result.commentAuthorId,
+            likeCount: result.likeCount,
+          }),
+        ]);
+      }
+
+      return result;
+    } catch (error) {
+      console.error("toggleCommentLike failure", {
+        uid,
+        postId,
+        commentId,
+        commentPath,
+        error: error?.message || error,
+      });
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      throw new HttpsError("internal", "Failed to toggle like.");
+    }
+  }
+);
+
+export const authorLikeToggle = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new Error("Authentication required.");
+    }
+    const { postId, commentId, liked } = request.data || {};
+    if (!postId || !commentId || typeof liked !== "boolean") {
+      throw new Error("postId, commentId, and liked are required.");
+    }
+
+    const { postRef, commentRef } = getCommentRefs(postId, commentId);
+
+    const result = await db.runTransaction(async (tx) => {
+      const [postSnap, commentSnap] = await Promise.all([
+        tx.get(postRef),
+        tx.get(commentRef),
+      ]);
+
+      if (!postSnap.exists || postSnap.get("authorId") !== uid) {
+        throw new Error("Only the post author can mark author likes.");
+      }
+      if (!commentSnap.exists) {
+        throw new Error("Comment not found.");
+      }
+
+      const commentData = commentSnap.data() || {};
+      if (Boolean(commentData.likedByAuthor) === liked) {
+        return {
+          likedByAuthor: liked,
+          score: commentData.score || 0,
+          commentAuthorId: commentData.authorId,
+        };
+      }
+
+      const nextScore = computeScore({
+        ...commentData,
+        likedByAuthor: liked,
+      });
+
+      tx.update(commentRef, {
+        likedByAuthor: liked,
+        score: nextScore,
+      });
+
+      return {
+        likedByAuthor: liked,
+        score: nextScore,
+        commentAuthorId: commentData.authorId,
+      };
+    });
+
+    await maybeAwardAuthorsPickBadge({
+      db,
+      userId: result.commentAuthorId,
+      liked,
+    });
+
+    return result;
   }
 );
