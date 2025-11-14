@@ -3309,55 +3309,62 @@ const getCommentRefs = (postId, commentId) => {
   return { postRef, commentRef, legacyCommentRef };
 };
 
-const normalizeDocPath = (path) => {
+const sanitizeCommentPath = (path) => {
   if (typeof path !== "string") {
     return "";
   }
   return path.replace(/^\/+/, "");
 };
 
-const resolveCommentDocRef = async ({
-  commentPath,
-  postId,
-  commentId,
-} = {}) => {
-  const attemptDoc = async (path) => {
-    if (!path) {
-      return null;
-    }
-    const ref = db.doc(path);
-    try {
-      const snapshot = await ref.get();
-      return snapshot.exists ? ref : null;
-    } catch (error) {
-      console.warn("resolveCommentDocRef get failed", {
-        path,
-        error: error.message,
-      });
-      return null;
-    }
-  };
-
-  if (commentPath) {
-    const normalizedPath = normalizeDocPath(commentPath);
-    const directRef = await attemptDoc(normalizedPath);
-    if (directRef) {
-      return directRef;
-    }
+const fetchCommentRefByPath = async (path) => {
+  const sanitizedPath = sanitizeCommentPath(path);
+  if (!sanitizedPath) {
+    return null;
   }
 
-  if (postId && commentId) {
-    const nestedPath = `posts/${postId}/comments/${commentId}`;
-    const nestedRef = await attemptDoc(nestedPath);
-    if (nestedRef) {
+  try {
+    const ref = db.doc(sanitizedPath);
+    const snapshot = await ref.get();
+    return snapshot.exists ? ref : null;
+  } catch (error) {
+    console.warn("fetchCommentRefByPath failed", {
+      path,
+      error: error.message,
+    });
+    return null;
+  }
+};
+
+const resolveCommentRefByArgs = async (postId, commentId) => {
+  if (!postId || !commentId) {
+    return null;
+  }
+
+  const nestedRef = db.doc(`posts/${postId}/comments/${commentId}`);
+  try {
+    const nestedSnap = await nestedRef.get();
+    if (nestedSnap.exists) {
       return nestedRef;
     }
+  } catch (error) {
+    console.warn("resolveCommentRefByArgs nested lookup failed", {
+      postId,
+      commentId,
+      error: error.message,
+    });
+  }
 
-    const legacyPath = `comments/${commentId}`;
-    const legacyRef = await attemptDoc(legacyPath);
-    if (legacyRef) {
+  const legacyRef = db.doc(`comments/${commentId}`);
+  try {
+    const legacySnap = await legacyRef.get();
+    if (legacySnap.exists) {
       return legacyRef;
     }
+  } catch (error) {
+    console.warn("resolveCommentRefByArgs legacy lookup failed", {
+      commentId,
+      error: error.message,
+    });
   }
 
   return null;
@@ -3533,17 +3540,22 @@ export const toggleCommentLike = onCall(
     }
 
     try {
-      const commentRef = await resolveCommentDocRef({
-        commentPath,
-        postId,
-        commentId,
-      });
+      let commentRef = null;
+
+      if (typeof commentPath === "string" && commentPath.length > 0) {
+        commentRef = await fetchCommentRefByPath(commentPath);
+      }
+
+      if (!commentRef) {
+        commentRef = await resolveCommentRefByArgs(postId, commentId);
+      }
 
       if (!commentRef) {
         throw new HttpsError("not-found", "Comment not found.");
       }
 
       const likeRef = commentRef.collection("likes").doc(uid);
+      let toggled = "like";
 
       const result = await db.runTransaction(async (tx) => {
         const [commentSnap, likeSnap] = await Promise.all([
@@ -3552,10 +3564,7 @@ export const toggleCommentLike = onCall(
         ]);
 
         if (!commentSnap.exists) {
-          throw new HttpsError(
-            "not-found",
-            "Comment missing during transaction."
-          );
+          throw new HttpsError("not-found", "Comment missing.");
         }
 
         const commentData = commentSnap.data() || {};
@@ -3572,6 +3581,7 @@ export const toggleCommentLike = onCall(
 
         if (likeSnap.exists) {
           liked = false;
+          toggled = "unlike";
           nextLikeCount = Math.max(0, baseLikeCount - 1);
           const scoreInput = { ...commentData, likeCount: nextLikeCount };
           nextScore = computeScore(scoreInput);
@@ -3582,6 +3592,7 @@ export const toggleCommentLike = onCall(
           });
         } else {
           liked = true;
+          toggled = "like";
           nextLikeCount = baseLikeCount + 1;
           const scoreInput = { ...commentData, likeCount: nextLikeCount };
           nextScore = computeScore(scoreInput);
@@ -3609,26 +3620,40 @@ export const toggleCommentLike = onCall(
         };
       });
 
-      if (result.liked && result.commentAuthorId) {
-        await Promise.all([
-          createNotificationItem({
-            db,
-            recipientId: result.commentAuthorId,
-            type: "like",
-            actorId: uid,
-            postId: result.postId || postId || null,
-            commentId: result.commentId || commentId || null,
-            snippet: getNotificationSnippet(result.content),
-          }),
-          maybeAwardHelpfulBadge({
-            db,
-            userId: result.commentAuthorId,
-            likeCount: result.likeCount,
-          }),
-        ]);
+      try {
+        if (result.liked && result.commentAuthorId) {
+          await Promise.all([
+            createNotificationItem({
+              db,
+              recipientId: result.commentAuthorId,
+              type: "like",
+              actorId: uid,
+              postId: result.postId || postId || null,
+              commentId: result.commentId || commentId || null,
+              snippet: getNotificationSnippet(result.content),
+            }),
+            maybeAwardHelpfulBadge({
+              db,
+              userId: result.commentAuthorId,
+              likeCount: result.likeCount,
+            }),
+          ]);
+        }
+      } catch (sideEffectError) {
+        console.error("toggleCommentLike side-effect failed (non-fatal)", {
+          uid,
+          postId,
+          commentId,
+          commentPath,
+          error: sideEffectError?.message || sideEffectError,
+        });
       }
 
-      return result;
+      return {
+        ...result,
+        ok: true,
+        toggled,
+      };
     } catch (error) {
       console.error("toggleCommentLike failure", {
         uid,

@@ -4,29 +4,18 @@ import ensureSignedIn from "../auth/ensureSignedIn";
 const functions = getFunctions(undefined, "us-central1");
 const toggleLikeCallable = httpsCallable(functions, "toggleCommentLike");
 
-const buildPayload = ({ commentPath, postId, commentId }) => {
-  const payload = {};
-  if (commentPath) {
-    payload.commentPath = commentPath.replace(/^\/+/, "");
-  }
-  if (postId) {
-    payload.postId = postId;
-  }
-  if (commentId) {
-    payload.commentId = commentId;
-  }
-  return payload;
-};
+const sanitizeCommentPath = (commentPath) =>
+  typeof commentPath === "string" ? commentPath.replace(/^\/+/, "") : "";
 
-export const toggleCommentLikeByPath = async ({
-  commentPath,
-  postId,
-  commentId,
-}) => {
+export const toggleCommentLikeByPath = async (commentPath) => {
   await ensureSignedIn();
-  const response = await toggleLikeCallable(
-    buildPayload({ commentPath, postId, commentId })
-  );
+  const sanitizedPath = sanitizeCommentPath(commentPath);
+  if (!sanitizedPath) {
+    throw new Error("commentPath is required to toggle comment likes.");
+  }
+  const response = await toggleLikeCallable({
+    commentPath: sanitizedPath,
+  });
   return response?.data || {};
 };
 

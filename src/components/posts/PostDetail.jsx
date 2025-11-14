@@ -1176,19 +1176,25 @@ const PostDetail = () => {
         return;
       }
 
+      if (!comment.documentPath) {
+        console.warn(
+          "Missing documentPath for comment like toggle",
+          comment
+        );
+        showErrorToast(
+          "Unable to locate that comment. Please refresh and try again."
+        );
+        return;
+      }
+
       if (likeBusyMap[comment.id]) {
         return;
       }
 
       setLikeBusyMap((prev) => ({ ...prev, [comment.id]: true }));
-      const fallbackPostId = comment.postId || postId;
 
       try {
-        const payload = await toggleCommentLikeAction({
-          commentPath: comment.documentPath,
-          postId: fallbackPostId,
-          commentId: comment.id,
-        });
+        const payload = await toggleCommentLikeAction(comment.documentPath);
         setComments((prevComments) =>
           prevComments.map((existing) =>
             existing.id === comment.id
@@ -1217,7 +1223,7 @@ const PostDetail = () => {
         });
       }
     },
-    [likeBusyMap, postId, showErrorToast]
+    [likeBusyMap, showErrorToast]
   );
 
   const handleAuthorPickToggle = useCallback(
