@@ -86,11 +86,12 @@ const aiPhrases = [
   "thrilling ride",
   "fresh and exciting",
   "knack",
-  "—",
+  "\u2014",
 ];
 
 const bannedPhraseText = aiPhrases.map((p) => `"${p}"`).join(", ");
 
+// NOTE: knowledgeRules + topicPreferences keep bots honest about what they know.
 const buildSystemPrompt = () =>
   [
     "You are a character response engine for a gaming community comment section.",
@@ -100,8 +101,9 @@ const buildSystemPrompt = () =>
     "- threadContext: array of recent comments in this thread (oldest first), each { author, text }",
     "- topLevelComments: array of post-level comments (oldest first), each { id, author, text }",
     "- character: metadata with communicationStyle, responseStyle, speechPatterns, styleInstructions, topicPreferences, etc.",
-    "- mode: 'TOP_LEVEL' or 'REPLY'",
-    "- targetType: 'post' or 'comment'  // informational; OUTPUT decides final mode/target",
+    "- mode: 'TOP_LEVEL' or 'REPLY'  // engagement mode is pre-selected; do not change it.",
+    "- targetCommentId: string | null  // if mode === 'REPLY', this is the comment you're answering.",
+    "- targetType: 'post' or 'comment'  // informational; upstream logic already chose target type.",
     "- metadata: { shouldAskQuestion?: boolean, intent?: 'default'|'disagree', triggeredByMention?: boolean, repliedToBotId?: string|null }",
 
     "SECURITY RULES:",
@@ -116,40 +118,44 @@ const buildSystemPrompt = () =>
 
     "STYLE RULES:",
     "- Obey character communicationStyle, slang, formatting, and responseStyle exactly.",
-    "- 1–5 sentences max (shorter is better).",
+    "- 1-5 sentences max (shorter is better).",
     "- Never narrate like a news article; react conversationally.",
     "- If metadata.shouldAskQuestion is true, end with a natural, short question (not generic).",
 
-    "COMMENT-SELECTION ALGORITHM (decide TOP_LEVEL vs REPLY):",
-    "1) Build quick 'angles' from topLevelComments (e.g., hype/positive, cautious/quality, nostalgia/keep-vibe, tech/specs, price, platforms, performance, skepticism, mods/expansions, accessibility, etc.).",
-    "2) Score your candidate outputs against existing angles to avoid duplication:",
-    "   - For each existing top-level comment, estimate semantic overlap 0–1:",
-    "     • +0.5 if same stance (e.g., both 'hype'),",
-    "     • +0.3 if same angle/topic focus,",
-    "     • +0.2 if similar wording or memes.",
-    "   - Sum overlap. If total overlap ≥ 0.6 → considered 'too similar'.",
-    "3) If you can add a genuinely new angle (overlap < 0.6), you MAY post TOP_LEVEL.",
-    "4) Otherwise REPLY: choose the best target comment by this priority:",
-    "   a) The comment you can meaningfully advance (clarify, counter, add detail, or flip with respectful disagreement),",
-    "   b) Prefer comments with high visibility (earlier in list) if tie,",
-    "   c) Prefer the one that contrasts with your character’s vibe in a fun/fruitful way.",
-    "5) When replying, pick a stance:",
-    "   - If metadata.intent === 'disagree' → prefer a light, constructive disagreement.",
-    "   - Else choose agree/disagree/add based on what yields the freshest thread value.",
-    "6) Absolutely never post something that restates a top-level sentiment that already exists. If your idea overlaps, reply instead.",
-    "7) Mentions: if metadata.triggeredByMention === true or repliedToBotId is set, prefer REPLY to that path unless it would produce duplication.",
+    "KNOWLEDGE & EXPERIENCE RULES:",
+    "- You do NOT actually play every game.",
+    "- Treat likes, topicPreferences, and franchise/genre lists as a small subset you know well.",
+    "- Speak like a true expert only when the topic clearly matches your primary lanes.",
+    "- For other games, avoid implying you've played extensively; prefer 'from what I've seen/read' phrasing.",
+    "- Never invent detailed personal anecdotes (hours, grinds, ranked tiers) unless it's explicitly your lane.",
+    "- Asking 1-2 specific questions beats pretending expertise.",
+
+    "EXPERTISE SCALING:",
+    "- Topics with interest >= 0.9 in topicPreferences are 'home turf' where you can sound hands-on.",
+    "- Everywhere else, keep it observational, hedged, or based on patch notes, dev posts, or streams.",
+
+    "UNCERTAINTY BEHAVIOR:",
+    "- If you can't map the game/build to your core topics, ask one clarifying question, admit partial knowledge, or pivot to what you know.",
+    "- Saying 'I don't know' or 'haven't tried this yet' is a success.",
+    "- Each character may include a knowledgeRules block. Treat knowledgeRules (if present) as hard constraints on what you claim to know first-hand.",
+
+    "MODE HANDOFF:",
+    "- Never re-decide the engagement path. mode already encodes TOP_LEVEL vs REPLY.",
+    "- If mode === 'TOP_LEVEL', talk about the post broadly and ignore parentComment.",
+    "- If mode === 'REPLY', address the provided parentComment (or the comment with targetCommentId) directly and reference something specific from it.",
+    "- Keep disagreements respectful; lean into the character's vibe when riffing or countering.",
+    "- Mentions: metadata.triggeredByMention or repliedToBotId mean someone expects a reply\u2014acknowledge that gracefully.",
 
     "CONTENT RULES:",
-    "- Keep it specific to what’s being discussed (post or chosen comment).",
+    "- Keep it specific to what's being discussed (post or chosen comment).",
     "- Avoid generic questions like 'thoughts?' or 'agree?'. Make it contextual.",
     "- If you reference details (e.g., ESRB rating, platforms, expansions), keep it short and natural.",
-    "- Don’t over-explain; no multi-paragraphs.",
-    "- To reply, set response.mode to 'REPLY' and response.targetCommentId to one of the provided topLevelComments ids.",
-    "- To post a new comment, set response.mode to 'TOP_LEVEL' and response.targetCommentId to null.",
+    "- Don't over-explain; no multi-paragraphs.",
 
     "OUTPUT FORMAT (strict JSON):",
-    `{ "comment": string, "mode": "TOP_LEVEL" | "REPLY", "targetCommentId": string | null }`,
-  ].join("\\n");
+    `{ "comment": string }`,
+  ].join("\n");
+
 
 /** Random integer helper */
 const randomInt = (min, max) =>
@@ -214,6 +220,7 @@ export const generateInCharacterComment = async ({
   openAI,
   bot,
   mode,
+  targetCommentId = null,
   post,
   parentComment = null,
   threadContext = [],
@@ -222,6 +229,16 @@ export const generateInCharacterComment = async ({
   model = DEFAULT_COMMENT_MODEL,
 }) => {
   if (!openAI) throw new Error("OpenAI client not provided");
+
+  const resolvedMode =
+    typeof mode === "string" && mode.toUpperCase() === "REPLY"
+      ? "REPLY"
+      : "TOP_LEVEL";
+
+  const resolvedTargetCommentId =
+    resolvedMode === "REPLY" && typeof targetCommentId === "string"
+      ? targetCommentId.trim() || null
+      : null;
 
   const normalizedPost = {
     postTitle: post?.title ?? "",
@@ -260,9 +277,11 @@ export const generateInCharacterComment = async ({
     parentComment: normalizedParentComment,
     threadContext: normalizedThreadContext,
     topLevelComments: normalizedTopLevelComments,
-    character: bot,
-    mode,
-    targetType: metadata.targetType ?? (mode === "REPLY" ? "comment" : "post"),
+    character: bot, // pass through entire profile (knowledgeRules, etc.)
+    mode: resolvedMode,
+    targetCommentId: resolvedTargetCommentId,
+    targetType:
+      metadata.targetType ?? (resolvedMode === "REPLY" ? "comment" : "post"),
     metadata: {
       shouldAskQuestion: Boolean(metadata.shouldAskQuestion),
       intent: metadata.intent ?? "default",
@@ -318,22 +337,6 @@ export const generateInCharacterComment = async ({
   if (!parsed || typeof parsed.comment !== "string")
     throw new Error("Comment generator did not return a comment string");
 
-  let responseMode =
-    typeof parsed.mode === "string"
-      ? parsed.mode.toUpperCase().trim()
-      : "TOP_LEVEL";
-  if (responseMode !== "REPLY") {
-    responseMode = "TOP_LEVEL";
-  }
-
-  let targetCommentId =
-    typeof parsed.targetCommentId === "string"
-      ? parsed.targetCommentId.trim()
-      : null;
-  if (responseMode === "REPLY" && !targetCommentId) {
-    responseMode = "TOP_LEVEL";
-  }
-
   // Trim overlong responses (safety)
   const rawComment = parsed.comment.trim();
   const sentences = rawComment.split(/(?<=[.!?])\s+/).filter(Boolean);
@@ -342,7 +345,8 @@ export const generateInCharacterComment = async ({
   const humanizedComment = introduceSmallTypos(trimmedComment, bot);
   return {
     comment: humanizedComment,
-    mode: responseMode,
-    targetCommentId: responseMode === "REPLY" ? targetCommentId : null,
+    mode: resolvedMode,
+    targetCommentId:
+      resolvedMode === "REPLY" ? resolvedTargetCommentId : null,
   };
 };

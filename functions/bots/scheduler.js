@@ -54,7 +54,9 @@ const STATE_BUFFER_MINUTES = 5;
 const INITIAL_SCAN_MINUTES = 180;
 const MAX_POSTS_TO_SCAN = 60;
 const MAX_NOTIFICATIONS_TO_SCAN = 120;
-const MIN_ACTION_SPACING_MINUTES = 3;
+const MIN_ACTION_SPACING_MINUTES = 8;
+// Scales response probabilities to keep bots from engaging too frequently.
+const GLOBAL_ACTIVITY_RATE = 0.65;
 const BOT_DECISION_LOG_SAMPLE_RATE = 0.1;
 
 const mentionRegex = /@([A-Za-z0-9_-]+)/g;
@@ -606,10 +608,11 @@ export const runBotActivityForTick = async ({
   }
 
   const baseResponseProbability = clamp01(
-    behavior.baseResponseProbability ?? 0
+    (behavior.baseResponseProbability ?? 0) * GLOBAL_ACTIVITY_RATE
   );
   const replyResponseProbability = clamp01(
-    behavior.replyResponseProbability ?? behavior.baseResponseProbability ?? 0
+    (behavior.replyResponseProbability ?? behavior.baseResponseProbability ?? 0) *
+      GLOBAL_ACTIVITY_RATE
   );
 
   if (directReplyCandidates.length) {

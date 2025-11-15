@@ -15,6 +15,7 @@ import {
 } from "./utils.js";
 import { maybeAddTypos } from "./typoUtils.js";
 import { generateInCharacterComment } from "./commentGenerator.js";
+import { decideCommentEngagement } from "./commentDecision.js";
 
 const COMMENTS_COLLECTION = "comments";
 const POSTS_COLLECTION = "posts";
@@ -594,32 +595,99 @@ const processSingleAction = async ({
           break;
         }
 
+        const normalizeTargetId = (value) => {
+          if (value == null) return null;
+          const str = String(value).trim();
+          return str || null;
+        };
+
+        const requestedMode =
+          typeof metadata.mode === "string"
+            ? metadata.mode.toUpperCase()
+            : null;
+        let desiredMode = requestedMode === "REPLY" ? "REPLY" : "TOP_LEVEL";
+        let desiredTargetCommentId =
+          requestedMode === "REPLY"
+            ? normalizeTargetId(metadata.targetCommentId)
+            : null;
+
+        const topLevelContext = Array.isArray(contextResult.topLevelContext)
+          ? contextResult.topLevelContext
+          : [];
+
+        const shouldUseDecision =
+          sanitizedTopLevelContext.length > 0 &&
+          (!requestedMode ||
+            (requestedMode === "REPLY" && !desiredTargetCommentId));
+
+        if (shouldUseDecision) {
+          try {
+            const decision = await decideCommentEngagement({
+              openAI,
+              bot,
+              post: contextResult.post,
+              topLevelComments: sanitizedTopLevelContext,
+              metadata,
+            });
+            if (!requestedMode) {
+              desiredMode = decision.mode;
+            }
+            desiredTargetCommentId = decision.targetCommentId;
+            if (requestedMode === "REPLY") {
+              desiredMode = "REPLY";
+            }
+          } catch (error) {
+            logger?.warn?.("Bot reply decision failed", {
+              botUid: bot.uid,
+              postId: contextResult.post?.id,
+              error: error.message,
+            });
+            desiredMode = requestedMode === "REPLY" ? "REPLY" : "TOP_LEVEL";
+            desiredTargetCommentId = requestedMode === "REPLY"
+              ? normalizeTargetId(metadata.targetCommentId)
+              : null;
+          }
+        }
+
+        let replyTarget = null;
+        if (desiredMode === "REPLY") {
+          if (!topLevelContext.length) {
+            outcome = { status: "ignored", reason: "reply_context_unavailable" };
+            break;
+          }
+          if (!desiredTargetCommentId) {
+            outcome = { status: "ignored", reason: "reply_target_not_found" };
+            break;
+          }
+          replyTarget = topLevelContext.find(
+            (entry) => String(entry.id) === desiredTargetCommentId
+          );
+          if (!replyTarget) {
+            outcome = { status: "ignored", reason: "reply_target_not_found" };
+            break;
+          }
+        }
+
+        const parentForPrompt = replyTarget
+          ? prepareCommentForPrompt(replyTarget)
+          : null;
+
         const generation = await generateInCharacterComment({
           openAI,
           bot,
-          mode: metadata.mode ?? "TOP_LEVEL",
+          mode: desiredMode,
+          targetCommentId: desiredTargetCommentId,
           post: contextResult.post,
-          parentComment: null,
+          parentComment: parentForPrompt,
           threadContext: sanitizedThreadContext,
           topLevelComments: sanitizedTopLevelContext,
           metadata,
         });
         const finalComment = maybeAddTypos(bot, generation.comment);
 
-        const wantsReply =
-          generation.mode === "REPLY" && typeof generation.targetCommentId === "string";
+        const wantsReply = desiredMode === "REPLY";
 
         if (wantsReply) {
-          if (!Array.isArray(contextResult.topLevelContext)) {
-            outcome = { status: "ignored", reason: "reply_context_unavailable" };
-            break;
-          }
-
-          const targetId = generation.targetCommentId?.trim();
-          const replyTarget = contextResult.topLevelContext.find(
-            (entry) => String(entry.id) === targetId
-          );
-
           if (!replyTarget) {
             outcome = { status: "ignored", reason: "reply_target_not_found" };
             break;
@@ -707,6 +775,7 @@ const processSingleAction = async ({
           openAI,
           bot,
           mode: metadata.mode ?? "REPLY",
+          targetCommentId: contextResult.parentComment?.id ?? null,
           post: contextResult.post,
           parentComment: sanitizedParentComment,
           threadContext: sanitizedThreadContext,

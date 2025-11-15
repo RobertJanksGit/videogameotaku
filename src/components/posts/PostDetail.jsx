@@ -1507,7 +1507,7 @@ const PostDetail = () => {
                       </div>
                     ) : null}
                     <div
-                      className="flex flex-wrap items-center gap-2 sm:flex-nowrap"
+                      className="flex flex-wrap items-center gap-2 min-[840px]:flex-nowrap"
                       role="list"
                       aria-label="Platforms"
                     >
@@ -1537,7 +1537,7 @@ const PostDetail = () => {
                       ))}
                     </div>
                   </div>
-                  <div className="self-end">
+                  <div className="w-full min-[500px]:w-auto min-[500px]:self-end">
                     <ShareButtons
                       url={window.location.href}
                       title={post.title}
@@ -1645,7 +1645,7 @@ const PostDetail = () => {
                       {commentError}
                     </p>
                   ) : null}
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="mt-3 flex flex-col gap-2 min-[840px]:flex-row min-[840px]:items-center min-[840px]:justify-between">
                     <span
                       className={`text-xs ${
                         darkMode ? "text-gray-400" : "text-gray-500"
@@ -1671,7 +1671,7 @@ const PostDetail = () => {
               </div>
 
               {/* ENGAGEMENT: canonical listeners live at posts/${postId}/comments (legacy top-level fallback keeps older threads visible), auth = (anonymous allowed) */}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 min-[840px]:flex-row min-[840px]:items-center min-[840px]:justify-between">
                 <div className="inline-flex rounded-full border border-gray-200 bg-white p-1 dark:border-gray-800 dark:bg-gray-900">
                   {[
                     { id: "top", label: "Top Replies" },

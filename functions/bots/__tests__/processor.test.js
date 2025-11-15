@@ -5,9 +5,13 @@ import { ScheduledBotActionType } from "../models.js";
 vi.mock("../commentGenerator.js", () => ({
   generateInCharacterComment: vi.fn(),
 }));
+vi.mock("../commentDecision.js", () => ({
+  decideCommentEngagement: vi.fn(),
+}));
 
 const { processSingleAction } = __testables;
 const { generateInCharacterComment } = await import("../commentGenerator.js");
+const { decideCommentEngagement } = await import("../commentDecision.js");
 
 describe("processSingleAction - reply fallbacks", () => {
   const bot = {
@@ -31,7 +35,21 @@ describe("processSingleAction - reply fallbacks", () => {
       where: () => commentsQuery,
       orderBy: () => commentsQuery,
       limit: () => commentsQuery,
-      get: async () => ({ docs: [], size: 0 }),
+      get: async () => ({
+        docs: [
+          {
+            id: "existing-comment",
+            data: () => ({
+              id: "existing-comment",
+              content: "Existing comment",
+              authorName: "PlayerOne",
+              authorId: "user-1",
+              createdAt: { seconds: 0, nanoseconds: 0 },
+            }),
+          },
+        ],
+        size: 1,
+      }),
     };
 
     const commentsCollection = {
@@ -89,10 +107,13 @@ describe("processSingleAction - reply fallbacks", () => {
   };
 
   it("does not create a top-level comment when reply target is missing", async () => {
-    generateInCharacterComment.mockResolvedValue({
-      comment: "Reply content",
+    decideCommentEngagement.mockResolvedValue({
       mode: "REPLY",
       targetCommentId: "missing-comment",
+      reason: "test",
+    });
+    generateInCharacterComment.mockResolvedValue({
+      comment: "Reply content",
     });
 
     const { db, commentsAdd } = createDbStub();
@@ -125,8 +146,12 @@ describe("processSingleAction - reply fallbacks", () => {
     expect(result.reason).toBe("reply_target_not_found");
     expect(commentsAdd).not.toHaveBeenCalled();
     expect(actionDoc.ref.delete).toHaveBeenCalledTimes(1);
+    expect(decideCommentEngagement).toHaveBeenCalledTimes(1);
   });
 });
+
+
+
 
 
 

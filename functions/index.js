@@ -2228,6 +2228,26 @@ async function fetchArticlesWithRetry(maxRetries = 3) {
       }
 
       const responseData = await response.json();
+      try {
+        console.log(
+          "[fetchArticlesWithRetry] API response snapshot:",
+          JSON.stringify(
+            {
+              total: Array.isArray(responseData?.data)
+                ? responseData.data.length
+                : null,
+              sample: responseData?.data?.slice(0, 3) ?? null,
+            },
+            null,
+            2
+          )
+        );
+      } catch (logError) {
+        console.warn(
+          "[fetchArticlesWithRetry] Failed to log API response snapshot:",
+          logError?.message ?? logError
+        );
+      }
       if (
         !responseData ||
         !responseData.data ||
@@ -2259,6 +2279,35 @@ async function processArticleBatch(
 ) {
   for (const article of articles) {
     try {
+      try {
+        console.log(
+          "[processArticleBatch] Incoming article payload:",
+          JSON.stringify(
+            {
+              title: article?.title ?? "Untitled",
+              sourceUrl: article?.sourceUrl ?? null,
+              socialFields: {
+                socialUrl: article?.socialUrl ?? null,
+                socialURL: article?.socialURL ?? null,
+                SocialURL: article?.SocialURL ?? null,
+                SocialUrl: article?.SocialUrl ?? null,
+                social_url: article?.social_url ?? null,
+                social_media_url: article?.social_media_url ?? null,
+                socialMediaUrl: article?.socialMediaUrl ?? null,
+              },
+              raw: article,
+            },
+            null,
+            2
+          )
+        );
+      } catch (logError) {
+        console.warn(
+          "[processArticleBatch] Failed to log incoming article payload:",
+          logError?.message ?? logError
+        );
+      }
+
       // Check for timeout
       const elapsedSeconds = (Date.now() - startTime) / 1000;
       if (elapsedSeconds > FUNCTION_TIMEOUT - 60) {
@@ -2455,6 +2504,68 @@ const SOCIAL_EMBED_HOSTS = {
 const hostMatchesDomain = (host, domain) =>
   host === domain || host.endsWith(`.${domain}`);
 
+const resolveArticleSocialUrl = (article = {}) => {
+  const snapshot = {
+    socialUrl: article?.socialUrl ?? null,
+    socialURL: article?.socialURL ?? null,
+    SocialURL: article?.SocialURL ?? null,
+    SocialUrl: article?.SocialUrl ?? null,
+    social_url: article?.social_url ?? null,
+    social_media_url: article?.social_media_url ?? null,
+    socialMediaUrl: article?.socialMediaUrl ?? null,
+  };
+
+  try {
+    console.log(
+      "[resolveArticleSocialUrl] Social field snapshot:",
+      JSON.stringify(
+        {
+          title: article?.title ?? "Untitled",
+          sourceUrl: article?.sourceUrl ?? null,
+          fields: snapshot,
+        },
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    console.warn(
+      "[resolveArticleSocialUrl] Failed to serialize article social fields:",
+      error?.message ?? error
+    );
+  }
+
+  const candidateFields = [
+    article?.socialUrl,
+    article?.socialURL,
+    article?.SocialURL,
+    article?.SocialUrl,
+    article?.social_url,
+    article?.social_media_url,
+    article?.socialMediaUrl,
+  ];
+
+  for (const value of candidateFields) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) {
+      console.log(
+        `[resolveArticleSocialUrl] Resolved social URL for "${
+          article?.title ?? "Untitled"
+        }": ${trimmed}`
+      );
+      return trimmed;
+    }
+  }
+
+  console.log(
+    `[resolveArticleSocialUrl] No usable social URL found for "${
+      article?.title ?? "Untitled"
+    }"`
+  );
+  return "";
+};
+
 function getSocialEmbedType(rawUrl) {
   if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
 
@@ -2495,10 +2606,10 @@ function buildSocialEmbedSnippet(rawUrl) {
   return `{{embed type="${embedType}" url="${socialUrl}"}}`;
 }
 
-function buildPostContent(article) {
+function buildPostContent(article, socialUrl = "") {
   const baseContent = `${article.summary}`;
   const sourceSection = `[Source](${article.sourceUrl})`;
-  const embedSnippet = buildSocialEmbedSnippet(article.socialUrl);
+  const embedSnippet = buildSocialEmbedSnippet(socialUrl);
 
   if (embedSnippet) {
     return `${baseContent}\n\n${embedSnippet}\n\n${sourceSection}`;
@@ -2509,9 +2620,34 @@ function buildPostContent(article) {
 
 async function createPost(article, SYSTEM_USER, embedding, options = {}) {
   const { publishAt: requestedPublishAt } = options;
+  const socialUrl = resolveArticleSocialUrl(article);
+  try {
+    console.log(
+      "[createPost] Payload preview:",
+      JSON.stringify(
+        {
+          title: article?.title ?? "Untitled",
+          assignedSystemUserId: SYSTEM_USER?.id ?? null,
+          publishAt: requestedPublishAt ?? null,
+          socialUrl,
+          imageData: {
+            hasImage: Boolean(article?.imageData),
+            path: article?.imageData?.path ?? null,
+          },
+        },
+        null,
+        2
+      )
+    );
+  } catch (logError) {
+    console.warn(
+      "[createPost] Failed to log payload preview:",
+      logError?.message ?? logError
+    );
+  }
 
   // Validate and sanitize content
-  const contentWithSource = buildPostContent(article);
+  const contentWithSource = buildPostContent(article, socialUrl);
   const sanitizedContent = sanitizeContent(contentWithSource);
   await validateContent(article.title, sanitizedContent);
 
@@ -2550,6 +2686,7 @@ async function createPost(article, SYSTEM_USER, embedding, options = {}) {
     type: "news",
     lastEditedBy: SYSTEM_USER.name,
     lastEditedById: SYSTEM_USER.id,
+    socialUrl: socialUrl || null,
   };
 
   if (article.imageData) {
@@ -2622,6 +2759,26 @@ export const testFetchAndSavePosts = onRequest(
       }
 
       const responseData = await response.json();
+      try {
+        console.log(
+          "[testFetchAndSavePosts] API response snapshot:",
+          JSON.stringify(
+            {
+              total: Array.isArray(responseData?.data)
+                ? responseData.data.length
+                : null,
+              sample: responseData?.data?.slice(0, 3) ?? null,
+            },
+            null,
+            2
+          )
+        );
+      } catch (logError) {
+        console.warn(
+          "[testFetchAndSavePosts] Failed to log API response snapshot:",
+          logError?.message ?? logError
+        );
+      }
       if (
         !responseData ||
         !responseData.data ||
