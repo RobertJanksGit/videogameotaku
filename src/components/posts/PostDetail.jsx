@@ -1385,7 +1385,7 @@ const PostDetail = () => {
                 </figure>
               )}
               <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4 flex flex-col gap-4 min-[500px]:flex-row min-[500px]:items-center min-[500px]:justify-between">
                   <div className="flex items-center space-x-4">
                     <div className="flex items-center not-italic h-card p-author">
                       {post.authorId ? (
@@ -1507,14 +1507,15 @@ const PostDetail = () => {
                       </div>
                     ) : null}
                     <div
-                      className="flex items-center space-x-2"
+                      className="flex flex-wrap items-center gap-2 sm:flex-nowrap"
                       role="list"
                       aria-label="Platforms"
                     >
                       <h3
-                        className={`text-sm font-semibold ${
+                        className={`hidden text-sm font-semibold min-[915px]:block ${
                           darkMode ? "text-gray-300" : "text-gray-700"
                         }`}
+                        aria-hidden="true"
                       >
                         Platforms:
                       </h3>
@@ -1536,11 +1537,13 @@ const PostDetail = () => {
                       ))}
                     </div>
                   </div>
-                  <ShareButtons
-                    url={window.location.href}
-                    title={post.title}
-                    darkMode={darkMode}
-                  />
+                  <div className="self-end">
+                    <ShareButtons
+                      url={window.location.href}
+                      title={post.title}
+                      darkMode={darkMode}
+                    />
+                  </div>
                 </div>
                 <h1
                   className={`text-2xl font-bold mb-4 p-name ${
