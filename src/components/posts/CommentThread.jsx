@@ -868,10 +868,12 @@ const CommentThread = ({
     setIsReplySubmitting(true);
     try {
       const targetId = activeReplyTargetId || parentComment.id;
+      // Use the actual target comment as the parent for deeper nesting
+      const parentIdForSubmission = targetId;
       if (replyErrors[targetId]) {
         onClearReplyError(targetId);
       }
-      const result = await onReply(parentComment.id, trimmedDraft, {
+      const result = await onReply(parentIdForSubmission, trimmedDraft, {
         targetId,
       });
 
