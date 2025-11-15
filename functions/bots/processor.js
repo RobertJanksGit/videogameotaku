@@ -27,7 +27,8 @@ const scheduledActionsDueQuery = (db, now) =>
     .where("scheduledAt", "<=", now)
     .orderBy("scheduledAt", "asc");
 
-const THREAD_CONTEXT_LIMIT = 5;
+const THREAD_CONTEXT_LIMIT = 15;
+const THREAD_PATH_LIMIT = 12;
 const TOP_LEVEL_CONTEXT_LIMIT = 10;
 
 const timestampToMillis = (value) => {
@@ -49,44 +50,115 @@ const sanitizeCommentForContext = (comment) => {
     id: comment.id,
     authorName: comment.authorName ?? comment.author ?? "",
     authorId: comment.authorId ?? null,
+    parentCommentId: comment.parentCommentId ?? comment.parentId ?? null,
+    threadRootCommentId: comment.threadRootCommentId ?? null,
     content,
     createdAt: comment.createdAt ?? null,
   };
 };
 
-const prepareCommentForPrompt = (comment) => {
+const prepareCommentForPrompt = (
+  comment,
+  {
+    targetCommentId = null,
+    threadRootCommentId = null,
+    depthOverride = null,
+  } = {}
+) => {
   if (!comment) return null;
   const content = comment.content ?? comment.text ?? "";
   if (!content) return null;
+
+  const id = comment.id != null ? String(comment.id) : null;
+  const normalizedTargetId =
+    targetCommentId != null ? String(targetCommentId) : null;
+  const normalizedThreadRootId =
+    threadRootCommentId != null
+      ? String(threadRootCommentId)
+      : comment.threadRootCommentId != null
+        ? String(comment.threadRootCommentId)
+        : null;
+  const depth =
+    Number.isFinite(depthOverride) && depthOverride >= 0
+      ? depthOverride
+      : Number.isFinite(comment.depth)
+        ? comment.depth
+        : null;
+
   return {
-    authorName: comment.authorName ?? comment.author ?? "",
-    content,
+    id,
+    author: comment.authorName ?? comment.author ?? "",
+    text: content,
+    parentCommentId: comment.parentCommentId ?? comment.parentId ?? null,
+    threadRootCommentId: normalizedThreadRootId,
+    isTarget: Boolean(
+      normalizedTargetId && id && normalizedTargetId === id
+    ),
+    isThreadRoot: Boolean(
+      normalizedThreadRootId && id && normalizedThreadRootId === id
+    ),
+    ...(Number.isFinite(depth) ? { depth } : {}),
   };
 };
 
 const prepareTopLevelCommentForPrompt = (comment) => {
   if (!comment || !comment.id) return null;
-  const content = comment.content ?? comment.text ?? "";
-  if (!content) return null;
-  return {
-    id: String(comment.id),
-    authorName: comment.authorName ?? comment.author ?? "",
-    content,
-  };
+  return prepareCommentForPrompt(comment);
 };
+
+const normalizeThreadEntriesForPrompt = (
+  entries,
+  targetCommentId,
+  threadRootCommentId
+) =>
+  Array.isArray(entries)
+    ? entries
+        .map((entry) =>
+          prepareCommentForPrompt(entry, { targetCommentId, threadRootCommentId })
+        )
+        .filter(Boolean)
+    : [];
+
+const normalizeThreadPathForPrompt = (
+  entries,
+  targetCommentId,
+  threadRootCommentId
+) =>
+  Array.isArray(entries)
+    ? entries
+        .map((entry, index) =>
+          prepareCommentForPrompt(entry, {
+            targetCommentId,
+            threadRootCommentId,
+            depthOverride:
+              Number.isFinite(entry?.depth) && entry.depth >= 0
+                ? entry.depth
+                : index,
+          })
+        )
+        .filter(Boolean)
+    : [];
 
 const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
   const entries = new Map();
+  const requiredIds = new Set(
+    [parentComment?.id, threadRootCommentId].filter(Boolean).map(String)
+  );
 
   const addEntry = (comment) => {
     const sanitized = sanitizeCommentForContext(comment);
     if (!sanitized) return;
     if (!entries.has(sanitized.id)) {
-      entries.set(sanitized.id, sanitized);
+      entries.set(sanitized.id, {
+        ...sanitized,
+        isBotAuthor: Boolean(comment?.isBotAuthor),
+      });
     }
   };
 
-  addEntry(parentComment);
+  if (parentComment) {
+    addEntry(parentComment);
+  }
 
   if (threadRootCommentId) {
     try {
@@ -112,12 +184,142 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
     (a, b) => timestampToMillis(a.createdAt) - timestampToMillis(b.createdAt)
   );
 
-  const trimmed = sorted.slice(-THREAD_CONTEXT_LIMIT);
+  const requiredEntries = sorted.filter((entry) =>
+    requiredIds.has(String(entry.id))
+  );
 
-  return trimmed.map(({ id, authorName, content }) => ({
-    id,
-    authorName,
-    content,
+  const merged = [...requiredEntries, ...sorted.slice(-THREAD_CONTEXT_LIMIT)];
+  const deduped = Array.from(
+    new Map(merged.map((entry) => [entry.id, entry])).values()
+  );
+
+  const trimmed = deduped
+    .sort(
+      (a, b) => timestampToMillis(a.createdAt) - timestampToMillis(b.createdAt)
+    )
+    .slice(-THREAD_CONTEXT_LIMIT);
+
+  const byId = new Map(trimmed.map((entry) => [entry.id, entry]));
+  const depthMemo = new Map();
+
+  const computeDepth = (entry) => {
+    if (!entry || !entry.id) return 0;
+    if (depthMemo.has(entry.id)) return depthMemo.get(entry.id);
+
+    const parentId = entry.parentCommentId;
+    if (!parentId || parentId === entry.id) {
+      depthMemo.set(entry.id, 0);
+      return 0;
+    }
+
+    const parent = byId.get(parentId);
+    const depth = parent ? 1 + computeDepth(parent) : 1;
+    depthMemo.set(entry.id, depth);
+    return depth;
+  };
+
+  return trimmed.map((entry) => ({
+    ...entry,
+    depth: computeDepth(entry),
+    isThreadRoot: Boolean(
+      threadRootCommentId &&
+        entry.id &&
+        String(entry.id) === String(threadRootCommentId)
+    ),
+    threadRootCommentId: entry.threadRootCommentId ?? threadRootCommentId ?? null,
+  }));
+};
+
+const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
+  if (!parentComment?.id) {
+    return [];
+  }
+
+  const normalizedRootId =
+    threadRootCommentId ??
+    parentComment.threadRootCommentId ??
+    parentComment.id;
+
+  const path = [];
+  const seen = new Set();
+  let current = parentComment;
+
+  while (
+    current &&
+    current.id &&
+    path.length < THREAD_PATH_LIMIT &&
+    !seen.has(current.id)
+  ) {
+    seen.add(current.id);
+    const sanitized = sanitizeCommentForContext(current);
+    if (sanitized) {
+      path.push({
+        ...sanitized,
+        isBotAuthor: Boolean(current.isBotAuthor),
+      });
+    }
+
+    const nextParentId =
+      current.parentCommentId ??
+      current.parentId ??
+      (current.threadRootCommentId &&
+      current.threadRootCommentId !== current.id
+        ? current.threadRootCommentId
+        : null);
+
+    if (!nextParentId || nextParentId === current.id) {
+      break;
+    }
+
+    try {
+      const parentSnap = await db.collection(COMMENTS_COLLECTION).doc(nextParentId).get();
+      if (!parentSnap.exists) {
+        break;
+      }
+      current = { id: parentSnap.id, ...parentSnap.data() };
+    } catch (error) {
+      console.error?.("Failed to walk thread path for bot reply", {
+        nextParentId,
+        error: error.message,
+      });
+      break;
+    }
+  }
+
+  if (
+    normalizedRootId &&
+    !seen.has(normalizedRootId) &&
+    path.length < THREAD_PATH_LIMIT
+  ) {
+    try {
+      const rootSnap = await db
+        .collection(COMMENTS_COLLECTION)
+        .doc(normalizedRootId)
+        .get();
+      if (rootSnap.exists) {
+        const data = { id: rootSnap.id, ...rootSnap.data() };
+        const sanitized = sanitizeCommentForContext(data);
+        if (sanitized) {
+          path.push({
+            ...sanitized,
+            isBotAuthor: Boolean(data.isBotAuthor),
+          });
+        }
+      }
+    } catch (error) {
+      console.error?.("Failed to load thread root for bot prompt", {
+        threadRootCommentId: normalizedRootId,
+        error: error.message,
+      });
+    }
+  }
+
+  const ordered = path.reverse().slice(-THREAD_PATH_LIMIT);
+
+  return ordered.map((entry, index) => ({
+    ...entry,
+    depth: index,
+    threadRootCommentId: entry.threadRootCommentId ?? normalizedRootId ?? null,
   }));
 };
 
@@ -329,6 +531,7 @@ const fetchContext = async (db, action, bot) => {
   const threadRootCommentId = computeThreadRoot(action, parentComment);
 
   const threadContext = await buildThreadContext(db, parentComment, threadRootCommentId);
+  const threadPath = await buildThreadPath(db, parentComment, threadRootCommentId);
   const topLevelContext = await buildTopLevelContext(db, action, bot);
 
   const commentsByBotOnPost = await getCount(
@@ -353,6 +556,7 @@ const fetchContext = async (db, action, bot) => {
     parentComment,
     threadRootCommentId,
     threadContext,
+    threadPath,
     topLevelContext,
     commentsByBotOnPost,
     repliesByBotInThread,
@@ -570,19 +774,23 @@ const processSingleAction = async ({
   const metadata = action.metadata ?? {};
   const behavior = bot.behavior || {};
 
-  const sanitizedThreadContext = Array.isArray(contextResult.threadContext)
-    ? contextResult.threadContext
-        .map((entry) => prepareCommentForPrompt(entry))
-        .filter(Boolean)
-    : [];
-
-  const sanitizedTopLevelContext = Array.isArray(contextResult.topLevelContext)
+  const topLevelContext = Array.isArray(contextResult.topLevelContext)
     ? contextResult.topLevelContext
-        .map((entry) => prepareTopLevelCommentForPrompt(entry))
-        .filter(Boolean)
     : [];
 
-  const sanitizedParentComment = prepareCommentForPrompt(contextResult.parentComment);
+  const sanitizedTopLevelContext = topLevelContext
+    .map((entry) => prepareTopLevelCommentForPrompt(entry))
+    .filter(Boolean);
+
+  let promptThreadContext = Array.isArray(contextResult.threadContext)
+    ? contextResult.threadContext
+    : [];
+
+  let promptThreadPath = Array.isArray(contextResult.threadPath)
+    ? contextResult.threadPath
+    : [];
+
+  let promptThreadRootId = contextResult.threadRootCommentId ?? null;
 
   let outcome = { status: "ignored" };
 
@@ -632,7 +840,7 @@ const processSingleAction = async ({
             if (!requestedMode) {
               desiredMode = decision.mode;
             }
-            desiredTargetCommentId = decision.targetCommentId;
+            desiredTargetCommentId = normalizeTargetId(decision.targetCommentId);
             if (requestedMode === "REPLY") {
               desiredMode = "REPLY";
             }
@@ -668,9 +876,64 @@ const processSingleAction = async ({
           }
         }
 
-        const parentForPrompt = replyTarget
-          ? prepareCommentForPrompt(replyTarget)
-          : null;
+        const targetIdForPrompt = desiredMode === "REPLY" ? desiredTargetCommentId : null;
+        let threadContextForPrompt = promptThreadContext;
+        let threadPathForPrompt = promptThreadPath;
+        let parentForPrompt = null;
+
+        if (replyTarget) {
+          promptThreadRootId =
+            replyTarget.threadRootCommentId ??
+            replyTarget.id ??
+            targetIdForPrompt ??
+            null;
+          parentForPrompt = replyTarget;
+
+          const rebuiltThreadContext = await buildThreadContext(
+            db,
+            replyTarget,
+            promptThreadRootId
+          );
+          if (Array.isArray(rebuiltThreadContext) && rebuiltThreadContext.length) {
+            threadContextForPrompt = rebuiltThreadContext;
+          } else {
+            threadContextForPrompt = [replyTarget];
+          }
+
+          const rebuiltThreadPath = await buildThreadPath(
+            db,
+            replyTarget,
+            promptThreadRootId
+          );
+          if (Array.isArray(rebuiltThreadPath) && rebuiltThreadPath.length) {
+            threadPathForPrompt = rebuiltThreadPath;
+          } else {
+            threadPathForPrompt = [replyTarget];
+          }
+        }
+
+        const normalizedThreadContext = normalizeThreadEntriesForPrompt(
+          threadContextForPrompt,
+          targetIdForPrompt,
+          promptThreadRootId
+        );
+
+        const normalizedThreadPath = normalizeThreadPathForPrompt(
+          threadPathForPrompt,
+          targetIdForPrompt,
+          promptThreadRootId
+        );
+
+        const parentCommentForPrompt =
+          desiredMode === "REPLY"
+            ? prepareCommentForPrompt(parentForPrompt, {
+                targetCommentId: targetIdForPrompt,
+                threadRootCommentId: promptThreadRootId,
+                depthOverride: normalizedThreadPath.length
+                  ? normalizedThreadPath[normalizedThreadPath.length - 1].depth
+                  : null,
+              })
+            : null;
 
         const generation = await generateInCharacterComment({
           openAI,
@@ -678,8 +941,9 @@ const processSingleAction = async ({
           mode: desiredMode,
           targetCommentId: desiredTargetCommentId,
           post: contextResult.post,
-          parentComment: parentForPrompt,
-          threadContext: sanitizedThreadContext,
+          parentComment: parentCommentForPrompt,
+          threadContext: normalizedThreadContext,
+          threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
           metadata,
         });
@@ -693,7 +957,10 @@ const processSingleAction = async ({
             break;
           }
 
-          const threadRootId = replyTarget.threadRootCommentId ?? replyTarget.id;
+          const threadRootId =
+            promptThreadRootId ??
+            replyTarget.threadRootCommentId ??
+            replyTarget.id;
           if (!threadRootId) {
             outcome = { status: "ignored", reason: "reply_thread_missing" };
             break;
@@ -771,14 +1038,49 @@ const processSingleAction = async ({
           break;
         }
 
+        const targetCommentId = contextResult.parentComment?.id ?? null;
+
+        const rawThreadContext = Array.isArray(contextResult.threadContext)
+          ? contextResult.threadContext
+          : [];
+        const rawThreadPath = Array.isArray(contextResult.threadPath)
+          ? contextResult.threadPath
+          : contextResult.parentComment
+            ? [contextResult.parentComment]
+            : [];
+
+        const normalizedThreadContext = normalizeThreadEntriesForPrompt(
+          rawThreadContext,
+          targetCommentId,
+          contextResult.threadRootCommentId
+        );
+
+        const normalizedThreadPath = normalizeThreadPathForPrompt(
+          rawThreadPath,
+          targetCommentId,
+          contextResult.threadRootCommentId
+        );
+
+        const parentCommentForPrompt = prepareCommentForPrompt(
+          contextResult.parentComment,
+          {
+            targetCommentId,
+            threadRootCommentId: contextResult.threadRootCommentId,
+            depthOverride: normalizedThreadPath.length
+              ? normalizedThreadPath[normalizedThreadPath.length - 1].depth
+              : null,
+          }
+        );
+
         const generation = await generateInCharacterComment({
           openAI,
           bot,
           mode: metadata.mode ?? "REPLY",
-          targetCommentId: contextResult.parentComment?.id ?? null,
+          targetCommentId,
           post: contextResult.post,
-          parentComment: sanitizedParentComment,
-          threadContext: sanitizedThreadContext,
+          parentComment: parentCommentForPrompt,
+          threadContext: normalizedThreadContext,
+          threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
           metadata,
         });

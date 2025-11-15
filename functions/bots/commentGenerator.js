@@ -97,8 +97,9 @@ const buildSystemPrompt = () =>
     "You are a character response engine for a gaming community comment section.",
     "You always receive a single JSON object with:",
     "- post: { postTitle, postBody | postContent, postAuthor }",
-    "- parentComment: { author, text } or null",
-    "- threadContext: array of recent comments in this thread (oldest first), each { author, text }",
+    "- parentComment: { id?, author, text, parentCommentId?, threadRootCommentId?, depth?, isTarget? } or null",
+    "- threadContext: array of recent comments in this thread (oldest first), each { id?, author, text, parentCommentId?, threadRootCommentId?, depth?, isTarget?, isThreadRoot? }",
+    "- threadPath: ordered chain from the thread root to the target comment (oldest first), each { id?, author, text, depth?, isTarget?, isThreadRoot? }",
     "- topLevelComments: array of post-level comments (oldest first), each { id, author, text }",
     "- character: metadata with communicationStyle, responseStyle, speechPatterns, styleInstructions, topicPreferences, etc.",
     "- mode: 'TOP_LEVEL' or 'REPLY'  // engagement mode is pre-selected; do not change it.",
@@ -121,6 +122,11 @@ const buildSystemPrompt = () =>
     "- 1-5 sentences max (shorter is better).",
     "- Never narrate like a news article; react conversationally.",
     "- If metadata.shouldAskQuestion is true, end with a natural, short question (not generic).",
+
+    "THREAD CONTEXT RULES:",
+    "- In REPLY mode, treat parentComment as the specific comment you're answering.",
+    "- Use threadPath to understand the higher-level chain in the thread and keep your reply grounded in that flow.",
+    "- Use threadContext to notice recent points so you don't repeat or contradict them accidentally.",
 
     "KNOWLEDGE & EXPERIENCE RULES:",
     "- You do NOT actually play every game.",
@@ -224,6 +230,7 @@ export const generateInCharacterComment = async ({
   post,
   parentComment = null,
   threadContext = [],
+  threadPath = [],
   topLevelComments = [],
   metadata = {},
   model = DEFAULT_COMMENT_MODEL,
@@ -246,36 +253,60 @@ export const generateInCharacterComment = async ({
     postAuthor: post?.authorName ?? post?.author ?? "",
   };
 
-  const normalizedParentComment = parentComment
-    ? {
-        author: parentComment.authorName ?? parentComment.author ?? "",
-        text: parentComment.content ?? parentComment.text ?? "",
-      }
-    : null;
+  const normalizePromptComment = (comment = null) => {
+    if (!comment) return null;
+    const id = comment?.id ? String(comment.id) : "";
+    const author = comment?.author ?? comment?.authorName ?? "";
+    const text = comment?.text ?? comment?.content ?? "";
+    if (!text) return null;
+    const parentCommentId =
+      comment?.parentCommentId ?? comment?.parentId ?? "";
+    const threadRootCommentId = comment?.threadRootCommentId
+      ? String(comment.threadRootCommentId)
+      : "";
+    const depth = Number.isFinite(comment?.depth) ? comment.depth : null;
+    const isTarget = Boolean(comment?.isTarget);
+    const isThreadRoot = Boolean(comment?.isThreadRoot);
+
+    return {
+      ...(id ? { id } : {}),
+      author,
+      text,
+      ...(parentCommentId ? { parentCommentId: String(parentCommentId) } : {}),
+      ...(threadRootCommentId ? { threadRootCommentId } : {}),
+      ...(Number.isFinite(depth) ? { depth } : {}),
+      ...(isTarget ? { isTarget: true } : {}),
+      ...(isThreadRoot ? { isThreadRoot: true } : {}),
+    };
+  };
+
+  const normalizeTopLevelComment = (comment) => {
+    const normalized = normalizePromptComment(comment);
+    if (!normalized || !(normalized.id || comment?.id) || !normalized.text) {
+      return null;
+    }
+    return { ...normalized, id: normalized.id || String(comment.id) };
+  };
+
+  const normalizedParentComment = normalizePromptComment(parentComment);
 
   const normalizedThreadContext = Array.isArray(threadContext)
-    ? threadContext
-        .map((c) => ({
-          author: c?.authorName ?? c?.author ?? "",
-          text: c?.content ?? c?.text ?? "",
-        }))
-        .filter((c) => c.text)
+    ? threadContext.map((c) => normalizePromptComment(c)).filter(Boolean)
+    : [];
+
+  const normalizedThreadPath = Array.isArray(threadPath)
+    ? threadPath.map((c) => normalizePromptComment(c)).filter(Boolean)
     : [];
 
   const normalizedTopLevelComments = Array.isArray(topLevelComments)
-    ? topLevelComments
-        .map((c) => ({
-          id: c?.id ? String(c.id) : "",
-          author: c?.authorName ?? c?.author ?? "",
-          text: c?.content ?? c?.text ?? "",
-        }))
-        .filter((c) => c.id && c.text)
+    ? topLevelComments.map((c) => normalizeTopLevelComment(c)).filter(Boolean)
     : [];
 
   const payload = {
     post: normalizedPost,
     parentComment: normalizedParentComment,
     threadContext: normalizedThreadContext,
+    threadPath: normalizedThreadPath,
     topLevelComments: normalizedTopLevelComments,
     character: bot, // pass through entire profile (knowledgeRules, etc.)
     mode: resolvedMode,
@@ -295,6 +326,7 @@ export const generateInCharacterComment = async ({
       model,
       ...payload,
       threadContextCount: normalizedThreadContext.length,
+      threadPathCount: normalizedThreadPath.length,
       topLevelCommentsCount: normalizedTopLevelComments.length,
     };
 
