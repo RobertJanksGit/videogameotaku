@@ -372,10 +372,18 @@ const fetchRecentPosts = async (db, sinceMs) => {
   });
 };
 
+const chunkArray = (items, size) => {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+};
+
 const fetchRecentNotifications = async (db, sinceMs) => {
   const sinceTimestamp = admin.firestore.Timestamp.fromMillis(sinceMs);
   const snapshot = await db
-    .collection(COMMENTS_COLLECTION)
+    .collectionGroup(COMMENTS_COLLECTION)
     .where("createdAt", ">=", sinceTimestamp)
     .orderBy("createdAt", "asc")
     .limit(MAX_NOTIFICATIONS_TO_SCAN)
@@ -385,6 +393,7 @@ const fetchRecentNotifications = async (db, sinceMs) => {
     const data = doc.data() || {};
     return {
       id: doc.id,
+      documentPath: doc.ref.path,
       postId: data.postId ?? null,
       authorId: data.authorId ?? null,
       authorName: data.authorName ?? "",
@@ -406,20 +415,24 @@ const fetchRecentNotifications = async (db, sinceMs) => {
 
   let parentAuthorById = new Map();
   if (parentIds.length) {
-    const parentRefs = parentIds.map((id) =>
-      db.collection(COMMENTS_COLLECTION).doc(id)
-    );
-    const parentSnaps = await db.getAll(...parentRefs);
+    const chunks = chunkArray(parentIds, 10);
+    const docs = [];
+    for (const chunk of chunks) {
+      const snap = await db
+        .collectionGroup(COMMENTS_COLLECTION)
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      docs.push(...snap.docs);
+    }
     parentAuthorById = new Map(
-      parentSnaps
-        .filter((snap) => snap.exists)
-        .map((snap) => [
-          snap.id,
-          {
-            authorId: snap.get("authorId") ?? null,
-            threadRootCommentId: snap.get("threadRootCommentId") ?? snap.id,
-          },
-        ])
+      docs.map((snap) => [
+        snap.id,
+        {
+          authorId: snap.get("authorId") ?? null,
+          threadRootCommentId:
+            snap.get("threadRootCommentId") ?? snap.get("parentCommentId") ?? snap.id,
+        },
+      ])
     );
   }
 

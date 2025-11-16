@@ -21,6 +21,11 @@ const COMMENTS_COLLECTION = "comments";
 const POSTS_COLLECTION = "posts";
 const USERS_COLLECTION = "users";
 const NOTIFICATIONS_COLLECTION = "notifications";
+const commentsCollectionGroup = (db) => db.collectionGroup(COMMENTS_COLLECTION);
+const resolveCommentRef = (db, comment) =>
+  comment?.documentPath
+    ? db.doc(comment.documentPath)
+    : db.collection(COMMENTS_COLLECTION).doc(comment.id);
 
 const scheduledActionsDueQuery = (db, now) =>
   scheduledBotActionsCollection(db)
@@ -42,12 +47,34 @@ const timestampToMillis = (value) => {
   return 0;
 };
 
+const fetchCommentById = async (db, commentId) => {
+  if (!commentId) return null;
+  try {
+    const snapshot = await commentsCollectionGroup(db)
+      .where(admin.firestore.FieldPath.documentId(), "==", commentId)
+      .limit(1)
+      .get();
+    const doc = snapshot.docs[0];
+    if (!doc?.exists) {
+      return null;
+    }
+    return { id: doc.id, documentPath: doc.ref.path, ...doc.data() };
+  } catch (error) {
+    console.error?.("Failed to fetch comment by id", {
+      commentId,
+      error: error.message,
+    });
+    return null;
+  }
+};
+
 const sanitizeCommentForContext = (comment) => {
   if (!comment || !comment.id) return null;
   const content = comment.content ?? comment.text ?? "";
   if (!content) return null;
   return {
     id: comment.id,
+    documentPath: comment.documentPath ?? comment.path ?? null,
     authorName: comment.authorName ?? comment.author ?? "",
     authorId: comment.authorId ?? null,
     parentCommentId: comment.parentCommentId ?? comment.parentId ?? null,
@@ -162,15 +189,14 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
 
   if (threadRootCommentId) {
     try {
-      const snapshot = await db
-        .collection(COMMENTS_COLLECTION)
+      const snapshot = await commentsCollectionGroup(db)
         .where("threadRootCommentId", "==", threadRootCommentId)
         .orderBy("createdAt", "asc")
         .limit(THREAD_CONTEXT_LIMIT * 2)
         .get();
 
       for (const doc of snapshot.docs) {
-        addEntry({ id: doc.id, ...doc.data() });
+        addEntry({ id: doc.id, documentPath: doc.ref.path, ...doc.data() });
       }
     } catch (error) {
       console.error?.("Failed to load thread context for bot reply", {
@@ -272,11 +298,15 @@ const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
     }
 
     try {
-      const parentSnap = await db.collection(COMMENTS_COLLECTION).doc(nextParentId).get();
-      if (!parentSnap.exists) {
+      const parentSnap = await commentsCollectionGroup(db)
+        .where(admin.firestore.FieldPath.documentId(), "==", nextParentId)
+        .limit(1)
+        .get();
+      const parentDoc = parentSnap.docs[0];
+      if (!parentDoc?.exists) {
         break;
       }
-      current = { id: parentSnap.id, ...parentSnap.data() };
+      current = { id: parentDoc.id, documentPath: parentDoc.ref.path, ...parentDoc.data() };
     } catch (error) {
       console.error?.("Failed to walk thread path for bot reply", {
         nextParentId,
@@ -292,12 +322,13 @@ const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
     path.length < THREAD_PATH_LIMIT
   ) {
     try {
-      const rootSnap = await db
-        .collection(COMMENTS_COLLECTION)
-        .doc(normalizedRootId)
+      const rootSnap = await commentsCollectionGroup(db)
+        .where(admin.firestore.FieldPath.documentId(), "==", normalizedRootId)
+        .limit(1)
         .get();
-      if (rootSnap.exists) {
-        const data = { id: rootSnap.id, ...rootSnap.data() };
+      const rootDoc = rootSnap.docs[0];
+      if (rootDoc?.exists) {
+        const data = { id: rootDoc.id, documentPath: rootDoc.ref.path, ...rootDoc.data() };
         const sanitized = sanitizeCommentForContext(data);
         if (sanitized) {
           path.push({
@@ -330,7 +361,7 @@ const buildTopLevelContext = async (db, action, bot) => {
 
   try {
     const snapshot = await db
-      .collection(COMMENTS_COLLECTION)
+      .collectionGroup(COMMENTS_COLLECTION)
       .where("postId", "==", action.postId)
       .where("parentCommentId", "==", null)
       .orderBy("createdAt", "asc")
@@ -339,7 +370,7 @@ const buildTopLevelContext = async (db, action, bot) => {
 
     const entries = [];
     for (const doc of snapshot.docs) {
-      const data = { id: doc.id, ...doc.data() };
+      const data = { id: doc.id, documentPath: doc.ref.path, ...doc.data() };
       if (!data) continue;
       if (data.authorId === bot?.uid) continue;
 
@@ -519,13 +550,7 @@ const fetchContext = async (db, action, bot) => {
 
   let parentComment = null;
   if (action.parentCommentId) {
-    const parentSnap = await db
-      .collection(COMMENTS_COLLECTION)
-      .doc(action.parentCommentId)
-      .get();
-    if (parentSnap.exists) {
-      parentComment = { id: parentSnap.id, ...parentSnap.data() };
-    }
+    parentComment = await fetchCommentById(db, action.parentCommentId);
   }
 
   const threadRootCommentId = computeThreadRoot(action, parentComment);
@@ -535,8 +560,7 @@ const fetchContext = async (db, action, bot) => {
   const topLevelContext = await buildTopLevelContext(db, action, bot);
 
   const commentsByBotOnPost = await getCount(
-    db
-      .collection(COMMENTS_COLLECTION)
+    commentsCollectionGroup(db)
       .where("postId", "==", action.postId)
       .where("authorId", "==", bot.uid)
   );
@@ -544,8 +568,7 @@ const fetchContext = async (db, action, bot) => {
   let repliesByBotInThread = 0;
   if (threadRootCommentId) {
     repliesByBotInThread = await getCount(
-      db
-        .collection(COMMENTS_COLLECTION)
+      commentsCollectionGroup(db)
         .where("threadRootCommentId", "==", threadRootCommentId)
         .where("authorId", "==", bot.uid)
     );
@@ -611,7 +634,7 @@ const likeCommentHelper = async (db, { bot, comment }) => {
 
   const updatedLikes = Array.from(likes);
 
-  await db.collection(COMMENTS_COLLECTION).doc(comment.id).set(
+  await resolveCommentRef(db, comment).set(
     {
       usersThatLiked: updatedLikes,
       likeCount: admin.firestore.FieldValue.increment(1),
@@ -696,10 +719,13 @@ const createReplyHelper = async (
       commentCount: admin.firestore.FieldValue.increment(1),
       updatedAt: now,
     }),
-    db.collection(COMMENTS_COLLECTION).doc(parentComment.id).update({
-      replyCount: admin.firestore.FieldValue.increment(1),
-      updatedAt: now,
-    }),
+    resolveCommentRef(db, parentComment).update(
+      {
+        replyCount: admin.firestore.FieldValue.increment(1),
+        updatedAt: now,
+      },
+      { exists: true }
+    ),
   ]);
 
   state.commentsByBotOnPost += 1;
