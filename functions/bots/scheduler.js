@@ -98,6 +98,17 @@ const extractMentionedUsernames = (text = "") => {
   return mentions;
 };
 
+const resolveThreadRootId = (comment = {}) => {
+  if (!comment) return null;
+  return (
+    comment.threadRootCommentId ??
+    comment.parentCommentId ??
+    comment.parentId ??
+    comment.id ??
+    null
+  );
+};
+
 const normalizeCommentWindow = ({
   windowStartMs,
   count,
@@ -163,6 +174,7 @@ const normalizeGlobalCommentState = (raw = {}, now) => {
 
 const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
   const perPost = new Map();
+  const perThread = new Map();
   for (const comment of comments) {
     if (!comment?.postId || !botIds.has?.(comment.authorId)) continue;
     const existing = perPost.get(comment.postId) || {
@@ -176,14 +188,26 @@ const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
     if (!comment.parentCommentId) {
       existing.topLevelCount += 1;
       existing.lastTopLevelAt = Math.max(
-        existing.lastTopLevelAt,
-        comment.createdAtMs || 0
-      );
+      existing.lastTopLevelAt,
+      comment.createdAtMs || 0
+    );
     }
     perPost.set(comment.postId, existing);
+
+    const threadRootId = resolveThreadRootId(comment);
+    if (threadRootId) {
+      const threadStats = perThread.get(threadRootId) || {
+        count: 0,
+        lastAt: 0,
+      };
+      threadStats.count += 1;
+      threadStats.lastAt = Math.max(threadStats.lastAt, comment.createdAtMs || 0);
+      perThread.set(threadRootId, threadStats);
+    }
   }
   return {
     perPost,
+    perThread,
   };
 };
 
@@ -570,6 +594,70 @@ const chunkArray = (items, size) => {
   return chunks;
 };
 
+const hydrateNotificationsWithParents = async (db, comments) => {
+  const parentCache = new Map();
+  const needsLookup = comments.filter(
+    (comment) =>
+      comment.postId &&
+      comment.parentCommentId &&
+      (!comment.parentAuthorId || !comment.threadRootCommentId)
+  );
+
+  const fetchParent = async (comment) => {
+    if (!comment?.postId || !comment?.parentCommentId) return;
+    const cacheKey = `${comment.postId}::${comment.parentCommentId}`;
+    if (parentCache.has(cacheKey)) return;
+    try {
+      const snap = await db
+        .collection(POSTS_COLLECTION)
+        .doc(comment.postId)
+        .collection(COMMENTS_COLLECTION)
+        .doc(comment.parentCommentId)
+        .get();
+      if (snap?.exists) {
+        parentCache.set(cacheKey, {
+          id: snap.id,
+          ...snap.data(),
+        });
+      }
+    } catch (error) {
+      console.warn("Failed to load parent comment for notification", {
+        postId: comment.postId,
+        parentCommentId: comment.parentCommentId,
+        error: error?.message || error,
+      });
+    }
+  };
+
+  for (const chunk of chunkArray(needsLookup, 20)) {
+    // Parallelize lookups while keeping batch sizes small to avoid hammering Firestore.
+    await Promise.all(chunk.map(fetchParent));
+  }
+
+  return comments.map((comment) => {
+    const cacheKey = `${comment.postId}::${comment.parentCommentId}`;
+    const parent = parentCache.get(cacheKey);
+    const parentAuthorId = comment.parentAuthorId ?? parent?.authorId ?? null;
+    const parentAuthorIsBot =
+      comment.parentAuthorIsBot ?? (parent ? Boolean(parent.isBotAuthor) : null);
+    const parentAuthorBotId =
+      comment.parentAuthorBotId ??
+      (parentAuthorIsBot ? parentAuthorId : null);
+    const resolvedThreadRoot =
+      comment.threadRootCommentId ??
+      parent?.threadRootCommentId ??
+      resolveThreadRootId(comment);
+
+    return {
+      ...comment,
+      parentAuthorId,
+      parentAuthorBotId,
+      parentAuthorIsBot,
+      threadRootCommentId: resolvedThreadRoot,
+    };
+  });
+};
+
 // Fetch comment-based notifications from the comments collection group.
 // Time filter: prefers Firestore Timestamp in "createdAt"; falls back to a numeric ms
 // query if the field was stored as a number. Includes a safe fallback window on first
@@ -656,66 +744,39 @@ const fetchRecentNotifications = async (db, sinceMs) => {
 
     const raw = snapshot.docs.map((doc) => {
       const data = doc.data() || {};
+      const contentText = data.content ?? data.text ?? "";
+      const authorIsBot = Boolean(
+        data.isBotAuthor ?? data.authorIsBot ?? data.author?.isBot
+      );
+      const parentAuthorId = data.parentAuthorId ?? data.parentUserId ?? null;
+      const parentAuthorIsBot = data.parentIsBotAuthor ?? null;
+      const parentAuthorBotId =
+        data.parentAuthorBotId ??
+        (parentAuthorIsBot ? parentAuthorId : null);
       return {
         id: doc.id,
         documentPath: doc.ref.path,
         postId: data.postId ?? null,
         authorId: data.authorId ?? null,
         authorName: data.authorName ?? "",
-        content: data.content ?? data.text ?? "",
+        authorIsBot,
+        content: contentText,
         createdAtMs: timestampToMillis(data.createdAt),
         parentCommentId: data.parentCommentId ?? data.parentId ?? null,
+        parentAuthorId,
+        parentAuthorBotId: parentAuthorBotId ?? null,
+        parentAuthorIsBot,
         threadRootCommentId: data.threadRootCommentId ?? null,
-        mentions: extractMentionedUsernames(data.content ?? data.text ?? ""),
+        mentions: extractMentionedUsernames(contentText),
       };
     });
 
-    const parentIds = Array.from(
-      new Set(
-        raw
-          .map((comment) => comment.parentCommentId)
-          .filter((value) => typeof value === "string" && value.length > 0)
-      )
-    );
+    const hydrated = await hydrateNotificationsWithParents(db, raw);
 
-    let parentAuthorById = new Map();
-    if (parentIds.length) {
-      const chunks = chunkArray(parentIds, 10);
-      const docs = [];
-      for (const chunk of chunks) {
-        const snap = await db
-          .collectionGroup(COMMENTS_COLLECTION)
-          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-          .get();
-        docs.push(...snap.docs);
-      }
-      parentAuthorById = new Map(
-        docs.map((snap) => [
-          snap.id,
-          {
-            authorId: snap.get("authorId") ?? null,
-            threadRootCommentId:
-              snap.get("threadRootCommentId") ??
-              snap.get("parentCommentId") ??
-              snap.id,
-          },
-        ])
-      );
-    }
-
-    return raw.map((comment) => {
-      const parentMeta = comment.parentCommentId
-        ? parentAuthorById.get(comment.parentCommentId) ?? {}
-        : {};
-      return {
-        ...comment,
-        parentAuthorId: parentMeta.authorId ?? null,
-        threadRootCommentId:
-          comment.threadRootCommentId ??
-          parentMeta.threadRootCommentId ??
-          comment.parentCommentId,
-      };
-    });
+    return hydrated.map((comment) => ({
+      ...comment,
+      threadRootCommentId: comment.threadRootCommentId ?? resolveThreadRootId(comment),
+    }));
   } catch (error) {
     console.error("fetchRecentNotifications failed", {
       sinceMs,
@@ -873,6 +934,12 @@ export const runBotActivityForTick = async ({
       MAX_BOT_COMMENTS_PER_POST,
   };
 
+  const threadReplyCounts = new Map(
+    recentBotCommentSummary?.perThread
+      ? Array.from(recentBotCommentSummary.perThread.entries())
+      : []
+  );
+
   const botCommentActivity =
     recentBotCommentSummary ||
     summarizeBotCommentsByPost(
@@ -908,14 +975,41 @@ export const runBotActivityForTick = async ({
 
   const botUserNameLower = bot.userName ? bot.userName.toLowerCase() : "";
 
-  let notificationCandidates = notifications.filter((comment) => {
-    if (comment.createdAtMs < notificationWindowSince) return false;
-    if (comment.authorId === bot.uid) return false;
-    const targetsBot =
-      comment.parentAuthorId === bot.uid ||
-      (botUserNameLower && comment.mentions?.has(botUserNameLower));
-    return targetsBot;
-  });
+  const buildNotificationBuckets = (windowStartMs) => {
+    const notificationList = [];
+    const replyList = [];
+    for (const comment of notifications) {
+      if (comment.createdAtMs < windowStartMs) continue;
+      if (comment.authorId === bot.uid) continue;
+      const parentAuthorMatchesBot =
+        comment.parentAuthorBotId === bot.uid || comment.parentAuthorId === bot.uid;
+      const mentionsBot =
+        botUserNameLower && comment.mentions?.has(botUserNameLower);
+      const targetsBot = parentAuthorMatchesBot || mentionsBot;
+      if (!targetsBot) continue;
+      const normalized = {
+        ...comment,
+        threadRootCommentId: resolveThreadRootId(comment),
+      };
+      notificationList.push(normalized);
+      const isReply = Boolean(normalized.parentCommentId);
+      const isHumanAuthor = normalized.authorIsBot === false;
+      if (isReply && parentAuthorMatchesBot && isHumanAuthor) {
+        replyList.push(normalized);
+        console.log("bot_reply_candidate", {
+          botId: bot.uid,
+          postId: normalized.postId,
+          commentId: normalized.id,
+          parentCommentId: normalized.parentCommentId,
+          reason: "human_reply_to_bot",
+        });
+      }
+    }
+    return { notificationList, replyList };
+  };
+
+  let { notificationList: notificationCandidates, replyList: replyCandidates } =
+    buildNotificationBuckets(notificationWindowSince);
 
   // If the window start is ahead of the newest post/notification we fetched,
   // fallback to a recent window so bots can catch up after long downtime or
@@ -969,14 +1063,9 @@ export const runBotActivityForTick = async ({
       now - minutesToMs(INITIAL_SCAN_MINUTES),
       newestNotificationMs - minutesToMs(STATE_BUFFER_MINUTES)
     );
-    notificationCandidates = notifications.filter((comment) => {
-      if (comment.createdAtMs < fallbackSince) return false;
-      if (comment.authorId === bot.uid) return false;
-      const targetsBot =
-        comment.parentAuthorId === bot.uid ||
-        (botUserNameLower && comment.mentions?.has(botUserNameLower));
-      return targetsBot;
-    });
+    const fallbackBuckets = buildNotificationBuckets(fallbackSince);
+    notificationCandidates = fallbackBuckets.notificationList;
+    replyCandidates = fallbackBuckets.replyList;
     console.log(
       JSON.stringify({
         type: "bot_resync_window",
@@ -988,10 +1077,6 @@ export const runBotActivityForTick = async ({
       })
     );
   }
-
-  const directReplyCandidates = notificationCandidates.filter(
-    (comment) => comment.parentAuthorId === bot.uid
-  );
 
   // Top-level comment eligibility: recent posts only, respect per-post bot limits,
   // per-bot hourly/daily caps, per-post cooldowns, and global caps.
@@ -1057,12 +1142,16 @@ export const runBotActivityForTick = async ({
     (behavior.baseResponseProbability ?? 0.35) * GLOBAL_ACTIVITY_RATE
   );
   const replyResponseProbability = clamp01(
-    (behavior.replyResponseProbability ??
-      behavior.baseResponseProbability ??
-      0.35) * GLOBAL_ACTIVITY_RATE
+    behavior.replyResponseProbability ?? 0.7
+  );
+  const replyResponseRate = clamp01(
+    replyResponseProbability *
+      (Number.isFinite(behavior.replyResponseProbability)
+        ? 1
+        : GLOBAL_ACTIVITY_RATE)
   );
 
-  if (directReplyCandidates.length) {
+  if (replyCandidates.length) {
     if (
       lastScheduledActionForCooldown &&
       now - lastScheduledActionForCooldown < minutesToMs(MIN_ACTION_SPACING_MINUTES)
@@ -1095,49 +1184,102 @@ export const runBotActivityForTick = async ({
       };
     }
 
-    const target = chooseNotificationCandidate(bot, directReplyCandidates, now);
+    const target = chooseNotificationCandidate(bot, replyCandidates, now);
 
     if (target) {
-      const delayMs = getDelayFromRange(
-        behavior.replyDelayMinutes ?? { min: 2, max: 15 }
-      );
-      const scheduledAt = now + delayMs;
-      const shouldAskQuestion = randomBoolean(behavior.questionProbability);
-      const shouldDisagree = randomBoolean(behavior.disagreementProbability);
+      const threadRootCommentId = resolveThreadRootId(target);
+      const threadStats =
+        threadReplyCounts.get(threadRootCommentId) || {
+          count: 0,
+          lastAt: 0,
+        };
+      const perThreadLimit =
+        perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
+      const threadCapReached =
+        perThreadLimit >= 0 && threadStats.count >= perThreadLimit;
+      const globalTickLimitReached =
+        globalCommentState &&
+        numberOrNull(globalCommentState.perTickLimit) !== null &&
+        globalCommentState.commentsScheduledThisTick >=
+          globalCommentState.perTickLimit;
+      const globalHourCapReached =
+        globalCommentState &&
+        numberOrNull(globalCommentState.perHourLimit) !== null &&
+        globalCommentState.hourCount >=
+          (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+      const shouldReply =
+        !threadCapReached &&
+        !globalTickLimitReached &&
+        !globalHourCapReached &&
+        Math.random() < replyResponseProbability;
 
-      const scheduledAction = buildScheduledBotActionPayload(
-        ScheduledBotActionType.REPLY_TO_COMMENT,
-        {
+      if (shouldReply) {
+        const delayMs = getDelayFromRange(
+          behavior.replyDelayMinutes ?? { min: 2, max: 15 }
+        );
+        const scheduledAt = now + delayMs;
+        const shouldAskQuestion = randomBoolean(behavior.questionProbability);
+        const shouldDisagree = randomBoolean(behavior.disagreementProbability);
+        const plannedActionId = `plan_reply_${bot.uid}_${target.id}_${scheduledAt}`;
+
+        const scheduledAction = buildScheduledBotActionPayload(
+          ScheduledBotActionType.REPLY_TO_COMMENT,
+          {
+            botId: bot.uid,
+            postId: target.postId,
+            scheduledAt,
+            parentCommentId: target.id,
+            threadRootCommentId,
+            metadata: {
+              mode: "REPLY",
+              targetType: "comment",
+              shouldAskQuestion,
+              intent: shouldDisagree ? "disagree" : "default",
+              repliedToBotId: target.parentAuthorId ?? null,
+              triggeredByMention: target.mentions?.has(botUserNameLower) ?? false,
+              targetCommentId: target.id,
+              origin: "activity_tick",
+              plannedActionId,
+            },
+          }
+        );
+
+        threadReplyCounts.set(threadRootCommentId, {
+          count: (threadStats.count ?? 0) + 1,
+          lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
+        });
+        if (globalCommentState) {
+          globalCommentState.commentsScheduledThisTick =
+            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
+          globalCommentState.hourCount =
+            (globalCommentState.hourCount ?? 0) + 1;
+          globalCommentState.dayCount =
+            (globalCommentState.dayCount ?? 0) + 1;
+          globalCommentState.dirty = true;
+        }
+
+        console.log("bot_reply_planned", {
           botId: bot.uid,
           postId: target.postId,
-          scheduledAt,
-          parentCommentId: target.id,
-          threadRootCommentId: target.threadRootCommentId ?? target.id,
-          metadata: {
-            mode: "REPLY",
-            targetType: "comment",
-            shouldAskQuestion,
-            intent: shouldDisagree ? "disagree" : "default",
-            repliedToBotId: target.parentAuthorId ?? null,
-            triggeredByMention: target.mentions?.has(botUserNameLower) ?? false,
-            origin: "activity_tick",
-          },
-        }
-      );
+          threadRootCommentId,
+          targetCommentId: target.id,
+          actionId: plannedActionId,
+        });
 
-      return {
-        status: "scheduled",
-        scheduledAction,
-        eligiblePosts: eligiblePostsCount,
-        effectivePostSince,
-        runtimeUpdate: buildRuntimeUpdate({
-          now,
-          latestPostSeenMs,
-          latestNotificationSeenMs,
-          lastActionAt: scheduledAt,
-          topLevelCommentStats: commentStatsForUpdate(),
-        }),
-      };
+        return {
+          status: "scheduled",
+          scheduledAction,
+          eligiblePosts: eligiblePostsCount,
+          effectivePostSince,
+          runtimeUpdate: buildRuntimeUpdate({
+            now,
+            latestPostSeenMs,
+            latestNotificationSeenMs,
+            lastActionAt: scheduledAt,
+            topLevelCommentStats: commentStatsForUpdate(),
+          }),
+        };
+      }
     }
   }
 
@@ -1149,7 +1291,7 @@ export const runBotActivityForTick = async ({
         : 0,
     replyToComment:
       notificationCandidates.length > 0
-        ? (weights.replyToComment ?? 0.3) * replyResponseProbability
+        ? (weights.replyToComment ?? 0.3) * replyResponseRate
         : 0,
     likePost:
       postCandidates.length > 0
@@ -1157,7 +1299,7 @@ export const runBotActivityForTick = async ({
         : 0,
     likeComment:
       notificationCandidates.length > 0
-        ? (weights.likeComment ?? 0.1) * replyResponseProbability
+        ? (weights.likeComment ?? 0.1) * replyResponseRate
         : 0,
     ignore:
       weights.ignore ?? (commentCandidates.length > 0 ? 0.25 : 1),
@@ -1310,33 +1452,84 @@ export const runBotActivityForTick = async ({
       now
     );
     if (target) {
+      const threadRootCommentId = resolveThreadRootId(target);
+      const threadStats =
+        threadReplyCounts.get(threadRootCommentId) || {
+          count: 0,
+          lastAt: 0,
+        };
+      const perThreadLimit =
+        perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
+      const threadCapReached =
+        perThreadLimit >= 0 && threadStats.count >= perThreadLimit;
+      const globalTickLimitReached =
+        globalCommentState &&
+        numberOrNull(globalCommentState.perTickLimit) !== null &&
+        globalCommentState.commentsScheduledThisTick >=
+          globalCommentState.perTickLimit;
+      const globalHourCapReached =
+        globalCommentState &&
+        numberOrNull(globalCommentState.perHourLimit) !== null &&
+        globalCommentState.hourCount >=
+          (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+
       const delayMs = getDelayFromRange(
         behavior.replyDelayMinutes ?? { min: 2, max: 15 }
       );
       const scheduledAt = now + delayMs;
       const shouldAskQuestion = randomBoolean(behavior.questionProbability);
       const shouldDisagree = randomBoolean(behavior.disagreementProbability);
+      const plannedActionId = `plan_reply_${bot.uid}_${target.id}_${scheduledAt}`;
 
-      scheduledAction = buildScheduledBotActionPayload(
-        ScheduledBotActionType.REPLY_TO_COMMENT,
-        {
+      if (
+        !threadCapReached &&
+        !globalTickLimitReached &&
+        !globalHourCapReached
+      ) {
+        scheduledAction = buildScheduledBotActionPayload(
+          ScheduledBotActionType.REPLY_TO_COMMENT,
+          {
+            botId: bot.uid,
+            postId: target.postId,
+            scheduledAt,
+            parentCommentId: target.id,
+            threadRootCommentId,
+            metadata: {
+              mode: "REPLY",
+              targetType: "comment",
+              shouldAskQuestion,
+              intent: shouldDisagree ? "disagree" : "default",
+              repliedToBotId: target.parentAuthorId ?? null,
+              triggeredByMention:
+                target.mentions?.has(botUserNameLower) ?? false,
+              targetCommentId: target.id,
+              origin: "activity_tick",
+              plannedActionId,
+            },
+          }
+        );
+        threadReplyCounts.set(threadRootCommentId, {
+          count: (threadStats.count ?? 0) + 1,
+          lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
+        });
+        if (globalCommentState) {
+          globalCommentState.commentsScheduledThisTick =
+            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
+          globalCommentState.hourCount =
+            (globalCommentState.hourCount ?? 0) + 1;
+          globalCommentState.dayCount =
+            (globalCommentState.dayCount ?? 0) + 1;
+          globalCommentState.dirty = true;
+        }
+        console.log("bot_reply_planned", {
           botId: bot.uid,
           postId: target.postId,
-          scheduledAt,
-          parentCommentId: target.id,
-          threadRootCommentId: target.threadRootCommentId ?? target.id,
-          metadata: {
-            mode: "REPLY",
-            targetType: "comment",
-            shouldAskQuestion,
-            intent: shouldDisagree ? "disagree" : "default",
-            repliedToBotId: target.parentAuthorId ?? null,
-            triggeredByMention: target.mentions?.has(botUserNameLower) ?? false,
-            origin: "activity_tick",
-          },
-        }
-      );
-      lastActionAt = scheduledAt;
+          threadRootCommentId,
+          targetCommentId: target.id,
+          actionId: plannedActionId,
+        });
+        lastActionAt = scheduledAt;
+      }
     }
   } else if (chosenAction === "likePost") {
     const target = choosePostCandidate(bot, postCandidates, now);

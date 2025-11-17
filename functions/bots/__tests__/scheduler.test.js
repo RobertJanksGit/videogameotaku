@@ -35,21 +35,26 @@ describe("runBotActivityForTick - direct replies", () => {
       threadRootCommentId: "thread-1",
     };
 
-    const result = await runBotActivityForTick({
-      db: {},
-      bot: baseBot,
-      runtimeState: null,
-      now,
-      posts: [],
-      notifications: [notification],
-    });
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const result = await runBotActivityForTick({
+        db: {},
+        bot: baseBot,
+        runtimeState: null,
+        now,
+        posts: [],
+        notifications: [notification],
+      });
 
-    expect(result.status).toBe("scheduled");
-    expect(result.scheduledAction).toBeTruthy();
-    expect(result.scheduledAction.type).toBe(ScheduledBotActionType.REPLY_TO_COMMENT);
-    expect(result.scheduledAction.parentCommentId).toBe(notification.id);
-    expect(result.runtimeUpdate).toBeTruthy();
-    expect(result.runtimeUpdate.lastActionScheduledAt).toBeGreaterThan(now);
+      expect(result.status).toBe("scheduled");
+      expect(result.scheduledAction).toBeTruthy();
+      expect(result.scheduledAction.type).toBe(ScheduledBotActionType.REPLY_TO_COMMENT);
+      expect(result.scheduledAction.parentCommentId).toBe(notification.id);
+      expect(result.runtimeUpdate).toBeTruthy();
+      expect(result.runtimeUpdate.lastActionScheduledAt).toBeGreaterThan(now);
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 
   it("respects cooldown window even for direct replies", async () => {

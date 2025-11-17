@@ -341,6 +341,16 @@ const HomePage = () => {
   );
 
   // Separate function to fetch featured posts
+  const resolveCommentCount = async (post) => {
+    if (Number.isFinite(post?.commentCount)) {
+      return post.commentCount;
+    }
+    const commentsSnapshot = await getDocs(
+      collection(db, "posts", post.id, "comments")
+    );
+    return commentsSnapshot.size;
+  };
+
   const fetchFeaturedPosts = async () => {
     try {
       // Calculate start of current day in user's timezone
@@ -364,12 +374,7 @@ const HomePage = () => {
       const featuredPosts = await Promise.all(
         featuredSnapshot.docs.map(async (doc) => {
           const post = { id: doc.id, ...doc.data() };
-          const commentsQuery = query(
-            collection(db, "comments"),
-            where("postId", "==", doc.id)
-          );
-          const commentsSnapshot = await getDocs(commentsQuery);
-          const commentCount = commentsSnapshot.size;
+          const commentCount = await resolveCommentCount(post);
 
           return { ...(await migratePost(post)), commentCount };
         })
@@ -393,12 +398,7 @@ const HomePage = () => {
         const extendedPosts = await Promise.all(
           extendedSnapshot.docs.map(async (doc) => {
             const post = { id: doc.id, ...doc.data() };
-            const commentsQuery = query(
-              collection(db, "comments"),
-              where("postId", "==", doc.id)
-            );
-            const commentsSnapshot = await getDocs(commentsQuery);
-            const commentCount = commentsSnapshot.size;
+            const commentCount = await resolveCommentCount(post);
 
             return { ...(await migratePost(post)), commentCount };
           })

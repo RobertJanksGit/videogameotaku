@@ -1,20 +1,45 @@
 /* global process */
 
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
 
 export const DEFAULT_MAX_RESULTS = 3;
 const DEFAULT_BASE_URL =
   process.env.SEARCH_ENGINE_BASE_URL || "https://duckduckgo.com/?q=";
+const DEFAULT_EXECUTABLE_PATH = "/usr/bin/google-chrome";
+const CHROME_LAUNCH_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--no-first-run",
+  "--no-zygote",
+  "--single-process",
+];
 
 let browserPromise = null;
 
+const getExecutablePath = () =>
+  process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_EXECUTABLE_PATH;
+
 export const getBrowser = async () => {
-  if (!browserPromise) {
-    browserPromise = puppeteer.launch({
+  if (browserPromise) return browserPromise;
+
+  const executablePath = getExecutablePath();
+  browserPromise = puppeteer
+    .launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      executablePath,
+      args: CHROME_LAUNCH_ARGS,
+    })
+    .catch((error) => {
+      console.error("[scrapeSearchResults] Failed to launch Chrome", {
+        executablePath,
+        error: error?.message ?? error,
+      });
+      browserPromise = null;
+      throw error;
     });
-  }
+
   return browserPromise;
 };
 
