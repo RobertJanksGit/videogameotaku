@@ -84,6 +84,148 @@ describe("runBotActivityForTick - direct replies", () => {
   });
 });
 
+describe("runBotActivityForTick - top level comments", () => {
+  it("schedules a top-level comment when the post is eligible and limits allow", async () => {
+    const now = Date.now();
+    const bot = {
+      uid: "bot-chatty",
+      userName: "ChattyBot",
+      behavior: {
+        baseResponseProbability: 1,
+        replyResponseProbability: 0,
+        postDelayMinutes: { min: 0, max: 0 },
+        actionWeights: {
+          commentOnPost: 1,
+          replyToComment: 0,
+          likePost: 0,
+          likeComment: 0,
+          ignore: 0,
+        },
+        commentLimits: { perHour: 5, perDay: 10, perPost: 2 },
+        questionProbability: 0,
+        disagreementProbability: 0,
+      },
+    };
+
+    const posts = [
+      {
+        id: "post-latest",
+        authorId: "user-123",
+        createdAtMs: now - 5 * 60 * 1000,
+        title: "fresh post",
+        content: "content",
+        summary: "",
+        tags: [],
+        text: "fresh post content",
+      },
+    ];
+
+    const globalCommentState = {
+      commentsScheduledThisTick: 0,
+      hourWindowStartMs: now,
+      hourCount: 0,
+      dayWindowStartMs: now,
+      dayCount: 0,
+      perTickLimit: 3,
+      perHourLimit: 5,
+      dirty: false,
+    };
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const result = await runBotActivityForTick({
+        db: {},
+        bot,
+        runtimeState: null,
+        now,
+        posts,
+        notifications: [],
+        globalCommentState,
+        recentBotCommentSummary: { perPost: new Map() },
+      });
+
+      expect(result.status).toBe("scheduled");
+      expect(result.scheduledAction?.type).toBe(
+        ScheduledBotActionType.COMMENT_ON_POST
+      );
+      expect(globalCommentState.hourCount).toBe(1);
+      expect(globalCommentState.commentsScheduledThisTick).toBe(1);
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("skips commenting when per-bot comment caps are exhausted", async () => {
+    const now = Date.now();
+    const bot = {
+      uid: "bot-limited",
+      userName: "LimitedBot",
+      behavior: {
+        baseResponseProbability: 1,
+        replyResponseProbability: 0,
+        postDelayMinutes: { min: 0, max: 0 },
+        actionWeights: {
+          commentOnPost: 1,
+          replyToComment: 0,
+          likePost: 0,
+          likeComment: 0,
+          ignore: 1,
+        },
+        commentLimits: { perHour: 1, perDay: 1, perPost: 1 },
+      },
+    };
+
+    const posts = [
+      {
+        id: "post-latest",
+        authorId: "user-123",
+        createdAtMs: now - 5 * 60 * 1000,
+        title: "fresh post",
+        content: "content",
+        summary: "",
+        tags: [],
+        text: "fresh post content",
+      },
+    ];
+
+    const globalCommentState = {
+      commentsScheduledThisTick: 0,
+      hourWindowStartMs: now,
+      hourCount: 0,
+      dayWindowStartMs: now,
+      dayCount: 0,
+      perTickLimit: 3,
+      perHourLimit: 5,
+      dirty: false,
+    };
+
+    const runtimeState = {
+      topLevelCommentStats: {
+        hourWindowStartMs: now,
+        hourCount: 1,
+        dayWindowStartMs: now,
+        dayCount: 1,
+        lastTopLevelCommentAt: now - 2 * 60 * 1000,
+      },
+    };
+
+    const result = await runBotActivityForTick({
+      db: {},
+      bot,
+      runtimeState,
+      now,
+      posts,
+      notifications: [],
+      globalCommentState,
+      recentBotCommentSummary: { perPost: new Map() },
+    });
+
+    expect(result.status).not.toBe("scheduled");
+    expect(result.scheduledAction).toBeUndefined();
+    expect(globalCommentState.commentsScheduledThisTick).toBe(0);
+  });
+});
+
 describe("runBotActivityForTick - action weight normalization", () => {
   it("schedules a like when only likePostOnly weight is provided", async () => {
     const now = Date.now();
@@ -139,4 +281,3 @@ describe("runBotActivityForTick - action weight normalization", () => {
     }
   });
 });
-

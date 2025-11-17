@@ -176,6 +176,7 @@ export const toBotRuntimeState = (doc) => {
       typeof data.lastActionScheduledAt === "number"
         ? data.lastActionScheduledAt
         : undefined,
+    topLevelCommentStats: data.topLevelCommentStats ?? undefined,
   };
 };
 

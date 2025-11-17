@@ -54,12 +54,29 @@ const STATE_BUFFER_MINUTES = 5;
 const INITIAL_SCAN_MINUTES = 180;
 const MAX_POSTS_TO_SCAN = 60;
 const MAX_NOTIFICATIONS_TO_SCAN = 120;
-const MIN_ACTION_SPACING_MINUTES = 8;
+const MIN_ACTION_SPACING_MINUTES = 6;
 // Scales response probabilities to keep bots from engaging too frequently.
 const GLOBAL_ACTIVITY_RATE = 0.65;
 const BOT_DECISION_LOG_SAMPLE_RATE = 0.1;
+// Top-level comment guardrails to keep bots chatty but not spammy.
+const COMMENT_ELIGIBILITY_LOOKBACK_MINUTES = 48 * 60; // 48 hours
+const MAX_BOT_COMMENTS_PER_POST = 2;
+const MIN_MINUTES_BETWEEN_BOT_COMMENTS_ON_POST = 120;
+const BOT_TOP_LEVEL_COMMENT_COOLDOWN_MINUTES = 10;
+const BOT_TOP_LEVEL_COMMENTS_PER_HOUR = 2;
+const BOT_TOP_LEVEL_COMMENTS_PER_DAY = 5;
+const GLOBAL_TOP_LEVEL_COMMENTS_PER_TICK = 2;
+const GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR = 8;
+const BOT_META_COLLECTION = "botMeta";
+const BOT_COMMENT_ACTIVITY_DOC_ID = "commentActivity";
+const SAFE_LOOKBACK_MS = minutesToMs(COMMENT_ELIGIBILITY_LOOKBACK_MINUTES);
+const COMMENT_COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes between top-level comments
+const LIKE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between likes
 
 const mentionRegex = /@([A-Za-z0-9_-]+)/g;
+
+const numberOrNull = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const timestampToMillis = (value) => {
   if (!value) return 0;
@@ -79,6 +96,163 @@ const extractMentionedUsernames = (text = "") => {
     mentions.add(match[1].toLowerCase());
   }
   return mentions;
+};
+
+const normalizeCommentWindow = ({
+  windowStartMs,
+  count,
+  windowSizeMs,
+  now,
+}) => {
+  const startMs = numberOrNull(windowStartMs) ?? 0;
+  const value = numberOrNull(count) ?? 0;
+  if (!startMs || now - startMs >= windowSizeMs || startMs > now) {
+    return {
+      windowStartMs: now,
+      count: 0,
+      reset: true,
+    };
+  }
+  return {
+    windowStartMs: startMs,
+    count: Math.max(0, value),
+    reset: false,
+  };
+};
+
+const normalizeBotCommentState = (rawStats = {}, now) => {
+  const hourWindow = normalizeCommentWindow({
+    windowStartMs: rawStats.hourWindowStartMs ?? rawStats.hourWindowStart,
+    count: rawStats.hourCount,
+    windowSizeMs: minutesToMs(60),
+    now,
+  });
+  const dayWindow = normalizeCommentWindow({
+    windowStartMs: rawStats.dayWindowStartMs ?? rawStats.dayWindowStart,
+    count: rawStats.dayCount,
+    windowSizeMs: minutesToMs(24 * 60),
+    now,
+  });
+  return {
+    state: {
+      hourWindowStartMs: hourWindow.windowStartMs,
+      hourCount: hourWindow.count,
+      dayWindowStartMs: dayWindow.windowStartMs,
+      dayCount: dayWindow.count,
+      lastTopLevelCommentAt:
+        numberOrNull(rawStats.lastTopLevelCommentAt) ?? null,
+    },
+    dirty: hourWindow.reset || dayWindow.reset,
+  };
+};
+
+const normalizeGlobalCommentState = (raw = {}, now) => {
+  const normalized = normalizeBotCommentState(raw, now);
+  return {
+    state: {
+      ...normalized.state,
+      perTickLimit:
+        numberOrNull(raw.perTickLimit) ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_TICK,
+      perHourLimit:
+        numberOrNull(raw.perHourLimit) ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR,
+      commentsScheduledThisTick: 0,
+    },
+    dirty: normalized.dirty,
+  };
+};
+
+const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
+  const perPost = new Map();
+  for (const comment of comments) {
+    if (!comment?.postId || !botIds.has?.(comment.authorId)) continue;
+    const existing = perPost.get(comment.postId) || {
+      count: 0,
+      lastAt: 0,
+      topLevelCount: 0,
+      lastTopLevelAt: 0,
+    };
+    existing.count += 1;
+    existing.lastAt = Math.max(existing.lastAt, comment.createdAtMs || 0);
+    if (!comment.parentCommentId) {
+      existing.topLevelCount += 1;
+      existing.lastTopLevelAt = Math.max(
+        existing.lastTopLevelAt,
+        comment.createdAtMs || 0
+      );
+    }
+    perPost.set(comment.postId, existing);
+  }
+  return {
+    perPost,
+  };
+};
+
+const canBotLeaveTopLevelCommentOnPost = ({
+  bot,
+  post,
+  botCommentState,
+  recentBotActivity,
+  globalCommentState,
+  commentLimits,
+  now,
+}) => {
+  const commentState = botCommentState?.state ?? botCommentState ?? {};
+  const postAgeMinutes = (now - (post.createdAtMs || 0)) / minutesToMs(1);
+  if (postAgeMinutes > COMMENT_ELIGIBILITY_LOOKBACK_MINUTES) {
+    return { eligible: false, reason: "post_too_old" };
+  }
+
+  const perPost = recentBotActivity?.perPost?.get(post.id) ?? {
+    count: 0,
+    topLevelCount: 0,
+    lastTopLevelAt: 0,
+  };
+  if (perPost.topLevelCount >= (commentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST)) {
+    return { eligible: false, reason: "too_many_bot_comments" };
+  }
+  if (
+    perPost.lastTopLevelAt &&
+    now - perPost.lastTopLevelAt <
+      minutesToMs(MIN_MINUTES_BETWEEN_BOT_COMMENTS_ON_POST)
+  ) {
+    return { eligible: false, reason: "recent_bot_comment" };
+  }
+
+  if (
+    globalCommentState &&
+    numberOrNull(globalCommentState.perTickLimit) !== null &&
+    globalCommentState.commentsScheduledThisTick >=
+      globalCommentState.perTickLimit
+  ) {
+    return { eligible: false, reason: "global_cap_reached" };
+  }
+
+  if (
+    globalCommentState &&
+    numberOrNull(globalCommentState.perHourLimit) !== null &&
+    globalCommentState.hourCount >=
+      (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR)
+  ) {
+    return { eligible: false, reason: "global_hour_cap_reached" };
+  }
+
+  const hourlyLimit = commentLimits?.perHour ?? BOT_TOP_LEVEL_COMMENTS_PER_HOUR;
+  const dailyLimit = commentLimits?.perDay ?? BOT_TOP_LEVEL_COMMENTS_PER_DAY;
+  if (hourlyLimit >= 0 && commentState.hourCount >= hourlyLimit) {
+    return { eligible: false, reason: "bot_hourly_cap" };
+  }
+  if (dailyLimit >= 0 && commentState.dayCount >= dailyLimit) {
+    return { eligible: false, reason: "bot_daily_cap" };
+  }
+  if (
+    commentState.lastTopLevelCommentAt &&
+    now - commentState.lastTopLevelCommentAt <
+      minutesToMs(BOT_TOP_LEVEL_COMMENT_COOLDOWN_MINUTES)
+  ) {
+    return { eligible: false, reason: "cooldown" };
+  }
+
+  return { eligible: true, reason: "eligible" };
 };
 
 const getPostText = (post = {}) =>
@@ -346,6 +520,22 @@ const loadActiveBotsWithState = async (db) => {
   return { bots, runtimeStateByBot };
 };
 
+const loadGlobalCommentActivityState = async (db, now) => {
+  const ref = db.collection(BOT_META_COLLECTION).doc(BOT_COMMENT_ACTIVITY_DOC_ID);
+  try {
+    const snap = await ref.get();
+    const raw = snap?.exists ? snap.data() || {} : {};
+    const normalized = normalizeGlobalCommentState(raw, now);
+    return { ref, ...normalized.state, dirty: normalized.dirty };
+  } catch (error) {
+    console.warn?.("Failed to load global bot comment activity state", {
+      message: error?.message || error,
+    });
+    const fallback = normalizeGlobalCommentState({}, now);
+    return { ref, ...fallback.state, dirty: true };
+  }
+};
+
 const fetchRecentPosts = async (db, sinceMs) => {
   const sinceTimestamp = admin.firestore.Timestamp.fromMillis(sinceMs);
   const snapshot = await db
@@ -380,75 +570,163 @@ const chunkArray = (items, size) => {
   return chunks;
 };
 
+// Fetch comment-based notifications from the comments collection group.
+// Time filter: prefers Firestore Timestamp in "createdAt"; falls back to a numeric ms
+// query if the field was stored as a number. Includes a safe fallback window on first
+// run to avoid skipping recent items when the watermark is unset.
 const fetchRecentNotifications = async (db, sinceMs) => {
-  const sinceTimestamp = admin.firestore.Timestamp.fromMillis(sinceMs);
-  const snapshot = await db
-    .collectionGroup(COMMENTS_COLLECTION)
-    .where("createdAt", ">=", sinceTimestamp)
-    .orderBy("createdAt", "asc")
-    .limit(MAX_NOTIFICATIONS_TO_SCAN)
-    .get();
-
-  const raw = snapshot.docs.map((doc) => {
-    const data = doc.data() || {};
-    return {
-      id: doc.id,
-      documentPath: doc.ref.path,
-      postId: data.postId ?? null,
-      authorId: data.authorId ?? null,
-      authorName: data.authorName ?? "",
-      content: data.content ?? data.text ?? "",
-      createdAtMs: timestampToMillis(data.createdAt),
-      parentCommentId: data.parentCommentId ?? data.parentId ?? null,
-      threadRootCommentId: data.threadRootCommentId ?? null,
-      mentions: extractMentionedUsernames(data.content ?? data.text ?? ""),
-    };
-  });
-
-  const parentIds = Array.from(
-    new Set(
-      raw
-        .map((comment) => comment.parentCommentId)
-        .filter((value) => typeof value === "string" && value.length > 0)
-    )
+  const nowMs = getNowMs();
+  const fallbackSinceMs = nowMs - minutesToMs(INITIAL_SCAN_MINUTES);
+  let normalizedSinceMs = Number.isFinite(sinceMs) ? sinceMs : fallbackSinceMs;
+  if (normalizedSinceMs > nowMs) {
+    normalizedSinceMs = fallbackSinceMs;
+  }
+  if (!Number.isFinite(normalizedSinceMs) || normalizedSinceMs < 0) {
+    normalizedSinceMs = fallbackSinceMs;
+  }
+  const sinceTimestamp = admin.firestore.Timestamp.fromMillis(
+    Math.max(0, normalizedSinceMs)
   );
 
-  let parentAuthorById = new Map();
-  if (parentIds.length) {
-    const chunks = chunkArray(parentIds, 10);
-    const docs = [];
-    for (const chunk of chunks) {
-      const snap = await db
-        .collectionGroup(COMMENTS_COLLECTION)
-        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-        .get();
-      docs.push(...snap.docs);
-    }
-    parentAuthorById = new Map(
-      docs.map((snap) => [
-        snap.id,
-        {
-          authorId: snap.get("authorId") ?? null,
-          threadRootCommentId:
-            snap.get("threadRootCommentId") ?? snap.get("parentCommentId") ?? snap.id,
-        },
-      ])
-    );
-  }
-
-  return raw.map((comment) => {
-    const parentMeta = comment.parentCommentId
-      ? parentAuthorById.get(comment.parentCommentId) ?? {}
-      : {};
-    return {
-      ...comment,
-      parentAuthorId: parentMeta.authorId ?? null,
-      threadRootCommentId:
-        comment.threadRootCommentId ??
-        parentMeta.threadRootCommentId ??
-        comment.parentCommentId,
-    };
+  console.log("fetchRecentNotifications query", {
+    collection: `collectionGroup(${COMMENTS_COLLECTION})`,
+    providedSinceMs: sinceMs,
+    normalizedSinceMs,
+    sinceTimestampIso: sinceTimestamp.toDate().toISOString(),
   });
+
+  try {
+    let snapshot = await db
+      .collectionGroup(COMMENTS_COLLECTION)
+      .where("createdAt", ">=", sinceTimestamp)
+      .orderBy("createdAt", "asc")
+      .limit(MAX_NOTIFICATIONS_TO_SCAN)
+      .get();
+    let querySource = "createdAt_timestamp";
+
+    if (snapshot.size === 0) {
+      // Fallback for cases where createdAt is stored as a number (ms) instead of a Firestore Timestamp.
+      try {
+        const numericSnapshot = await db
+          .collectionGroup(COMMENTS_COLLECTION)
+          .where("createdAt", ">=", normalizedSinceMs)
+          .orderBy("createdAt", "asc")
+          .limit(MAX_NOTIFICATIONS_TO_SCAN)
+          .get();
+        if (numericSnapshot.size > 0) {
+          snapshot = numericSnapshot;
+          querySource = "createdAt_number_ms";
+        }
+        console.log("fetchRecentNotifications numeric fallback", {
+          size: numericSnapshot.size,
+          normalizedSinceMs,
+          sinceTimestampIso: sinceTimestamp.toDate().toISOString(),
+        });
+      } catch (fallbackError) {
+        console.warn("fetchRecentNotifications numeric fallback failed", {
+          error: fallbackError?.message || fallbackError,
+          code: fallbackError?.code,
+        });
+      }
+    }
+
+    console.log("fetchRecentNotifications snapshot", {
+      size: snapshot.size,
+      normalizedSinceMs,
+      sinceTimestampIso: sinceTimestamp.toDate().toISOString(),
+      querySource,
+    });
+    const sampleDocs = snapshot.docs.slice(0, 2).map((doc) => {
+      const data = doc.data() || {};
+      const createdAtRaw = data.createdAt;
+      return {
+        id: doc.id,
+        createdAt: createdAtRaw,
+        createdAtType: {
+          instanceOfTimestamp: createdAtRaw instanceof admin.firestore.Timestamp,
+          hasToMillis: typeof createdAtRaw?.toMillis === "function",
+          typeof: typeof createdAtRaw,
+        },
+        createdAtMs: timestampToMillis(createdAtRaw),
+      };
+    });
+    if (sampleDocs.length) {
+      console.log("fetchRecentNotifications samples", sampleDocs);
+    }
+
+    const raw = snapshot.docs.map((doc) => {
+      const data = doc.data() || {};
+      return {
+        id: doc.id,
+        documentPath: doc.ref.path,
+        postId: data.postId ?? null,
+        authorId: data.authorId ?? null,
+        authorName: data.authorName ?? "",
+        content: data.content ?? data.text ?? "",
+        createdAtMs: timestampToMillis(data.createdAt),
+        parentCommentId: data.parentCommentId ?? data.parentId ?? null,
+        threadRootCommentId: data.threadRootCommentId ?? null,
+        mentions: extractMentionedUsernames(data.content ?? data.text ?? ""),
+      };
+    });
+
+    const parentIds = Array.from(
+      new Set(
+        raw
+          .map((comment) => comment.parentCommentId)
+          .filter((value) => typeof value === "string" && value.length > 0)
+      )
+    );
+
+    let parentAuthorById = new Map();
+    if (parentIds.length) {
+      const chunks = chunkArray(parentIds, 10);
+      const docs = [];
+      for (const chunk of chunks) {
+        const snap = await db
+          .collectionGroup(COMMENTS_COLLECTION)
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        docs.push(...snap.docs);
+      }
+      parentAuthorById = new Map(
+        docs.map((snap) => [
+          snap.id,
+          {
+            authorId: snap.get("authorId") ?? null,
+            threadRootCommentId:
+              snap.get("threadRootCommentId") ??
+              snap.get("parentCommentId") ??
+              snap.id,
+          },
+        ])
+      );
+    }
+
+    return raw.map((comment) => {
+      const parentMeta = comment.parentCommentId
+        ? parentAuthorById.get(comment.parentCommentId) ?? {}
+        : {};
+      return {
+        ...comment,
+        parentAuthorId: parentMeta.authorId ?? null,
+        threadRootCommentId:
+          comment.threadRootCommentId ??
+          parentMeta.threadRootCommentId ??
+          comment.parentCommentId,
+      };
+    });
+  } catch (error) {
+    console.error("fetchRecentNotifications failed", {
+      sinceMs,
+      normalizedSinceMs,
+      sinceTimestampIso: sinceTimestamp.toDate().toISOString(),
+      error: error?.message || error,
+      code: error?.code,
+      stack: error?.stack,
+    });
+    return [];
+  }
 };
 
 const choosePostCandidate = (bot, candidates, now) => {
@@ -524,11 +802,13 @@ const buildRuntimeUpdate = ({
   latestPostSeenMs,
   latestNotificationSeenMs,
   lastActionAt,
+  topLevelCommentStats = null,
 }) => {
   const update = {};
   if (Number.isFinite(latestPostSeenMs) && latestPostSeenMs > 0) {
     update.lastSeenPostAt = admin.firestore.Timestamp.fromMillis(
-      Math.max(now, latestPostSeenMs)
+      // Clamp to avoid jumping the watermark forward to "now" when no posts were seen.
+      Math.min(now, latestPostSeenMs)
     );
   }
   if (
@@ -536,11 +816,21 @@ const buildRuntimeUpdate = ({
     latestNotificationSeenMs > 0
   ) {
     update.lastSeenNotificationAt = admin.firestore.Timestamp.fromMillis(
-      Math.max(now, latestNotificationSeenMs)
+      // Same treatment for notifications to prevent skipping older items.
+      Math.min(now, latestNotificationSeenMs)
     );
   }
   if (Number.isFinite(lastActionAt) && lastActionAt > 0) {
     update.lastActionScheduledAt = lastActionAt;
+  }
+  if (topLevelCommentStats) {
+    update.topLevelCommentStats = {
+      hourWindowStartMs: topLevelCommentStats.hourWindowStartMs,
+      hourCount: topLevelCommentStats.hourCount,
+      dayWindowStartMs: topLevelCommentStats.dayWindowStartMs,
+      dayCount: topLevelCommentStats.dayCount,
+      lastTopLevelCommentAt: topLevelCommentStats.lastTopLevelCommentAt ?? null,
+    };
   }
   update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
   return update;
@@ -555,9 +845,40 @@ export const runBotActivityForTick = async ({
   now,
   posts,
   notifications,
+  recentBotCommentSummary = null,
+  globalCommentState = null,
+  commentLimits: commentLimitOverrides = null,
 }) => {
   const behavior = bot.behavior || {};
   const nowDate = new Date(now);
+  const nowIso = nowDate.toISOString();
+
+  const { state: botCommentState, dirty: botCommentStateDirtyStart } =
+    normalizeBotCommentState(runtimeState?.topLevelCommentStats, now);
+  let botCommentStateDirty = botCommentStateDirtyStart;
+
+  const perBotCommentLimits = {
+    perHour:
+      commentLimitOverrides?.perHour ??
+      behavior?.commentLimits?.perHour ??
+      BOT_TOP_LEVEL_COMMENTS_PER_HOUR,
+    perDay:
+      commentLimitOverrides?.perDay ??
+      behavior?.commentLimits?.perDay ??
+      BOT_TOP_LEVEL_COMMENTS_PER_DAY,
+    perPost:
+      commentLimitOverrides?.perPost ??
+      behavior?.commentLimits?.perPost ??
+      behavior?.maxCommentsPerPost ??
+      MAX_BOT_COMMENTS_PER_POST,
+  };
+
+  const botCommentActivity =
+    recentBotCommentSummary ||
+    summarizeBotCommentsByPost(
+      notifications,
+      new Set([bot.uid]) // fallback only knows about the current bot
+    );
 
   const lastSeenPostAtMs = runtimeState
     ? timestampToMillis(runtimeState.lastSeenPostAt)
@@ -577,16 +898,17 @@ export const runBotActivityForTick = async ({
     INITIAL_SCAN_MINUTES
   );
 
-  const postCandidates = posts.filter(
+  let postCandidates = posts.filter(
     (post) =>
       post.createdAtMs >= postWindowSince &&
       post.createdAtMs > 0 &&
       post.authorId !== bot.uid
   );
+  let effectivePostSince = postWindowSince;
 
   const botUserNameLower = bot.userName ? bot.userName.toLowerCase() : "";
 
-  const notificationCandidates = notifications.filter((comment) => {
+  let notificationCandidates = notifications.filter((comment) => {
     if (comment.createdAtMs < notificationWindowSince) return false;
     if (comment.authorId === bot.uid) return false;
     const targetsBot =
@@ -595,9 +917,108 @@ export const runBotActivityForTick = async ({
     return targetsBot;
   });
 
+  // If the window start is ahead of the newest post/notification we fetched,
+  // fallback to a recent window so bots can catch up after long downtime or
+  // a bad watermark.
+  const newestPostMs = posts.reduce(
+    (acc, post) => Math.max(acc, post.createdAtMs || 0),
+    0
+  );
+  if (
+    !postCandidates.length &&
+    newestPostMs > 0 &&
+    postWindowSince - newestPostMs > minutesToMs(STATE_BUFFER_MINUTES)
+  ) {
+    let fallbackSince = Math.max(
+      now - minutesToMs(INITIAL_SCAN_MINUTES),
+      newestPostMs - minutesToMs(STATE_BUFFER_MINUTES)
+    );
+    if (fallbackSince > newestPostMs) {
+      fallbackSince = Math.max(0, newestPostMs - SAFE_LOOKBACK_MS);
+    }
+    effectivePostSince = fallbackSince;
+    postCandidates = posts.filter(
+      (post) =>
+        post.createdAtMs >= effectivePostSince &&
+        post.createdAtMs > 0 &&
+        post.authorId !== bot.uid
+    );
+    console.log(
+      JSON.stringify({
+        type: "bot_resync_window",
+        target: "posts",
+        botId: bot.uid,
+        windowSince: postWindowSince,
+        fallbackSince: effectivePostSince,
+        newest: newestPostMs,
+      })
+    );
+  }
+
+  const newestNotificationMs = notifications.reduce(
+    (acc, comment) => Math.max(acc, comment.createdAtMs || 0),
+    0
+  );
+  if (
+    !notificationCandidates.length &&
+    newestNotificationMs > 0 &&
+    notificationWindowSince - newestNotificationMs >
+      minutesToMs(STATE_BUFFER_MINUTES)
+  ) {
+    const fallbackSince = Math.max(
+      now - minutesToMs(INITIAL_SCAN_MINUTES),
+      newestNotificationMs - minutesToMs(STATE_BUFFER_MINUTES)
+    );
+    notificationCandidates = notifications.filter((comment) => {
+      if (comment.createdAtMs < fallbackSince) return false;
+      if (comment.authorId === bot.uid) return false;
+      const targetsBot =
+        comment.parentAuthorId === bot.uid ||
+        (botUserNameLower && comment.mentions?.has(botUserNameLower));
+      return targetsBot;
+    });
+    console.log(
+      JSON.stringify({
+        type: "bot_resync_window",
+        target: "notifications",
+        botId: bot.uid,
+        windowSince: notificationWindowSince,
+        fallbackSince,
+        newest: newestNotificationMs,
+      })
+    );
+  }
+
   const directReplyCandidates = notificationCandidates.filter(
     (comment) => comment.parentAuthorId === bot.uid
   );
+
+  // Top-level comment eligibility: recent posts only, respect per-post bot limits,
+  // per-bot hourly/daily caps, per-post cooldowns, and global caps.
+  const commentCandidates = [];
+  for (const post of postCandidates) {
+    const evaluation = canBotLeaveTopLevelCommentOnPost({
+      bot,
+      post,
+      botCommentState,
+      recentBotActivity: botCommentActivity,
+      globalCommentState,
+      commentLimits: perBotCommentLimits,
+      now,
+    });
+    console.log(
+      JSON.stringify({
+        type: "bot_comment_candidate",
+        botId: bot.uid,
+        postId: post.id,
+        reason: evaluation.reason,
+        nowIso,
+      })
+    );
+    if (evaluation.eligible) {
+      commentCandidates.push(post);
+    }
+  }
 
   const latestPostSeenMs = postCandidates.reduce(
     (acc, post) => Math.max(acc, post.createdAtMs),
@@ -608,39 +1029,68 @@ export const runBotActivityForTick = async ({
     lastSeenNotificationAtMs
   );
 
+  const commentStatsForUpdate = () =>
+    botCommentStateDirty ? botCommentState : null;
+  const eligiblePostsCount = commentCandidates.length;
+  const lastScheduledActionForCooldown =
+    runtimeState?.lastActionScheduledAt && Number.isFinite(runtimeState.lastActionScheduledAt)
+      ? Math.min(runtimeState.lastActionScheduledAt, now)
+      : null;
+
   if (!isBotActiveNow(bot, nowDate)) {
     return {
       status: "offline",
+      eligiblePosts: eligiblePostsCount,
+      effectivePostSince,
+      eligibleCommentPosts: commentCandidates,
       runtimeUpdate: buildRuntimeUpdate({
         now,
         latestPostSeenMs,
         latestNotificationSeenMs,
         lastActionAt: runtimeState?.lastActionScheduledAt ?? null,
+        topLevelCommentStats: commentStatsForUpdate(),
       }),
     };
   }
 
   const baseResponseProbability = clamp01(
-    (behavior.baseResponseProbability ?? 0) * GLOBAL_ACTIVITY_RATE
+    (behavior.baseResponseProbability ?? 0.35) * GLOBAL_ACTIVITY_RATE
   );
   const replyResponseProbability = clamp01(
-    (behavior.replyResponseProbability ?? behavior.baseResponseProbability ?? 0) *
-      GLOBAL_ACTIVITY_RATE
+    (behavior.replyResponseProbability ??
+      behavior.baseResponseProbability ??
+      0.35) * GLOBAL_ACTIVITY_RATE
   );
 
   if (directReplyCandidates.length) {
     if (
-      runtimeState?.lastActionScheduledAt &&
-      now - runtimeState.lastActionScheduledAt <
-        minutesToMs(MIN_ACTION_SPACING_MINUTES)
+      lastScheduledActionForCooldown &&
+      now - lastScheduledActionForCooldown < minutesToMs(MIN_ACTION_SPACING_MINUTES)
     ) {
+      const cooldownEndsAt =
+        lastScheduledActionForCooldown + minutesToMs(MIN_ACTION_SPACING_MINUTES);
+      console.log(
+        JSON.stringify({
+          type: "bot_cooldown_skip",
+          botId: bot.uid,
+          nowIso,
+          cooldownEndsAt,
+          cooldownMs: minutesToMs(MIN_ACTION_SPACING_MINUTES),
+          actionType: "REPLY",
+          reason: "direct_reply_spacing",
+        })
+      );
       return {
         status: "cooldown",
+        eligiblePosts: eligiblePostsCount,
+        effectivePostSince,
+        eligibleCommentPosts: commentCandidates,
         runtimeUpdate: buildRuntimeUpdate({
           now,
           latestPostSeenMs,
           latestNotificationSeenMs,
           lastActionAt: runtimeState.lastActionScheduledAt,
+          topLevelCommentStats: commentStatsForUpdate(),
         }),
       };
     }
@@ -678,11 +1128,14 @@ export const runBotActivityForTick = async ({
       return {
         status: "scheduled",
         scheduledAction,
+        eligiblePosts: eligiblePostsCount,
+        effectivePostSince,
         runtimeUpdate: buildRuntimeUpdate({
           now,
           latestPostSeenMs,
           latestNotificationSeenMs,
           lastActionAt: scheduledAt,
+          topLevelCommentStats: commentStatsForUpdate(),
         }),
       };
     }
@@ -691,8 +1144,8 @@ export const runBotActivityForTick = async ({
   const weights = normalizeActionWeights(behavior.actionWeights || {});
   const weightedActions = {
     commentOnPost:
-      postCandidates.length > 0
-        ? (weights.commentOnPost ?? 0.4) * baseResponseProbability
+      commentCandidates.length > 0
+        ? (weights.commentOnPost ?? 0.25) * baseResponseProbability
         : 0,
     replyToComment:
       notificationCandidates.length > 0
@@ -700,39 +1153,98 @@ export const runBotActivityForTick = async ({
         : 0,
     likePost:
       postCandidates.length > 0
-        ? (weights.likePost ?? 0) * baseResponseProbability
+        ? (weights.likePost ?? 0.5) * baseResponseProbability
         : 0,
     likeComment:
       notificationCandidates.length > 0
-        ? (weights.likeComment ?? 0) * replyResponseProbability
+        ? (weights.likeComment ?? 0.1) * replyResponseProbability
         : 0,
-    ignore: weights.ignore ?? 1,
+    ignore:
+      weights.ignore ?? (commentCandidates.length > 0 ? 0.25 : 1),
   };
 
   const chosenAction = weightedChoice(weightedActions) || "ignore";
+
+  if (commentCandidates.length && chosenAction !== "commentOnPost") {
+    console.log(
+      JSON.stringify({
+        type: "bot_comment_candidate",
+        botId: bot.uid,
+        postId: commentCandidates[0].id,
+        reason: "comment_probability_miss",
+        nowIso,
+      })
+    );
+  }
+
+  const postScanReason =
+    commentCandidates.length === 0
+      ? "no_eligible_posts"
+      : chosenAction === "ignore"
+        ? "no_action_chosen_after_probability"
+        : "action_chosen";
+  console.log(
+    JSON.stringify({
+      type: "bot_post_scan_result",
+      botId: bot.uid,
+      nowIso,
+      totalPosts: posts.length,
+      eligiblePosts: commentCandidates.length,
+      sinceMsUsed: effectivePostSince,
+      reason: postScanReason,
+    })
+  );
 
   const runtimeUpdate = buildRuntimeUpdate({
     now,
     latestPostSeenMs,
     latestNotificationSeenMs,
     lastActionAt: runtimeState?.lastActionScheduledAt ?? null,
+    topLevelCommentStats: commentStatsForUpdate(),
   });
 
-  if (
-    chosenAction !== "ignore" &&
-    runtimeState?.lastActionScheduledAt &&
-    now - runtimeState.lastActionScheduledAt <
-      minutesToMs(MIN_ACTION_SPACING_MINUTES)
-  ) {
-    return {
-      status: "cooldown",
-      runtimeUpdate,
-    };
+  if (chosenAction !== "ignore") {
+    const lastActionAt = lastScheduledActionForCooldown;
+    let cooldownMs = minutesToMs(MIN_ACTION_SPACING_MINUTES);
+    if (chosenAction === "commentOnPost") {
+      cooldownMs = COMMENT_COOLDOWN_MS;
+    } else if (
+      chosenAction === "likePost" ||
+      chosenAction === "likeComment"
+    ) {
+      cooldownMs = LIKE_COOLDOWN_MS;
+    }
+    if (lastActionAt && now - lastActionAt < cooldownMs) {
+      const cooldownEndsAt = lastActionAt + cooldownMs;
+      console.log(
+        JSON.stringify({
+          type: "bot_cooldown_skip",
+          botId: bot.uid,
+          nowIso,
+          cooldownEndsAt,
+          cooldownMs,
+          actionType:
+            chosenAction === "commentOnPost"
+              ? "COMMENT"
+              : chosenAction === "likePost" || chosenAction === "likeComment"
+                ? "LIKE"
+                : "OTHER",
+          reason: "action_spacing",
+        })
+      );
+      return {
+        status: "cooldown",
+        runtimeUpdate,
+      };
+    }
   }
 
   if (chosenAction === "ignore") {
     return {
       status: "ignored",
+      eligiblePosts: eligiblePostsCount,
+      effectivePostSince,
+      eligibleCommentPosts: commentCandidates,
       runtimeUpdate,
     };
   }
@@ -741,7 +1253,7 @@ export const runBotActivityForTick = async ({
   let lastActionAt = runtimeState?.lastActionScheduledAt ?? null;
 
   if (chosenAction === "commentOnPost") {
-    const target = choosePostCandidate(bot, postCandidates, now);
+    const target = choosePostCandidate(bot, commentCandidates, now);
     if (target) {
       const delayMs = getDelayFromRange(
         behavior.postDelayMinutes ?? { min: 5, max: 20 }
@@ -749,6 +1261,7 @@ export const runBotActivityForTick = async ({
       const scheduledAt = now + delayMs;
       const shouldAskQuestion = randomBoolean(behavior.questionProbability);
       const shouldDisagree = randomBoolean(behavior.disagreementProbability);
+      const plannedActionId = `plan_${bot.uid}_${target.id}_${scheduledAt}`;
 
       scheduledAction = buildScheduledBotActionPayload(
         ScheduledBotActionType.COMMENT_ON_POST,
@@ -762,8 +1275,31 @@ export const runBotActivityForTick = async ({
             shouldAskQuestion,
             intent: shouldDisagree ? "disagree" : "default",
             origin: "activity_tick",
+            plannedActionId,
           },
         }
+      );
+      botCommentState.hourCount += 1;
+      botCommentState.dayCount += 1;
+      botCommentState.lastTopLevelCommentAt = scheduledAt;
+      botCommentStateDirty = true;
+      if (globalCommentState) {
+        globalCommentState.commentsScheduledThisTick =
+          (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
+        globalCommentState.hourCount =
+          (globalCommentState.hourCount ?? 0) + 1;
+        globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
+        globalCommentState.dirty = true;
+      }
+      console.log(
+        JSON.stringify({
+          type: "bot_comment_planned",
+          botId: bot.uid,
+          postId: target.id,
+          actionId: plannedActionId,
+          nowIso,
+          cooldownEndsAt: scheduledAt + COMMENT_COOLDOWN_MS,
+        })
       );
       lastActionAt = scheduledAt;
     }
@@ -820,6 +1356,16 @@ export const runBotActivityForTick = async ({
           },
         }
       );
+      console.log(
+        JSON.stringify({
+          type: "bot_like_planned",
+          botId: bot.uid,
+          postId: target.id,
+          actionId: `plan_${bot.uid}_${target.id}_${scheduledAt}_like`,
+          nowIso,
+          cooldownEndsAt: scheduledAt + LIKE_COOLDOWN_MS,
+        })
+      );
       lastActionAt = scheduledAt;
     }
   } else if (chosenAction === "likeComment") {
@@ -859,18 +1405,26 @@ export const runBotActivityForTick = async ({
         latestPostSeenMs,
         latestNotificationSeenMs,
         lastActionAt,
+        topLevelCommentStats: commentStatsForUpdate(),
       }),
+      eligiblePosts: eligiblePostsCount,
+      effectivePostSince,
+      eligibleCommentPosts: commentCandidates,
     };
   }
 
   return {
     status: "no_target",
+    eligiblePosts: eligiblePostsCount,
+    effectivePostSince,
+    eligibleCommentPosts: commentCandidates,
     runtimeUpdate,
   };
 };
 
 export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
   const nowValue = typeof now === "number" ? now : new Date(now).getTime();
+  const nowIso = new Date(nowValue).toISOString();
 
   const { bots, runtimeStateByBot } = await loadActiveBotsWithState(db);
   if (!bots.length) {
@@ -895,10 +1449,32 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
     fetchRecentPosts(db, baselinePostSince),
     fetchRecentNotifications(db, baselineNotificationSince),
   ]);
+  console.log("Bot activity inputs loaded", {
+    nowIso,
+    bots: bots.length,
+    postsFetched: recentPosts.length,
+    notificationsFetched: recentNotifications.length,
+  });
+
+  const botIdSet = new Set(bots.map((bot) => bot.uid));
+  const recentBotCommentSummary = summarizeBotCommentsByPost(
+    recentNotifications,
+    botIdSet
+  );
+  const globalCommentState = await loadGlobalCommentActivityState(
+    db,
+    nowValue
+  );
 
   const batch = db.batch();
   let actionsScheduled = 0;
   let statesUpdated = 0;
+  let metaUpdated = false;
+  let commentsScheduled = 0;
+  let likesScheduled = 0;
+  let eligiblePostsTotal = 0;
+  const eligiblePostsPerBot = {};
+  const forcedCommentCandidates = [];
   const breakdown = {
     inactive_window: 0,
     cooldown: 0,
@@ -913,7 +1489,6 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
     ignored: "below_threshold",
     scheduled: "scheduled",
   };
-  const nowIso = new Date(nowValue).toISOString();
 
   for (const bot of bots) {
     const runtimeState = runtimeStateByBot.get(bot.uid) ?? null;
@@ -925,7 +1500,24 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
       now: nowValue,
       posts: recentPosts,
       notifications: recentNotifications,
+      recentBotCommentSummary,
+      globalCommentState,
     });
+
+    if (typeof result.eligiblePosts === "number") {
+      eligiblePostsTotal += result.eligiblePosts;
+      eligiblePostsPerBot[bot.uid] = result.eligiblePosts;
+    }
+    if (
+      Array.isArray(result.eligibleCommentPosts) &&
+      result.eligibleCommentPosts.length
+    ) {
+      forcedCommentCandidates.push({
+        bot,
+        runtimeState,
+        posts: result.eligibleCommentPosts,
+      });
+    }
 
     const reason = statusToReason[result.status] ?? null;
     if (reason) {
@@ -963,16 +1555,130 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
       const actionRef = scheduledBotActionsCollection(db).doc();
       batch.set(actionRef, result.scheduledAction);
       actionsScheduled += 1;
+      if (result.scheduledAction.type === ScheduledBotActionType.COMMENT_ON_POST) {
+        commentsScheduled += 1;
+      } else if (
+        result.scheduledAction.type === ScheduledBotActionType.LIKE_POST ||
+        result.scheduledAction.type === ScheduledBotActionType.LIKE_COMMENT
+      ) {
+        likesScheduled += 1;
+      }
     }
   }
 
-  if (actionsScheduled > 0 || statesUpdated > 0) {
+  if (commentsScheduled === 0 && forcedCommentCandidates.length > 0) {
+    const forcedPick =
+      forcedCommentCandidates[
+        Math.floor(Math.random() * forcedCommentCandidates.length)
+      ];
+    if (forcedPick) {
+      const { bot, runtimeState, posts: eligiblePosts } = forcedPick;
+      const targetPost =
+        eligiblePosts[Math.floor(Math.random() * eligiblePosts.length)];
+      if (targetPost) {
+        const delayMs = getDelayFromRange(
+          bot.behavior?.postDelayMinutes ?? { min: 5, max: 20 }
+        );
+        const scheduledAt = nowValue + delayMs;
+        const actionRef = scheduledBotActionsCollection(db).doc();
+        const plannedActionId = `forced_${bot.uid}_${targetPost.id}_${scheduledAt}`;
+        const forcedAction = buildScheduledBotActionPayload(
+          ScheduledBotActionType.COMMENT_ON_POST,
+          {
+            botId: bot.uid,
+            postId: targetPost.id,
+            scheduledAt,
+            metadata: {
+              mode: "TOP_LEVEL",
+              targetType: "post",
+              origin: "activity_tick_forced",
+              plannedActionId,
+            },
+          }
+        );
+        batch.set(actionRef, forcedAction);
+        commentsScheduled += 1;
+        actionsScheduled += 1;
+        console.log(
+          JSON.stringify({
+            type: "bot_comment_forced",
+            botId: bot.uid,
+            postId: targetPost.id,
+            actionId: plannedActionId,
+            nowIso,
+          })
+        );
+        const { state: botCommentState } = normalizeBotCommentState(
+          runtimeState?.topLevelCommentStats,
+          nowValue
+        );
+        botCommentState.hourCount += 1;
+        botCommentState.dayCount += 1;
+        botCommentState.lastTopLevelCommentAt = scheduledAt;
+        if (globalCommentState) {
+          globalCommentState.commentsScheduledThisTick =
+            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
+          globalCommentState.hourCount =
+            (globalCommentState.hourCount ?? 0) + 1;
+          globalCommentState.dayCount =
+            (globalCommentState.dayCount ?? 0) + 1;
+          globalCommentState.dirty = true;
+        }
+        const stateRef = botRuntimeStateCollection(db).doc(bot.uid);
+        batch.set(
+          stateRef,
+          {
+            topLevelCommentStats: {
+              hourWindowStartMs: botCommentState.hourWindowStartMs,
+              hourCount: botCommentState.hourCount,
+              dayWindowStartMs: botCommentState.dayWindowStartMs,
+              dayCount: botCommentState.dayCount,
+              lastTopLevelCommentAt: botCommentState.lastTopLevelCommentAt,
+            },
+            lastActionScheduledAt: scheduledAt,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        statesUpdated += 1;
+      }
+    }
+  }
+
+  if (
+    globalCommentState &&
+    (globalCommentState.dirty ||
+      (globalCommentState.commentsScheduledThisTick ?? 0) > 0)
+  ) {
+    batch.set(
+      globalCommentState.ref,
+      {
+        hourWindowStartMs: globalCommentState.hourWindowStartMs,
+        hourCount: globalCommentState.hourCount,
+        dayWindowStartMs: globalCommentState.dayWindowStartMs,
+        dayCount: globalCommentState.dayCount,
+        perTickLimit: globalCommentState.perTickLimit,
+        perHourLimit: globalCommentState.perHourLimit,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    metaUpdated = true;
+  }
+
+  if (actionsScheduled > 0 || statesUpdated > 0 || metaUpdated) {
     await batch.commit();
   }
 
   return {
     botsProcessed: bots.length,
     actionsScheduled,
+    postsFetched: recentPosts.length,
+    notificationsFetched: recentNotifications.length,
+    commentsScheduled,
+    likesScheduled,
+    eligiblePostsTotal,
+    eligiblePostsPerBot,
     breakdown,
   };
 };

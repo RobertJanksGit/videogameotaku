@@ -1,3 +1,8 @@
+// Bot scheduled action processor
+// - Comment lookups now use post-scoped paths (posts/{postId}/comments/{commentId}) instead of
+//   collectionGroup + documentId equality to avoid invalid path errors.
+// - Thread context/top-level context pull from post subcollections and fail gracefully when missing.
+// - Do not change comment document structure; only the lookup paths/logging were adjusted.
 import admin from "firebase-admin";
 import {
   scheduledBotActionsCollection,
@@ -21,11 +26,28 @@ const COMMENTS_COLLECTION = "comments";
 const POSTS_COLLECTION = "posts";
 const USERS_COLLECTION = "users";
 const NOTIFICATIONS_COLLECTION = "notifications";
-const commentsCollectionGroup = (db) => db.collectionGroup(COMMENTS_COLLECTION);
+// For cross-post reads we avoid collectionGroup + documentId equality because it
+// fails on bare IDs. Always use post-scoped paths where possible.
 const resolveCommentRef = (db, comment) =>
   comment?.documentPath
     ? db.doc(comment.documentPath)
-    : db.collection(COMMENTS_COLLECTION).doc(comment.id);
+    : comment?.postId
+      ? db
+          .collection(POSTS_COLLECTION)
+          .doc(comment.postId)
+          .collection(COMMENTS_COLLECTION)
+          .doc(comment.id)
+      : db.collection(COMMENTS_COLLECTION).doc(comment.id);
+
+const pickPostWebMemoryForBot = (bot, postWebMemory) => {
+  if (!postWebMemory) return null;
+  const rawTendency = bot?.behavior?.tendencyToUsePostWebMemory;
+  const probability =
+    typeof rawTendency === "number" && rawTendency >= 0 && rawTendency <= 1
+      ? rawTendency
+      : 0.3;
+  return Math.random() <= probability ? postWebMemory : null;
+};
 
 const scheduledActionsDueQuery = (db, now) =>
   scheduledBotActionsCollection(db)
@@ -47,21 +69,25 @@ const timestampToMillis = (value) => {
   return 0;
 };
 
-const fetchCommentById = async (db, commentId) => {
-  if (!commentId) return null;
+// Fetch a comment from its post-scoped path. Avoids collectionGroup+docId equality issues.
+const fetchCommentById = async (db, postId, commentId, actionId = null) => {
+  if (!postId || !commentId) return null;
   try {
-    const snapshot = await commentsCollectionGroup(db)
-      .where(admin.firestore.FieldPath.documentId(), "==", commentId)
-      .limit(1)
+    const snap = await db
+      .collection(POSTS_COLLECTION)
+      .doc(postId)
+      .collection(COMMENTS_COLLECTION)
+      .doc(commentId)
       .get();
-    const doc = snapshot.docs[0];
-    if (!doc?.exists) {
+    if (!snap.exists) {
       return null;
     }
-    return { id: doc.id, documentPath: doc.ref.path, ...doc.data() };
+    return { id: snap.id, documentPath: snap.ref.path, ...snap.data() };
   } catch (error) {
-    console.error?.("Failed to fetch comment by id", {
+    console.log("Failed to fetch comment for bot action", {
+      postId,
       commentId,
+      actionId,
       error: error.message,
     });
     return null;
@@ -166,7 +192,13 @@ const normalizeThreadPathForPrompt = (
         .filter(Boolean)
     : [];
 
-const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
+const buildThreadContext = async (
+  db,
+  parentComment,
+  threadRootCommentId,
+  postId,
+  actionId
+) => {
   const entries = new Map();
   const requiredIds = new Set(
     [parentComment?.id, threadRootCommentId].filter(Boolean).map(String)
@@ -189,7 +221,10 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
 
   if (threadRootCommentId) {
     try {
-      const snapshot = await commentsCollectionGroup(db)
+      const snapshot = await db
+        .collection(POSTS_COLLECTION)
+        .doc(postId)
+        .collection(COMMENTS_COLLECTION)
         .where("threadRootCommentId", "==", threadRootCommentId)
         .orderBy("createdAt", "asc")
         .limit(THREAD_CONTEXT_LIMIT * 2)
@@ -199,8 +234,10 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
         addEntry({ id: doc.id, documentPath: doc.ref.path, ...doc.data() });
       }
     } catch (error) {
-      console.error?.("Failed to load thread context for bot reply", {
+      console.log("Failed to load thread context for bot action", {
+        postId,
         threadRootCommentId,
+        actionId,
         error: error.message,
       });
     }
@@ -256,7 +293,13 @@ const buildThreadContext = async (db, parentComment, threadRootCommentId) => {
   }));
 };
 
-const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
+const buildThreadPath = async (
+  db,
+  parentComment,
+  threadRootCommentId,
+  postId,
+  actionId
+) => {
   if (!parentComment?.id) {
     return [];
   }
@@ -298,18 +341,25 @@ const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
     }
 
     try {
-      const parentSnap = await commentsCollectionGroup(db)
-        .where(admin.firestore.FieldPath.documentId(), "==", nextParentId)
-        .limit(1)
+      const parentSnap = await db
+        .collection(POSTS_COLLECTION)
+        .doc(postId)
+        .collection(COMMENTS_COLLECTION)
+        .doc(nextParentId)
         .get();
-      const parentDoc = parentSnap.docs[0];
-      if (!parentDoc?.exists) {
+      if (!parentSnap?.exists) {
         break;
       }
-      current = { id: parentDoc.id, documentPath: parentDoc.ref.path, ...parentDoc.data() };
+      current = {
+        id: parentSnap.id,
+        documentPath: parentSnap.ref.path,
+        ...parentSnap.data(),
+      };
     } catch (error) {
-      console.error?.("Failed to walk thread path for bot reply", {
+      console.log("Failed to walk thread path for bot action", {
         nextParentId,
+        postId,
+        actionId,
         error: error.message,
       });
       break;
@@ -322,13 +372,14 @@ const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
     path.length < THREAD_PATH_LIMIT
   ) {
     try {
-      const rootSnap = await commentsCollectionGroup(db)
-        .where(admin.firestore.FieldPath.documentId(), "==", normalizedRootId)
-        .limit(1)
+      const rootSnap = await db
+        .collection(POSTS_COLLECTION)
+        .doc(postId)
+        .collection(COMMENTS_COLLECTION)
+        .doc(normalizedRootId)
         .get();
-      const rootDoc = rootSnap.docs[0];
-      if (rootDoc?.exists) {
-        const data = { id: rootDoc.id, documentPath: rootDoc.ref.path, ...rootDoc.data() };
+      if (rootSnap?.exists) {
+        const data = { id: rootSnap.id, documentPath: rootSnap.ref.path, ...rootSnap.data() };
         const sanitized = sanitizeCommentForContext(data);
         if (sanitized) {
           path.push({
@@ -338,8 +389,10 @@ const buildThreadPath = async (db, parentComment, threadRootCommentId) => {
         }
       }
     } catch (error) {
-      console.error?.("Failed to load thread root for bot prompt", {
+      console.log("Failed to load thread root for bot action", {
         threadRootCommentId: normalizedRootId,
+        postId,
+        actionId,
         error: error.message,
       });
     }
@@ -361,8 +414,9 @@ const buildTopLevelContext = async (db, action, bot) => {
 
   try {
     const snapshot = await db
-      .collectionGroup(COMMENTS_COLLECTION)
-      .where("postId", "==", action.postId)
+      .collection(POSTS_COLLECTION)
+      .doc(action.postId)
+      .collection(COMMENTS_COLLECTION)
       .where("parentCommentId", "==", null)
       .orderBy("createdAt", "asc")
       .limit(TOP_LEVEL_CONTEXT_LIMIT * 2)
@@ -388,6 +442,7 @@ const buildTopLevelContext = async (db, action, bot) => {
   } catch (error) {
     console.error?.("Failed to load top-level comments for bot prompt context", {
       postId: action.postId,
+      actionId: action.id,
       error: error.message,
     });
     return [];
@@ -550,28 +605,65 @@ const fetchContext = async (db, action, bot) => {
 
   let parentComment = null;
   if (action.parentCommentId) {
-    parentComment = await fetchCommentById(db, action.parentCommentId);
+    parentComment = await fetchCommentById(
+      db,
+      action.postId,
+      action.parentCommentId,
+      action.id
+    );
   }
 
   const threadRootCommentId = computeThreadRoot(action, parentComment);
 
-  const threadContext = await buildThreadContext(db, parentComment, threadRootCommentId);
-  const threadPath = await buildThreadPath(db, parentComment, threadRootCommentId);
+  const threadContext = await buildThreadContext(
+    db,
+    parentComment,
+    threadRootCommentId,
+    action.postId,
+    action.id
+  );
+  const threadPath = await buildThreadPath(
+    db,
+    parentComment,
+    threadRootCommentId,
+    action.postId,
+    action.id
+  );
   const topLevelContext = await buildTopLevelContext(db, action, bot);
 
   const commentsByBotOnPost = await getCount(
-    commentsCollectionGroup(db)
-      .where("postId", "==", action.postId)
+    db
+      .collection(POSTS_COLLECTION)
+      .doc(action.postId)
+      .collection(COMMENTS_COLLECTION)
       .where("authorId", "==", bot.uid)
   );
 
   let repliesByBotInThread = 0;
   if (threadRootCommentId) {
     repliesByBotInThread = await getCount(
-      commentsCollectionGroup(db)
+      db
+        .collection(POSTS_COLLECTION)
+        .doc(action.postId)
+        .collection(COMMENTS_COLLECTION)
         .where("threadRootCommentId", "==", threadRootCommentId)
         .where("authorId", "==", bot.uid)
     );
+  }
+
+  let postWebMemory = null;
+  try {
+    const memorySnap = await db
+      .doc(`posts/${action.postId}/meta/postWebMemory`)
+      .get();
+    if (memorySnap.exists) {
+      postWebMemory = memorySnap.data();
+    }
+  } catch (error) {
+    console.warn?.("Failed to load postWebMemory", {
+      postId: action.postId,
+      error: error?.message ?? error,
+    });
   }
 
   return {
@@ -583,6 +675,7 @@ const fetchContext = async (db, action, bot) => {
     topLevelContext,
     commentsByBotOnPost,
     repliesByBotInThread,
+    postWebMemory,
   };
 };
 
@@ -666,7 +759,11 @@ const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
     updatedAt: now,
   };
 
-  const commentRef = await db.collection(COMMENTS_COLLECTION).add(commentData);
+  const commentRef = await db
+    .collection(POSTS_COLLECTION)
+    .doc(post.id)
+    .collection(COMMENTS_COLLECTION)
+    .add(commentData);
 
   await db.collection(POSTS_COLLECTION).doc(post.id).update({
     commentCount: admin.firestore.FieldValue.increment(1),
@@ -712,7 +809,11 @@ const createReplyHelper = async (
     updatedAt: now,
   };
 
-  const commentRef = await db.collection(COMMENTS_COLLECTION).add(commentData);
+  const commentRef = await db
+    .collection(POSTS_COLLECTION)
+    .doc(post.id)
+    .collection(COMMENTS_COLLECTION)
+    .add(commentData);
 
   await Promise.all([
     db.collection(POSTS_COLLECTION).doc(post.id).update({
@@ -796,6 +897,11 @@ const processSingleAction = async ({
     commentsByBotOnPost: contextResult.commentsByBotOnPost,
     repliesByBotInThread: contextResult.repliesByBotInThread,
   };
+
+  const postWebMemoryForPrompt = pickPostWebMemoryForBot(
+    bot,
+    contextResult.postWebMemory
+  );
 
   const metadata = action.metadata ?? {};
   const behavior = bot.behavior || {};
@@ -971,6 +1077,7 @@ const processSingleAction = async ({
           threadContext: normalizedThreadContext,
           threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
+          postWebMemory: postWebMemoryForPrompt,
           metadata,
         });
         const finalComment = maybeAddTypos(bot, generation.comment);
@@ -1108,6 +1215,7 @@ const processSingleAction = async ({
           threadContext: normalizedThreadContext,
           threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
+          postWebMemory: postWebMemoryForPrompt,
           metadata,
         });
         const finalComment = maybeAddTypos(bot, generation.comment);

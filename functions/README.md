@@ -87,3 +87,10 @@ Set these using:
 firebase functions:secrets:set WEBSITE_URL
 firebase functions:secrets:set SITEMAP_API_KEY
 ```
+
+## Post Web Memory (news posts)
+
+- Set `OPENAI_API_KEY` as a Firebase secret.
+- Feature flag via `POST_WEB_MEMORY_ENABLED` (defaults to `true`).
+- Optional `SEARCH_ENGINE_BASE_URL` to point the scraper at a non-Google search engine (default DuckDuckGo).
+- Stores output in `posts/{postId}/meta/postWebMemory` for bots to reference casually.

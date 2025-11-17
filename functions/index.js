@@ -34,6 +34,7 @@ import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
 import { runBotActivityTick, processScheduledBotActions } from "./bots/index.js";
+export { generatePostWebMemory } from "./triggers/generatePostWebMemory.js";
 import {
   buildMentionPayload,
   computeScore,
@@ -64,7 +65,9 @@ const KARMA_SYNC_TOKEN = defineSecret("KARMA_SYNC_TOKEN");
 import { generateSitemapScheduled } from "./generateSitemapScheduled.js";
 
 // Initialize Firebase Admin with admin privileges and explicit project configuration
-admin.initializeApp();
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
 
 const db = admin.firestore();
 const storage = admin.storage();
@@ -3402,6 +3405,7 @@ export const runBotActivityScheduler = onSchedule(
     timeZone: "UTC",
   },
   async () => {
+    const startedAtIso = new Date().toISOString();
     try {
       const stats = await runBotActivityTick({
         db,
@@ -3418,9 +3422,24 @@ export const runBotActivityScheduler = onSchedule(
       const summary = {
         botsProcessed: stats.botsProcessed ?? 0,
         actionsScheduled: stats.actionsScheduled ?? 0,
+        postsFetched: stats.postsFetched ?? 0,
+        notificationsFetched: stats.notificationsFetched ?? 0,
+        commentsScheduled: stats.commentsScheduled ?? 0,
+        likesScheduled: stats.likesScheduled ?? 0,
+        eligiblePostsTotal: stats.eligiblePostsTotal ?? 0,
+        eligiblePostsPerBot: stats.eligiblePostsPerBot ?? {},
         breakdown,
       };
-      console.log("Bot activity tick completed", summary);
+      console.log("Bot activity scheduler tick", {
+        nowIso: startedAtIso,
+        notificationsFetched: summary.notificationsFetched,
+        postsFetched: summary.postsFetched,
+        actionsScheduled: summary.actionsScheduled,
+        botsProcessed: summary.botsProcessed,
+        commentsScheduled: summary.commentsScheduled,
+        likesScheduled: summary.likesScheduled,
+        eligiblePostsTotal: summary.eligiblePostsTotal,
+      });
       console.log(
         JSON.stringify({
           type: "bot_activity_summary",
@@ -3429,7 +3448,11 @@ export const runBotActivityScheduler = onSchedule(
         })
       );
     } catch (error) {
-      console.error("Bot activity tick failed", error);
+      console.error("Bot activity tick failed", {
+        message: error?.message || error,
+        code: error?.code,
+        stack: error?.stack,
+      });
       throw error;
     }
   }

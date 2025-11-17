@@ -8,6 +8,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  collectionGroup,
   where,
 } from "firebase/firestore";
 import { db } from "../../config/firebase";
@@ -145,7 +146,9 @@ const CommunityActivityWidget = ({ className = "", userId = null, title = "Commu
     };
 
     const postsCollection = collection(db, "posts");
-    const commentsCollection = collection(db, "comments");
+    // Pull comments from both the legacy top-level collection and the nested
+    // posts/{postId}/comments subcollections via a collection group query.
+    const commentsCollection = collectionGroup(db, "comments");
 
     const postsQuery = userId
       ? query(
@@ -399,5 +402,4 @@ const CommunityActivityWidget = ({ className = "", userId = null, title = "Commu
 };
 
 export default CommunityActivityWidget;
-
 

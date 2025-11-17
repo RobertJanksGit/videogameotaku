@@ -38,6 +38,11 @@ VALIDATION_PROMPT=your_validation_prompt_here
 
 SYSTEM_USER_ID=your_system_user_id_here
 
+# Backend Features
+
+POST_WEB_MEMORY_ENABLED=true
+SEARCH_ENGINE_BASE_URL=https://duckduckgo.com/?q=
+
 # Rate Limiting
 
 MAX_CALLS_PER_MINUTE=50

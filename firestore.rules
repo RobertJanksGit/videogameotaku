@@ -254,6 +254,11 @@ service cloud.firestore {
                    (resource.data.authorId == request.auth.uid || isAdmin());
     }
 
+    // Allow collection group reads across any `comments` subcollection (e.g., activity feed)
+    match /{path=**}/comments/{commentId} {
+      allow read: if true;
+    }
+
     match /commentMeta/{userId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId) &&
