@@ -1768,7 +1768,7 @@ const PostDetail = () => {
 
               {/* ENGAGEMENT: canonical listeners live at posts/${postId}/comments (legacy top-level fallback keeps older threads visible), auth = (anonymous allowed) */}
               <div className="flex flex-col gap-3 min-[840px]:flex-row min-[840px]:items-center min-[840px]:justify-between">
-                <div className="inline-flex rounded-full border border-gray-200 bg-white p-1 dark:border-gray-800 dark:bg-gray-900">
+                <div className="inline-flex rounded-full border border-gray-200 bg-gray-100 p-1 dark:border-gray-800 dark:bg-gray-900">
                   {[
                     { id: "top", label: "Top Replies" },
                     { id: "newest", label: "Newest" },
@@ -1783,8 +1783,8 @@ const PostDetail = () => {
                             ? "bg-blue-600 text-white"
                             : "bg-blue-600 text-white"
                           : darkMode
-                          ? "text-gray-300"
-                          : "text-gray-600"
+                          ? "bg-gray-800 text-gray-300"
+                          : "bg-gray-100 text-gray-600"
                       }`}
                     >
                       {option.label}
