@@ -77,52 +77,17 @@ const numberOrNull = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const normalizeMentions = (raw) => {
-  const mentions = new Set();
-  const addValue = (value) => {
-    if (value === undefined || value === null) return;
-    const stringValue = `${value}`;
-    mentions.add(stringValue);
-    const lowerValue = stringValue.toLowerCase();
-    mentions.add(lowerValue);
-  };
+  if (!raw) return new Set();
 
-  if (!raw) {
-    return mentions;
-  }
-  if (raw instanceof Set) {
-    raw.forEach(addValue);
-    return mentions;
-  }
-  if (raw instanceof Map) {
-    raw.forEach((_, key) => addValue(key));
-    return mentions;
-  }
-  if (Array.isArray(raw)) {
-    raw.forEach(addValue);
-    return mentions;
-  }
+  if (raw instanceof Set) return raw;
+
+  if (Array.isArray(raw)) return new Set(raw);
+
   if (typeof raw === "object") {
-    Object.keys(raw).forEach(addValue);
-    return mentions;
+    return new Set(Object.keys(raw));
   }
-  addValue(raw);
-  return mentions;
-};
 
-const buildBotMentionIdentifiers = (bot = {}) => {
-  const identifiers = new Set();
-  const addIdentifier = (value) => {
-    if (!value) return;
-    const stringValue = `${value}`;
-    identifiers.add(stringValue);
-    identifiers.add(stringValue.toLowerCase());
-  };
-  addIdentifier(bot.uid);
-  if (bot.id && bot.id !== bot.uid) {
-    addIdentifier(bot.id);
-  }
-  addIdentifier(bot.userName);
-  return identifiers;
+  return new Set();
 };
 
 /**
@@ -141,17 +106,27 @@ const buildBotMentionIdentifiers = (bot = {}) => {
  * @param {Object} params.perBotCommentLimits
  * @returns {Promise<{scheduled: boolean, scheduledAction?: Object, lastActionAt?: number}>}
  */
-export async function maybeScheduleDirectReplyForComment({
-  db,
-  bot,
-  postId,
-  commentId,
-  nowMs,
-  runtimeState,
-  globalCommentState,
-  threadReplyCounts,
-  perBotCommentLimits,
-}) {
+export async function maybeScheduleDirectReplyForComment(ctx) {
+  const {
+    db,
+    bot,
+    postId,
+    commentId,
+    nowMs,
+    runtimeState,
+    globalCommentState,
+    threadReplyCounts,
+    perBotCommentLimits,
+    botId: providedBotId,
+    botUserId: providedBotUserId,
+    botUserName: providedBotUserName,
+    triggerReason = null,
+    commentData: providedCommentData = null,
+    parentComment = null,
+  } = ctx;
+  const botId = providedBotId ?? bot?.uid ?? bot?.id ?? null;
+  const botUserId = providedBotUserId ?? bot?.uid ?? null;
+  const botUserName = providedBotUserName ?? bot?.userName ?? null;
   // Fetch the comment document to check botRepliesHandled
   const commentRef = db
     .collection(POSTS_COLLECTION)
@@ -171,22 +146,41 @@ export async function maybeScheduleDirectReplyForComment({
     return { scheduled: false };
   }
 
-  const commentData = commentSnap.data() || {};
-  const botRepliesHandled = commentData.botRepliesHandled || {};
-  const mentionSet = normalizeMentions(commentData.mentions);
-  const botMentionIdentifiers = buildBotMentionIdentifiers(bot);
-  const botMentioned = Array.from(botMentionIdentifiers).some((identifier) =>
-    mentionSet.has(identifier)
+  const commentDocData = commentSnap.data() || {};
+  const commentData = {
+    ...commentDocData,
+    ...(providedCommentData || {}),
+  };
+  const mentionsSet = normalizeMentions(commentData.mentions);
+  const lowerMentionsSet = new Set(
+    Array.from(mentionsSet).map((value) => value?.toString().toLowerCase())
   );
+  const parentAuthorId =
+    (parentComment?.authorId ?? parentComment?.userId) ??
+    commentData.parentAuthorId ??
+    commentData.parentUserId ??
+    null;
+  const isReplyToBot =
+    triggerReason === "human_reply_to_bot" ||
+    (parentAuthorId && botUserId && parentAuthorId === botUserId);
+  const isMentioned =
+    (botId && lowerMentionsSet.has(botId.toLowerCase())) ||
+    (botUserId && lowerMentionsSet.has(botUserId.toLowerCase())) ||
+    (botUserName && lowerMentionsSet.has(botUserName.toLowerCase()));
+  const botRepliesHandled = commentData.botRepliesHandled || {};
 
-  if (!botMentioned) {
-    console.log("bot_reply_candidate_skip", {
-      type: "bot_reply_candidate_skip",
-      botId: bot.uid,
-      postId,
-      commentId,
-      reason: "bot_not_mentioned",
-    });
+  if (!isReplyToBot && !isMentioned) {
+    console.log(
+      "bot_reply_candidate_skip",
+      JSON.stringify({
+        type: "bot_reply_candidate_skip",
+        botId: botId ?? bot?.uid,
+        postId: commentData.postId ?? commentData.postRefId ?? postId,
+        commentId: commentData.id ?? commentData.commentId ?? commentId,
+        reason: "bot_not_mentioned",
+        mentionsRaw: commentData.mentions,
+      })
+    );
     return { scheduled: false };
   }
 
@@ -328,7 +322,7 @@ export async function maybeScheduleDirectReplyForComment({
         shouldAskQuestion,
         intent: shouldDisagree ? "disagree" : "default",
         repliedToBotId: commentData.parentAuthorId ?? null,
-        triggeredByMention: botMentioned,
+        triggeredByMention: isMentioned,
         targetCommentId: commentId,
         origin: "activity_tick",
         plannedActionId,
@@ -961,6 +955,7 @@ const hydrateNotificationsWithParents = async (db, comments) => {
       parentAuthorBotId,
       parentAuthorIsBot,
       threadRootCommentId: resolvedThreadRoot,
+      parentComment: parent ?? null,
     };
   });
 };
@@ -1142,16 +1137,44 @@ const normalizeActionWeights = (weights = {}) => {
 const chooseNotificationCandidate = (bot, candidates, now) => {
   if (!candidates.length) return null;
 
-  const identifiersToMatch = Array.from(buildBotMentionIdentifiers(bot));
+  const botId = bot.uid ?? null;
+  const botUserId = bot.uid ?? null;
+  const botUserName = bot.userName ?? null;
+  const botIdLower =
+    botId === null || botId === undefined
+      ? null
+      : botId.toString().toLowerCase();
+  const botUserIdLower =
+    botUserId === null || botUserId === undefined
+      ? null
+      : botUserId.toString().toLowerCase();
+  const botUserNameLower =
+    botUserName === null || botUserName === undefined
+      ? null
+      : botUserName.toString().toLowerCase();
 
   const scored = candidates
     .map((comment) => {
       const mentionSet = normalizeMentions(comment.mentions);
+      const lowerMentionSet = new Set();
+      for (const value of mentionSet) {
+        if (value === undefined || value === null) continue;
+        lowerMentionSet.add(value.toString().toLowerCase());
+      }
       let score = 1;
-      if (comment.parentAuthorId === bot.uid) {
+      const parentAuthorId =
+        comment.parentAuthorId ?? comment.parentUserId ?? null;
+      if (
+        (botId && parentAuthorId === botId) ||
+        (botUserId && parentAuthorId === botUserId)
+      ) {
         score += 0.9;
       }
-      if (identifiersToMatch.some((identifier) => mentionSet.has(identifier))) {
+      if (
+        (botIdLower && lowerMentionSet.has(botIdLower)) ||
+        (botUserIdLower && lowerMentionSet.has(botUserIdLower)) ||
+        (botUserNameLower && lowerMentionSet.has(botUserNameLower))
+      ) {
         score += 0.6;
       }
       const recencyMinutes = (now - comment.createdAtMs) / minutesToMs(1);
@@ -1285,7 +1308,21 @@ export const runBotActivityForTick = async ({
   );
   let effectivePostSince = postWindowSince;
 
-  const botMentionIdentifiers = Array.from(buildBotMentionIdentifiers(bot));
+  const botIdForMatching = bot.uid ?? null;
+  const botUserIdForMatching = bot.uid ?? null;
+  const botUserNameForMatching = bot.userName ?? null;
+  const botIdLower =
+    botIdForMatching === null || botIdForMatching === undefined
+      ? null
+      : botIdForMatching.toString().toLowerCase();
+  const botUserIdLower =
+    botUserIdForMatching === null || botUserIdForMatching === undefined
+      ? null
+      : botUserIdForMatching.toString().toLowerCase();
+  const botUserNameLower =
+    botUserNameForMatching === null || botUserNameForMatching === undefined
+      ? null
+      : botUserNameForMatching.toString().toLowerCase();
 
   const buildNotificationBuckets = (windowStartMs) => {
     const notificationList = [];
@@ -1294,24 +1331,36 @@ export const runBotActivityForTick = async ({
       if (comment.createdAtMs < windowStartMs) continue;
       if (comment.authorId === bot.uid) continue;
       const mentionSet = normalizeMentions(comment.mentions);
+      const lowerMentionSet = new Set();
+      for (const value of mentionSet) {
+        if (value === undefined || value === null) continue;
+        lowerMentionSet.add(value.toString().toLowerCase());
+      }
+      const parentAuthorId =
+        comment.parentAuthorId ?? comment.parentUserId ?? null;
       const parentAuthorMatchesBot =
-        comment.parentAuthorBotId === bot.uid ||
-        comment.parentAuthorId === bot.uid;
-      const mentionsBot = botMentionIdentifiers.some((identifier) =>
-        mentionSet.has(identifier)
-      );
+        (botIdForMatching && parentAuthorId === botIdForMatching) ||
+        (botUserIdForMatching && parentAuthorId === botUserIdForMatching);
+      const mentionsBot =
+        (botIdLower && lowerMentionSet.has(botIdLower)) ||
+        (botUserIdLower && lowerMentionSet.has(botUserIdLower)) ||
+        (botUserNameLower && lowerMentionSet.has(botUserNameLower));
       const targetsBot = parentAuthorMatchesBot || mentionsBot;
       if (!targetsBot) continue;
       const normalized = {
         ...comment,
         mentions: mentionSet,
         threadRootCommentId: resolveThreadRootId(comment),
+        parentComment: comment.parentComment ?? null,
       };
       notificationList.push(normalized);
       const isReply = Boolean(normalized.parentCommentId);
       const isHumanAuthor = normalized.authorIsBot === false;
       if (isReply && parentAuthorMatchesBot && isHumanAuthor) {
-        replyList.push(normalized);
+        replyList.push({
+          ...normalized,
+          triggerReason: "human_reply_to_bot",
+        });
         console.log("bot_reply_candidate", {
           botId: bot.uid,
           postId: normalized.postId,
@@ -1483,6 +1532,12 @@ export const runBotActivityForTick = async ({
         globalCommentState,
         threadReplyCounts,
         perBotCommentLimits,
+        botId: bot.uid,
+        botUserId: bot.uid,
+        botUserName: bot.userName ?? null,
+        triggerReason: replyCandidate.triggerReason ?? null,
+        commentData: replyCandidate,
+        parentComment: replyCandidate.parentComment ?? null,
       });
 
       if (result.scheduled) {
@@ -1679,6 +1734,12 @@ export const runBotActivityForTick = async ({
         globalCommentState,
         threadReplyCounts,
         perBotCommentLimits,
+          botId: bot.uid,
+          botUserId: bot.uid,
+          botUserName: bot.userName ?? null,
+          triggerReason: target.triggerReason ?? null,
+          commentData: target,
+          parentComment: target.parentComment ?? null,
       });
 
       if (result.scheduled) {

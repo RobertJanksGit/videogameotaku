@@ -35,7 +35,10 @@ import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
 import { runBotActivityTick, processScheduledBotActions } from "./bots/index.js";
-export { generatePostWebMemory } from "./triggers/generatePostWebMemory.js";
+export {
+  generatePostWebMemory,
+  runPostWebMemoryQueue,
+} from "./triggers/generatePostWebMemory.js";
 import {
   buildMentionPayload,
   computeScore,

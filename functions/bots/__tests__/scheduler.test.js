@@ -236,6 +236,7 @@ describe("maybeScheduleDirectReplyForComment - mentions normalization", () => {
       id: "comment-none",
       postId: "post-none",
       mentions: undefined,
+      parentAuthorId: "user-123",
     });
 
     const scheduledSpy = vi.spyOn(models, "scheduledBotActionsCollection");
@@ -254,6 +255,56 @@ describe("maybeScheduleDirectReplyForComment - mentions normalization", () => {
 
     expect(result.scheduled).toBe(false);
     expect(scheduledSpy).not.toHaveBeenCalled();
+  });
+
+  it("schedules without mention when triggerReason indicates human reply", async () => {
+    const db = createMockDb({
+      id: "comment-trigger",
+      postId: "post-trigger",
+      mentions: undefined,
+      parentAuthorId: "user-456",
+    });
+    stubScheduledActionsQuery();
+
+    const result = await maybeScheduleDirectReplyForComment({
+      db,
+      bot: baseParams.bot,
+      postId: "post-trigger",
+      commentId: "comment-trigger",
+      nowMs: baseParams.nowMs,
+      runtimeState: baseParams.runtimeState,
+      globalCommentState: baseParams.globalCommentState,
+      threadReplyCounts: new Map(),
+      perBotCommentLimits: baseParams.perBotCommentLimits,
+      triggerReason: "human_reply_to_bot",
+    });
+
+    expect(result.scheduled).toBe(true);
+  });
+
+  it("schedules without mention when parent comment was authored by the bot", async () => {
+    const db = createMockDb({
+      id: "comment-parent",
+      postId: "post-parent",
+      mentions: undefined,
+      parentAuthorId: null,
+    });
+    stubScheduledActionsQuery();
+
+    const result = await maybeScheduleDirectReplyForComment({
+      db,
+      bot: baseParams.bot,
+      postId: "post-parent",
+      commentId: "comment-parent",
+      nowMs: baseParams.nowMs,
+      runtimeState: baseParams.runtimeState,
+      globalCommentState: baseParams.globalCommentState,
+      threadReplyCounts: new Map(),
+      perBotCommentLimits: baseParams.perBotCommentLimits,
+      parentComment: { authorId: baseParams.bot.uid },
+    });
+
+    expect(result.scheduled).toBe(true);
   });
 
   it("logs and exits gracefully when existing action query fails", async () => {

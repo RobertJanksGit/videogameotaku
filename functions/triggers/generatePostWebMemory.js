@@ -163,9 +163,7 @@ export const handleGeneratePostWebMemory = async (payload = {}) => {
     return;
   }
 
-  console.log(
-    "[postWebMemory] No postId provided; skipping (batch mode disabled)"
-  );
+  console.log("[postWebMemory] No postId provided; skipping (queue mode)");
 };
 
 export const generatePostWebMemory = onDocumentCreated(
@@ -180,10 +178,81 @@ export const generatePostWebMemory = onDocumentCreated(
     const snapshot = event.data;
     if (!snapshot) return;
 
-    await handleGeneratePostWebMemory({
-      postId: event.params.postId,
-      postData: snapshot.data() || {},
-    });
+    const postId = event.params.postId;
+    const postData = snapshot.data() || {};
+
+    if ((postData.category ?? "").toLowerCase() !== "news") {
+      return;
+    }
+
+    await admin.firestore().doc(`postWebMemoryQueue/${postId}`).set(
+      {
+        postId,
+        status: "pending",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.log("[postWebMemoryQueue] Enqueued job", { postId });
+  }
+);
+
+export const runPostWebMemoryQueue = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeZone: "America/Chicago",
+    region: "us-central1",
+    secrets: [openaiSecret],
+    memory: "1GiB",
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const snap = await db
+      .collection("postWebMemoryQueue")
+      .where("status", "==", "pending")
+      .orderBy("createdAt", "asc")
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      console.log("[postWebMemoryQueue] No pending jobs");
+      return;
+    }
+
+    const doc = snap.docs[0];
+    const jobId = doc.id;
+    const data = doc.data() || {};
+    const postId = data.postId;
+
+    if (!postId) {
+      console.log("[postWebMemoryQueue] Job missing postId; deleting", {
+        jobId,
+      });
+      await doc.ref.delete();
+      return;
+    }
+
+    console.log("[postWebMemoryQueue] Processing job", { jobId, postId });
+
+    try {
+      await handleGeneratePostWebMemory({ postId });
+      await doc.ref.update({
+        status: "done",
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log("[postWebMemoryQueue] Job completed", { jobId, postId });
+    } catch (error) {
+      console.error("[postWebMemoryQueue] Job failed", {
+        jobId,
+        postId,
+        error: error?.message ?? error,
+      });
+      await doc.ref.update({
+        status: "error",
+        errorMessage: error?.message ?? String(error),
+      });
+    }
   }
 );
 
