@@ -179,7 +179,8 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
   const [agreedToGuidelines, setAgreedToGuidelines] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
-  const { login, signup } = useAuth();
+  const { login, signup, signInWithGoogle } = useAuth();
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   // Reset form when modal closes
   useEffect(() => {
@@ -191,8 +192,25 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
       setError("");
       setAgreedToGuidelines(false);
       setAgreedToTerms(false);
+      setGoogleLoading(false);
     }
   }, [isOpen]);
+
+  const handleGoogleSignIn = async () => {
+    if (googleLoading) return;
+
+    setError("");
+    setGoogleLoading(true);
+
+    try {
+      await signInWithGoogle();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Unable to sign in with Google right now.");
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -290,150 +308,198 @@ const AuthModal = ({ isOpen, onClose, initialMode = "login" }) => {
         mode === "login" ? "Sign in to VideoGame Otaku" : "Create an account"
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-4">
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          Sign in to comment and post your own articles.
+        </p>
+
         {error && <div className="text-sm text-red-500">{error}</div>}
 
-        {mode === "register" && (
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={googleLoading}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-white text-gray-800 dark:bg-gray-800 dark:text-gray-100 border border-gray-200 dark:border-gray-700 px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <svg
+            className="w-4 h-4"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill="#EA4335"
+              d="M12 10.2v3.6h5.1c-.2 1.2-.9 2.3-1.9 3l3.1 2.4c1.8-1.7 2.9-4.1 2.9-6.9 0-.7-.1-1.3-.2-1.9H12z"
+            />
+            <path
+              fill="#34A853"
+              d="M5.3 14.3l-.8.6-2.5 1.9C4 20.1 7.7 22 12 22c2.4 0 4.5-.8 6-2.2l-3.1-2.4c-.8.5-1.9.9-3 .9-2.3 0-4.2-1.5-4.9-3.6z"
+            />
+            <path
+              fill="#4A90E2"
+              d="M2 6.5c-.6 1.1-.9 2.3-.9 3.5s.3 2.4.9 3.5c0 0 3.3-2.6 3.3-2.6-.2-.5-.3-1-.3-1.5 0-.5.1-1 .3-1.5z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M12 4.2c1.3 0 2.5.5 3.4 1.3l2.6-2.6C16.5 1.2 14.4 0 12 0 7.7 0 4 2 2 6.5l3.6 2.6c.7-2.1 2.6-3.6 4.9-3.6z"
+            />
+          </svg>
+          {googleLoading ? "Connecting..." : "Continue with Google"}
+        </button>
+
+        <div className="relative flex items-center">
+          <span className="flex-grow border-t border-gray-200 dark:border-gray-700" />
+          <span className="mx-2 text-xs uppercase tracking-wide text-gray-400">
+            or continue with email
+          </span>
+          <span className="flex-grow border-t border-gray-200 dark:border-gray-700" />
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === "register" && (
+            <div className="space-y-2">
+              <label
+                htmlFor="displayName"
+                className="block text-sm text-gray-700 dark:text-gray-300"
+              >
+                Username
+              </label>
+              <input
+                type="text"
+                id="displayName"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
+                required
+                placeholder="e.g., game_master123"
+                pattern="^[a-zA-Z0-9_-]+$"
+                title="Username can only contain letters, numbers, underscores, and hyphens"
+                minLength={3}
+              />
+            </div>
+          )}
+
           <div className="space-y-2">
             <label
-              htmlFor="displayName"
+              htmlFor="email"
               className="block text-sm text-gray-700 dark:text-gray-300"
             >
-              Username
+              Email address
             </label>
             <input
-              type="text"
-              id="displayName"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              type="email"
+              id="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
               required
-              placeholder="e.g., game_master123"
-              pattern="^[a-zA-Z0-9_-]+$"
-              title="Username can only contain letters, numbers, underscores, and hyphens"
-              minLength={3}
+              placeholder="your.email@example.com"
             />
           </div>
-        )}
 
-        <div className="space-y-2">
-          <label
-            htmlFor="email"
-            className="block text-sm text-gray-700 dark:text-gray-300"
-          >
-            Email address
-          </label>
-          <input
-            type="email"
-            id="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-[#F6F8FA] dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md focus:border-[#2D7FF9] dark:focus:border-[#2D7FF9] focus:outline-none focus:ring-1 focus:ring-[#2D7FF9] transition-colors"
-            required
-            placeholder="your.email@example.com"
+          <PasswordInput
+            id="password"
+            label="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            mode={mode}
           />
-        </div>
 
-        <PasswordInput
-          id="password"
-          label="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          mode={mode}
-        />
+          {mode === "register" && (
+            <>
+              <PasswordInput
+                id="confirmPassword"
+                label="Confirm password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                mode={mode}
+              />
 
-        {mode === "register" && (
-          <>
-            <PasswordInput
-              id="confirmPassword"
-              label="Confirm password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              mode={mode}
-            />
-
-            <div className="space-y-3">
-              <div className="flex items-start">
-                <div className="flex items-center h-5">
-                  <input
-                    id="terms"
-                    type="checkbox"
-                    checked={agreedToTerms}
-                    onChange={(e) => setAgreedToTerms(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
-                  />
-                </div>
-                <div className="ml-3 text-sm">
-                  <label
-                    htmlFor="terms"
-                    className="text-gray-700 dark:text-gray-300"
-                  >
-                    I have read and agree to the{" "}
-                    <Link
-                      to="/terms"
-                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                      onClick={() => onClose()}
+              <div className="space-y-3">
+                <div className="flex items-start">
+                  <div className="flex items-center h-5">
+                    <input
+                      id="terms"
+                      type="checkbox"
+                      checked={agreedToTerms}
+                      onChange={(e) => setAgreedToTerms(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                  </div>
+                  <div className="ml-3 text-sm">
+                    <label
+                      htmlFor="terms"
+                      className="text-gray-700 dark:text-gray-300"
                     >
-                      Terms of Use
-                    </Link>
-                  </label>
+                      I have read and agree to the{" "}
+                      <Link
+                        to="/terms"
+                        className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                        onClick={() => onClose()}
+                      >
+                        Terms of Use
+                      </Link>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex items-start">
+                  <div className="flex items-center h-5">
+                    <input
+                      id="guidelines"
+                      type="checkbox"
+                      checked={agreedToGuidelines}
+                      onChange={(e) =>
+                        setAgreedToGuidelines(e.target.checked)
+                      }
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                  </div>
+                  <div className="ml-3 text-sm">
+                    <label
+                      htmlFor="guidelines"
+                      className="text-gray-700 dark:text-gray-300"
+                    >
+                      I have read and agree to the{" "}
+                      <Link
+                        to="/guidelines"
+                        className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                        onClick={() => onClose()}
+                      >
+                        Content Guidelines
+                      </Link>
+                    </label>
+                  </div>
                 </div>
               </div>
+            </>
+          )}
 
-              <div className="flex items-start">
-                <div className="flex items-center h-5">
-                  <input
-                    id="guidelines"
-                    type="checkbox"
-                    checked={agreedToGuidelines}
-                    onChange={(e) => setAgreedToGuidelines(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
-                  />
-                </div>
-                <div className="ml-3 text-sm">
-                  <label
-                    htmlFor="guidelines"
-                    className="text-gray-700 dark:text-gray-300"
-                  >
-                    I have read and agree to the{" "}
-                    <Link
-                      to="/guidelines"
-                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                      onClick={() => onClose()}
-                    >
-                      Content Guidelines
-                    </Link>
-                  </label>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-1.5 text-sm text-white bg-[#2D7FF9] rounded-md hover:bg-[#2872E0] focus:outline-none focus:ring-2 focus:ring-[#2D7FF9] focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading
+                ? "Processing..."
+                : mode === "login"
+                ? "Sign in with email"
+                : "Create account with email"}
+            </button>
+          </div>
 
-        <div className="pt-2">
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-1.5 text-sm text-white bg-[#2D7FF9] rounded-md hover:bg-[#2872E0] focus:outline-none focus:ring-2 focus:ring-[#2D7FF9] focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading
-              ? "Processing..."
-              : mode === "login"
-              ? "Sign in"
-              : "Create account"}
-          </button>
-        </div>
-
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={toggleMode}
-            className="text-sm text-[#2D7FF9] hover:text-[#2872E0] transition-colors"
-          >
-            {mode === "login" ? "Create an account" : "Sign in instead"}
-          </button>
-        </div>
-      </form>
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="text-sm text-[#2D7FF9] hover:text-[#2872E0] transition-colors"
+            >
+              {mode === "login" ? "Create an account" : "Sign in instead"}
+            </button>
+          </div>
+        </form>
+      </div>
     </Modal>
   );
 };

@@ -6,8 +6,6 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
-  GoogleAuthProvider,
-  signInWithPopup,
   signInAnonymously as firebaseSignInAnonymously,
 } from "firebase/auth";
 import {
@@ -23,6 +21,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
+import signInWithGoogleHelper from "../auth/signInWithGoogle";
 import normalizeProfilePhoto from "../utils/normalizeProfilePhoto";
 
 const AuthContext = createContext();
@@ -477,13 +476,14 @@ export function AuthProvider({ children }) {
 
   const signInWithGoogle = useCallback(async () => {
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: "select_account",
-      });
+      const credential = await signInWithGoogleHelper();
+      const authUser = credential?.user || auth.currentUser;
 
-      const result = await signInWithPopup(auth, provider);
-      const loadedUser = await loadUserData(result.user, {
+      if (!authUser) {
+        return null;
+      }
+
+      const loadedUser = await loadUserData(authUser, {
         shouldUpdateLastLogin: true,
       });
 

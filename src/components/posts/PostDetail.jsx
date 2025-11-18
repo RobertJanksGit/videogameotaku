@@ -32,7 +32,7 @@ import { markStarterPackCommented } from "../../utils/starterPackStorage";
 import useCommentDraft, { buildDraftKey } from "../../hooks/useCommentDrafts";
 import InlineCommentAuthPrompt from "./InlineCommentAuthPrompt";
 import AuthModal from "../auth/AuthModal";
-import MentionTextarea from "./MentionTextarea";
+import CommentGate from "./CommentGate";
 import {
   postCommentsCollection,
   postCommentDoc,
@@ -154,7 +154,7 @@ const PostDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { darkMode } = useTheme();
-  const { user } = useAuth();
+  const { user, signInWithGoogle } = useAuth();
   const { showErrorToast } = useToast();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
@@ -164,7 +164,9 @@ const PostDetail = () => {
   const [commentSort, setCommentSort] = useState("top");
   const [likeBusyMap, setLikeBusyMap] = useState({});
   const [authorPickBusyMap, setAuthorPickBusyMap] = useState({});
+  const [isWritePostBusy, setIsWritePostBusy] = useState(false);
   const hasScrolledToComment = useRef(false);
+  const commentsSectionRef = useRef(null);
   const {
     draft: newCommentDraft,
     setDraft: setNewCommentDraft,
@@ -277,7 +279,11 @@ const PostDetail = () => {
         try {
           return commentDocFromPath(db, comment.documentPath);
         } catch (error) {
-          console.warn("Failed to resolve comment path", comment.documentPath, error);
+          console.warn(
+            "Failed to resolve comment path",
+            comment.documentPath,
+            error
+          );
         }
       }
       if (postId && comment.id) {
@@ -334,7 +340,9 @@ const PostDetail = () => {
           mergedMap.set(comment.documentPath || comment.id, comment);
         }
       });
-      const mergedList = Array.from(mergedMap.values()).sort(sortByCreatedAtAsc);
+      const mergedList = Array.from(mergedMap.values()).sort(
+        sortByCreatedAtAsc
+      );
       setComments(mergedList);
       setCommentsLoading(false);
     };
@@ -417,10 +425,39 @@ const PostDetail = () => {
     targetCommentIdFromHash,
   ]);
 
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      !location.hash &&
+      !targetCommentIdFromState
+    ) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [postId, location.hash, targetCommentIdFromState]);
+
+  useEffect(() => {
+    if (
+      !hasScrolledToComment.current &&
+      typeof window !== "undefined" &&
+      location.hash === "#comments"
+    ) {
+      commentsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      hasScrolledToComment.current = true;
+    }
+  }, [location.hash]);
+
   // Reset the scroll flag when the postId or target changes
   useEffect(() => {
     hasScrolledToComment.current = false;
-  }, [postId, targetCommentIdFromState, targetCommentIdFromHash]);
+  }, [
+    postId,
+    targetCommentIdFromState,
+    targetCommentIdFromHash,
+    location.hash,
+  ]);
 
   const resolveAuthorName = useCallback((authUser) => {
     if (!authUser) return "Guest";
@@ -442,6 +479,48 @@ const PostDetail = () => {
       ),
     []
   );
+
+  const signedInCommentLabel = useMemo(() => {
+    if (!user) {
+      return "";
+    }
+    return `Posting as ${resolveAuthorName(user)}`;
+  }, [user, resolveAuthorName]);
+
+  const scrollToComments = useCallback(() => {
+    if (commentsSectionRef.current) {
+      commentsSectionRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  }, []);
+
+  const handleWritePostClick = useCallback(async () => {
+    if (isWritePostBusy) {
+      return;
+    }
+
+    if (user && !user.isAnonymous) {
+      navigate("/dashboard#share-your-find");
+      return;
+    }
+
+    setIsWritePostBusy(true);
+    try {
+      await signInWithGoogle();
+      navigate("/dashboard#share-your-find");
+    } catch (error) {
+      console.error("Failed to initiate write-post flow", error);
+      const message =
+        typeof error?.message === "string"
+          ? error.message
+          : "Unable to start Google sign-in right now.";
+      showErrorToast(message);
+    } finally {
+      setIsWritePostBusy(false);
+    }
+  }, [isWritePostBusy, user, navigate, signInWithGoogle, showErrorToast]);
 
   const interpretCommentError = useCallback((error) => {
     if (!error) {
@@ -531,7 +610,10 @@ const PostDetail = () => {
         try {
           mentionPayload = await buildMentionPayload(db, trimmedContent);
         } catch (mentionError) {
-          console.warn("Unable to resolve mentions before submit", mentionError);
+          console.warn(
+            "Unable to resolve mentions before submit",
+            mentionError
+          );
         }
 
         const commentPayload = {
@@ -669,7 +751,9 @@ const PostDetail = () => {
           parentId,
           parentCommentId: parentId,
           threadRootCommentId:
-            parentComment.threadRootCommentId || parentComment.parentCommentId || parentComment.id,
+            parentComment.threadRootCommentId ||
+            parentComment.parentCommentId ||
+            parentComment.id,
           createdAt: serverTimestamp(),
           replyCount: 0,
           likeCount: 0,
@@ -1056,7 +1140,7 @@ const PostDetail = () => {
       return;
     }
 
-  const isAdmin =
+    const isAdmin =
       user?.role === "admin" ||
       user?.role === "ADMIN" ||
       user?.isAdmin === true;
@@ -1092,7 +1176,7 @@ const PostDetail = () => {
 
     const repliesToDelete = collectDescendants(commentId);
 
-  const batch = writeBatch(db);
+    const batch = writeBatch(db);
 
     repliesToDelete.forEach((reply) => {
       const replyRef = resolveCommentDocRef(reply);
@@ -1107,7 +1191,9 @@ const PostDetail = () => {
     }
 
     if (parentCommentId) {
-      const parentComment = comments.find((comment) => comment.id === parentCommentId);
+      const parentComment = comments.find(
+        (comment) => comment.id === parentCommentId
+      );
       const parentCommentRef = resolveCommentDocRef(
         parentComment || { id: parentCommentId }
       );
@@ -1177,10 +1263,7 @@ const PostDetail = () => {
       }
 
       if (!comment.documentPath) {
-        console.warn(
-          "Missing documentPath for comment like toggle",
-          comment
-        );
+        console.warn("Missing documentPath for comment like toggle", comment);
         showErrorToast(
           "Unable to locate that comment. Please refresh and try again."
         );
@@ -1477,7 +1560,8 @@ const PostDetail = () => {
                       )}
                     </div>
                     {postAuthorMeta &&
-                    (postAuthorMeta.dailyStreak > 0 || postAuthorLastBadgeMeta) ? (
+                    (postAuthorMeta.dailyStreak > 0 ||
+                      postAuthorLastBadgeMeta) ? (
                       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold">
                         {postAuthorMeta.dailyStreak > 0 ? (
                           <span
@@ -1552,6 +1636,50 @@ const PostDetail = () => {
                 >
                   {post.title}
                 </h1>
+                <div className="mt-2 mb-4 flex items-center justify-between text-xs sm:text-sm text-slate-400">
+                  <button
+                    type="button"
+                    onClick={scrollToComments}
+                    className={`inline-flex items-center gap-2 bg-transparent border-none p-0 transition-colors focus:outline-none ${
+                      darkMode
+                        ? "text-gray-400 hover:text-gray-100"
+                        : "text-gray-600 hover:text-gray-800"
+                    }`}
+                    aria-label="View comments"
+                  >
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                      />
+                    </svg>
+                    <span className="font-semibold">
+                      {post.commentCount != null ? post.commentCount : 0}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide opacity-70">
+                      comments
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleWritePostClick}
+                    disabled={isWritePostBusy}
+                    className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <span aria-hidden="true" className="leading-none">
+                      ＋
+                    </span>
+                    <span>Share your own gaming news</span>
+                  </button>
+                </div>
                 <div className="mb-6 e-content">
                   <RichContent content={post.content} darkMode={darkMode} />
                 </div>
@@ -1597,7 +1725,11 @@ const PostDetail = () => {
             </header>
 
             {/* Comments Section */}
-            <section className="mt-12" aria-label="Comments">
+            <section
+              className="mt-12"
+              aria-label="Comments"
+              ref={commentsSectionRef}
+            >
               <h2
                 className={`text-2xl font-bold mb-6 ${
                   darkMode ? "text-white" : "text-gray-900"
@@ -1620,54 +1752,18 @@ const PostDetail = () => {
                 >
                   Join the discussion
                 </h3>
-                <form onSubmit={handleSubmitComment}>
-                  <label htmlFor="post-comment" className="sr-only">
-                    Write a comment
-                  </label>
-                  <MentionTextarea
-                    id="post-comment"
-                    rows={3}
-                    value={newCommentDraft}
-                    onChange={handleCommentChange}
-                    onKeyDown={handleCommentKeyDown}
-                    placeholder="Share your thoughts..."
-                    darkMode={darkMode}
-                    disabled={isCommentProcessing}
-                    className={`w-full px-4 py-2 rounded-lg text-sm ${
-                      darkMode
-                        ? "bg-gray-800 text-white placeholder-gray-400 border border-gray-700 focus:border-blue-500"
-                        : "bg-white text-gray-900 placeholder-gray-500 border border-gray-300 focus:border-blue-500"
-                    } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    aria-label="Add a comment"
-                  />
-                  {commentError ? (
-                    <p className="mt-2 text-xs text-red-500" role="alert">
-                      {commentError}
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex flex-col gap-2 min-[840px]:flex-row min-[840px]:items-center min-[840px]:justify-between">
-                    <span
-                      className={`text-xs ${
-                        darkMode ? "text-gray-400" : "text-gray-500"
-                      }`}
-                    >
-                      {user
-                        ? `Posting as ${resolveAuthorName(user)}`
-                        : "We'll ask you to sign in or continue as guest when you post."}
-                    </span>
-                    <button
-                      type="submit"
-                      disabled={!newCommentDraft.trim() || isCommentProcessing}
-                      className={`inline-flex justify-center px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                        darkMode
-                          ? "bg-blue-600 hover:bg-blue-500"
-                          : "bg-blue-500 hover:bg-blue-600"
-                      }`}
-                    >
-                      {isCommentProcessing ? "Posting..." : "Post Comment"}
-                    </button>
-                  </div>
-                </form>
+                <CommentGate
+                  darkMode={darkMode}
+                  commentValue={newCommentDraft}
+                  onCommentChange={handleCommentChange}
+                  onCommentKeyDown={handleCommentKeyDown}
+                  onSubmit={handleSubmitComment}
+                  isSubmitting={isCommentProcessing}
+                  commentError={commentError}
+                  signedInLabel={signedInCommentLabel}
+                  placeholder="Share your thoughts..."
+                  textareaId="post-comment"
+                />
               </div>
 
               {/* ENGAGEMENT: canonical listeners live at posts/${postId}/comments (legacy top-level fallback keeps older threads visible), auth = (anonymous allowed) */}
@@ -1701,7 +1797,8 @@ const PostDetail = () => {
                       darkMode ? "text-gray-300" : "text-gray-600"
                     }`}
                   >
-                    Top reply earned Author’s Pick ({authorPickSummary.authorName})
+                    Top reply earned Author’s Pick (
+                    {authorPickSummary.authorName})
                   </span>
                 ) : null}
               </div>
@@ -1781,19 +1878,3 @@ const PostDetail = () => {
 };
 
 export default PostDetail;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -7,6 +7,7 @@ import PropTypes from "prop-types";
 import AuthModal from "../auth/AuthModal";
 import { Link, useNavigate } from "react-router-dom";
 import normalizeProfilePhoto from "../../utils/normalizeProfilePhoto";
+import WritePostButton from "../common/WritePostButton";
 
 const SunIcon = () => (
   <svg
@@ -338,6 +339,10 @@ const Layout = ({ children }) => {
                         </div>
                       </div>
                     </div>
+                    <WritePostButton
+                      label="Write a Post"
+                      className="max-[500px]:hidden flex-shrink-0"
+                    />
                     <button
                       onClick={() => handleAuthClick("register")}
                       className="inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
@@ -353,12 +358,10 @@ const Layout = ({ children }) => {
                   </div>
                 ) : (
                   <>
-                    <Link
-                      to="/dashboard#share-your-find"
-                      className="max-[500px]:hidden inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white whitespace-nowrap flex-shrink-0 shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-                    >
-                      Post Your Find
-                    </Link>
+                    <WritePostButton
+                      label="Write a Post"
+                      className="max-[500px]:hidden flex-shrink-0"
+                    />
                     <div className="relative" ref={dropdownRef}>
                       <button
                         onClick={() => setShowDropdown(!showDropdown)}
@@ -428,6 +431,10 @@ const Layout = ({ children }) => {
                 )
               ) : (
                 <div className="flex items-center space-x-4">
+                  <WritePostButton
+                    label="Write a Post"
+                    className="max-[500px]:hidden"
+                  />
                   <button
                     onClick={() => handleAuthClick("register")}
                     className="flex items-center space-x-2 px-3 py-1.5 text-sm text-[#7D8590] hover:text-white transition-colors bg-transparent"

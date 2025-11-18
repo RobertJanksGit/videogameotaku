@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { db, storage } from "../../config/firebase";
 import {
@@ -28,6 +29,7 @@ import { markStarterPackPosted } from "../../utils/starterPackStorage";
 
 const UserPostManager = ({ darkMode }) => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [posts, setPosts] = useState([]);
   const [postsLimit, setPostsLimit] = useState(10);
   const [currentPost, setCurrentPost] = useState({
@@ -45,6 +47,7 @@ const UserPostManager = ({ darkMode }) => {
   const [rateLimitMessage, setRateLimitMessage] = useState("");
   const [cooldownEnd, setCooldownEnd] = useState(null);
   const [recentRejections, setRecentRejections] = useState(0);
+  const [creationSuccess, setCreationSuccess] = useState(null);
   const contentTextareaRef = useRef(null);
 
   // Add admin check
@@ -346,6 +349,7 @@ const UserPostManager = ({ darkMode }) => {
   const handleCreatePost = async (e) => {
     e.preventDefault();
 
+    setCreationSuccess(null);
     if (isRateLimited) {
       setValidationError(rateLimitMessage);
       return;
@@ -357,8 +361,8 @@ const UserPostManager = ({ darkMode }) => {
       return;
     }
 
-    if (currentPost.content.length < 10 || currentPost.content.length > 10000) {
-      setValidationError("Content must be between 10 and 10,000 characters");
+    if (currentPost.content.length < 60 || currentPost.content.length > 10000) {
+      setValidationError("Content must be between 60 and 10,000 characters");
       return;
     }
 
@@ -429,7 +433,7 @@ const UserPostManager = ({ darkMode }) => {
       };
 
       // Create the post
-      await addDoc(postsCollection, newPost);
+      const postRef = await addDoc(postsCollection, newPost);
 
       markStarterPackPosted(user.uid);
 
@@ -450,6 +454,9 @@ const UserPostManager = ({ darkMode }) => {
       setImageFile(null);
       setImagePreview(null);
       setValidationError(null);
+      setCreationSuccess({
+        postId: postRef.id,
+      });
     } catch (error) {
       console.error("Error creating post:", error);
       setValidationError(error.message);
@@ -548,6 +555,49 @@ const UserPostManager = ({ darkMode }) => {
       )}
 
       <form onSubmit={handleCreatePost} className="space-y-4">
+        {creationSuccess ? (
+          <div
+            className={`flex flex-col gap-3 rounded-md border px-4 py-3 ${
+              darkMode
+                ? "border-green-700/70 bg-green-900/30 text-green-100"
+                : "border-green-200 bg-green-50 text-green-800"
+            }`}
+          >
+            <div className="text-sm font-semibold">
+              Nice! Your post is live and will show up in the feed.
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-start">
+              {creationSuccess.postId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreationSuccess(null);
+                    navigate(`/post/${creationSuccess.postId}`);
+                  }}
+                  className={`inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium ${
+                    darkMode
+                      ? "bg-green-700 text-white hover:bg-green-600"
+                      : "bg-green-600 text-white hover:bg-green-500"
+                  } transition-colors`}
+                >
+                  View your post
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setCreationSuccess(null)}
+                className={`inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  darkMode
+                    ? "border border-green-500 text-green-200 hover:bg-green-800/30"
+                    : "border border-green-300 text-green-700 hover:bg-green-100"
+                }`}
+              >
+                Write another post
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {validationError && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
             <div className="flex">
@@ -616,10 +666,12 @@ const UserPostManager = ({ darkMode }) => {
             type="text"
             id="title"
             value={currentPost.title}
-            onChange={(e) =>
-              setCurrentPost({ ...currentPost, title: e.target.value })
-            }
+            onChange={(e) => {
+              setCreationSuccess(null);
+              setCurrentPost({ ...currentPost, title: e.target.value });
+            }}
             required
+            placeholder="What's happening in gaming?"
             className={`mt-1 block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
               darkMode
                 ? "bg-[#1C2128] border-gray-700 text-white"
@@ -631,7 +683,7 @@ const UserPostManager = ({ darkMode }) => {
               darkMode ? "text-gray-400" : "text-gray-500"
             }`}
           >
-            {currentPost.title.length}/100 characters (minimum 3)
+            {currentPost.title.length}/100 characters (aim for at least 3)
           </p>
         </div>
 
@@ -815,27 +867,29 @@ const UserPostManager = ({ darkMode }) => {
             ref={contentTextareaRef}
             rows={6}
             value={currentPost.content}
-            onChange={(e) =>
-              setCurrentPost({ ...currentPost, content: e.target.value })
-            }
+            onChange={(e) => {
+              setCreationSuccess(null);
+              setCurrentPost({ ...currentPost, content: e.target.value });
+            }}
             className={`block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
               darkMode
                 ? "bg-[#1C2128] border-gray-700 text-white"
                 : "border-gray-300"
             }`}
             required
+            placeholder="Share a quick take, rumor, clip, or mini-review..."
           />
           <p
             className={`mt-1 text-sm ${
               darkMode ? "text-gray-400" : "text-gray-500"
             } ${
-              currentPost.content.length < 200 ||
+              currentPost.content.length < 60 ||
               currentPost.content.length > 10000
                 ? "text-red-500 dark:text-red-400"
                 : ""
             }`}
           >
-            {currentPost.content.length}/10,000 characters (minimum 200)
+            {currentPost.content.length}/10,000 characters (minimum 60)
           </p>
         </div>
 
