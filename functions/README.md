@@ -94,3 +94,15 @@ firebase functions:secrets:set SITEMAP_API_KEY
 - Feature flag via `POST_WEB_MEMORY_ENABLED` (defaults to `true`).
 - Optional `SEARCH_ENGINE_BASE_URL` to point the scraper at a non-Google search engine (default DuckDuckGo).
 - Stores output in `posts/{postId}/meta/postWebMemory` for bots to reference casually.
+
+### Cloud Run deployment (generatepostwebmemory)
+
+Deploy the Cloud Run worker with 1 GiB memory:
+
+```bash
+gcloud run deploy generatepostwebmemory \
+  --image gcr.io/videogameotaku-74ad8/generatepostwebmemory \
+  --region us-central1 \
+  --platform managed \
+  --memory 1Gi
+```

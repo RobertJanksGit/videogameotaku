@@ -19,7 +19,7 @@ const CHROME_LAUNCH_ARGS = [
 let browserPromise = null;
 
 const getExecutablePath = () =>
-  process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_EXECUTABLE_PATH;
+  process.env.PUPPETEER_EXECUTABLE_PATH ?? DEFAULT_EXECUTABLE_PATH;
 
 export const getBrowser = async () => {
   if (browserPromise) return browserPromise;

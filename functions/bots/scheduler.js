@@ -17,8 +17,6 @@ import {
   nowMs as getNowMs,
 } from "./utils.js";
 
-/* global Intl */
-
 export const resolveBotTimezone = (bot = {}) =>
   bot?.behavior?.activeTimeZone || bot?.timeZone || "America/Chicago";
 
@@ -77,6 +75,238 @@ const mentionRegex = /@([A-Za-z0-9_-]+)/g;
 
 const numberOrNull = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/**
+ * Check if a bot has already replied to a specific comment and schedule a reply if allowed.
+ * This ensures bots reply at most once per comment, regardless of cooldown resets.
+ *
+ * @param {Object} params
+ * @param {import('firebase-admin').firestore.Firestore} params.db
+ * @param {BotProfile} params.bot
+ * @param {string} params.postId
+ * @param {string} params.commentId
+ * @param {number} params.nowMs
+ * @param {BotRuntimeState} params.runtimeState
+ * @param {Object} params.globalCommentState
+ * @param {Map} params.threadReplyCounts
+ * @param {Object} params.perBotCommentLimits
+ * @returns {Promise<{scheduled: boolean, scheduledAction?: Object, lastActionAt?: number}>}
+ */
+async function maybeScheduleDirectReplyForComment({
+  db,
+  bot,
+  postId,
+  commentId,
+  nowMs,
+  runtimeState,
+  globalCommentState,
+  threadReplyCounts,
+  perBotCommentLimits,
+}) {
+  // Fetch the comment document to check botRepliesHandled
+  const commentRef = db
+    .collection(POSTS_COLLECTION)
+    .doc(postId)
+    .collection(COMMENTS_COLLECTION)
+    .doc(commentId);
+  const commentSnap = await commentRef.get();
+
+  if (!commentSnap.exists) {
+    console.log("bot_reply_candidate_skip", {
+      type: "bot_reply_candidate_skip",
+      botId: bot.uid,
+      postId,
+      commentId,
+      reason: "comment_not_found",
+    });
+    return { scheduled: false };
+  }
+
+  const commentData = commentSnap.data() || {};
+  const botRepliesHandled = commentData.botRepliesHandled || {};
+
+  // Check if this bot has already replied to this comment
+  if (botRepliesHandled[bot.id] === true) {
+    console.log("bot_reply_candidate_skip", {
+      type: "bot_reply_candidate_skip",
+      botId: bot.uid,
+      postId,
+      commentId,
+      reason: "already_replied_to_comment",
+    });
+    return { scheduled: false };
+  }
+
+  // Check existing REPLY cooldown
+  const lastScheduledActionForCooldown =
+    runtimeState?.lastActionScheduledAt &&
+    Number.isFinite(runtimeState.lastActionScheduledAt)
+      ? Math.min(runtimeState.lastActionScheduledAt, nowMs)
+      : null;
+
+  if (
+    lastScheduledActionForCooldown &&
+    nowMs - lastScheduledActionForCooldown <
+      minutesToMs(MIN_ACTION_SPACING_MINUTES)
+  ) {
+    const cooldownEndsAt =
+      lastScheduledActionForCooldown + minutesToMs(MIN_ACTION_SPACING_MINUTES);
+    console.log("bot_cooldown_skip", {
+      type: "bot_cooldown_skip",
+      botId: bot.uid,
+      nowIso: new Date(nowMs).toISOString(),
+      cooldownEndsAt,
+      cooldownMs: minutesToMs(MIN_ACTION_SPACING_MINUTES),
+      actionType: "REPLY",
+      reason: "direct_reply_spacing",
+    });
+    return { scheduled: false };
+  }
+
+  // Additional safety check: look for existing pending REPLY actions for this bot+commentId
+  // This is an extra guard in case botRepliesHandled write failed
+  try {
+    const existingActionsQuery = scheduledBotActionsCollection(db)
+      .where("botId", "==", bot.uid)
+      .where("parentCommentId", "==", commentId)
+      .where("type", "==", ScheduledBotActionType.REPLY_TO_COMMENT)
+      .where("scheduledAt", ">", nowMs - minutesToMs(60 * 24)) // Last 24 hours
+      .limit(1);
+
+    const existingActionsSnap = await existingActionsQuery.get();
+    if (!existingActionsSnap.empty) {
+      console.log("bot_reply_candidate_skip", {
+        type: "bot_reply_candidate_skip",
+        botId: bot.uid,
+        postId,
+        commentId,
+        reason: "pending_reply_exists",
+      });
+      return { scheduled: false };
+    }
+  } catch (error) {
+    // Log but don't fail - this is just an extra safety check
+    console.warn("Failed to check for existing reply actions", {
+      botId: bot.uid,
+      commentId,
+      error: error?.message || error,
+    });
+  }
+
+  // Check thread and global caps
+  const threadRootCommentId = resolveThreadRootId({
+    id: commentId,
+    ...commentData,
+  });
+  const threadStats = threadReplyCounts.get(threadRootCommentId) || {
+    count: 0,
+    lastAt: 0,
+  };
+  const perThreadLimit =
+    perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
+  const threadCapReached =
+    perThreadLimit >= 0 && threadStats.count >= perThreadLimit;
+
+  const globalTickLimitReached =
+    globalCommentState &&
+    numberOrNull(globalCommentState.perTickLimit) !== null &&
+    globalCommentState.commentsScheduledThisTick >=
+      globalCommentState.perTickLimit;
+
+  const globalHourCapReached =
+    globalCommentState &&
+    numberOrNull(globalCommentState.perHourLimit) !== null &&
+    globalCommentState.hourCount >=
+      (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+
+  if (threadCapReached || globalTickLimitReached || globalHourCapReached) {
+    console.log("bot_reply_candidate_skip", {
+      type: "bot_reply_candidate_skip",
+      botId: bot.uid,
+      postId,
+      commentId,
+      reason: threadCapReached
+        ? "thread_cap_reached"
+        : globalTickLimitReached
+        ? "global_cap_reached"
+        : "global_hour_cap_reached",
+    });
+    return { scheduled: false };
+  }
+
+  // All checks passed - schedule the reply
+  const delayMs = getDelayFromRange(
+    bot.behavior?.replyDelayMinutes ?? { min: 2, max: 15 }
+  );
+  const scheduledAt = nowMs + delayMs;
+  const shouldAskQuestion = randomBoolean(bot.behavior?.questionProbability);
+  const shouldDisagree = randomBoolean(bot.behavior?.disagreementProbability);
+  const plannedActionId = `plan_reply_${bot.uid}_${commentId}_${scheduledAt}`;
+
+  const scheduledAction = buildScheduledBotActionPayload(
+    ScheduledBotActionType.REPLY_TO_COMMENT,
+    {
+      botId: bot.uid,
+      postId,
+      scheduledAt,
+      parentCommentId: commentId,
+      threadRootCommentId,
+      metadata: {
+        mode: "REPLY",
+        targetType: "comment",
+        shouldAskQuestion,
+        intent: shouldDisagree ? "disagree" : "default",
+        repliedToBotId: commentData.parentAuthorId ?? null,
+        triggeredByMention: (commentData.mentions || new Set()).has(
+          bot.userName?.toLowerCase() ?? ""
+        ),
+        targetCommentId: commentId,
+        origin: "activity_tick",
+        plannedActionId,
+      },
+    }
+  );
+
+  // Update thread counts
+  threadReplyCounts.set(threadRootCommentId, {
+    count: (threadStats.count ?? 0) + 1,
+    lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
+  });
+
+  // Update global state
+  if (globalCommentState) {
+    globalCommentState.commentsScheduledThisTick =
+      (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
+    globalCommentState.hourCount = (globalCommentState.hourCount ?? 0) + 1;
+    globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
+    globalCommentState.dirty = true;
+  }
+
+  // Mark this comment as handled by this bot
+  await commentRef.set(
+    {
+      botRepliesHandled: {
+        ...(commentData.botRepliesHandled || {}),
+        [bot.uid]: true,
+      },
+    },
+    { merge: true }
+  );
+
+  console.log("bot_reply_planned", {
+    botId: bot.uid,
+    postId,
+    threadRootCommentId,
+    targetCommentId: commentId,
+    actionId: plannedActionId,
+  });
+
+  return {
+    scheduled: true,
+    scheduledAction,
+    lastActionAt: scheduledAt,
+  };
+}
 
 const timestampToMillis = (value) => {
   if (!value) return 0;
@@ -188,9 +418,9 @@ const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
     if (!comment.parentCommentId) {
       existing.topLevelCount += 1;
       existing.lastTopLevelAt = Math.max(
-      existing.lastTopLevelAt,
-      comment.createdAtMs || 0
-    );
+        existing.lastTopLevelAt,
+        comment.createdAtMs || 0
+      );
     }
     perPost.set(comment.postId, existing);
 
@@ -201,7 +431,10 @@ const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
         lastAt: 0,
       };
       threadStats.count += 1;
-      threadStats.lastAt = Math.max(threadStats.lastAt, comment.createdAtMs || 0);
+      threadStats.lastAt = Math.max(
+        threadStats.lastAt,
+        comment.createdAtMs || 0
+      );
       perThread.set(threadRootId, threadStats);
     }
   }
@@ -212,7 +445,7 @@ const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
 };
 
 const canBotLeaveTopLevelCommentOnPost = ({
-  bot,
+  bot: _bot, // eslint-disable-line no-unused-vars
   post,
   botCommentState,
   recentBotActivity,
@@ -231,7 +464,10 @@ const canBotLeaveTopLevelCommentOnPost = ({
     topLevelCount: 0,
     lastTopLevelAt: 0,
   };
-  if (perPost.topLevelCount >= (commentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST)) {
+  if (
+    perPost.topLevelCount >=
+    (commentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST)
+  ) {
     return { eligible: false, reason: "too_many_bot_comments" };
   }
   if (
@@ -545,7 +781,9 @@ const loadActiveBotsWithState = async (db) => {
 };
 
 const loadGlobalCommentActivityState = async (db, now) => {
-  const ref = db.collection(BOT_META_COLLECTION).doc(BOT_COMMENT_ACTIVITY_DOC_ID);
+  const ref = db
+    .collection(BOT_META_COLLECTION)
+    .doc(BOT_COMMENT_ACTIVITY_DOC_ID);
   try {
     const snap = await ref.get();
     const raw = snap?.exists ? snap.data() || {} : {};
@@ -639,10 +877,10 @@ const hydrateNotificationsWithParents = async (db, comments) => {
     const parent = parentCache.get(cacheKey);
     const parentAuthorId = comment.parentAuthorId ?? parent?.authorId ?? null;
     const parentAuthorIsBot =
-      comment.parentAuthorIsBot ?? (parent ? Boolean(parent.isBotAuthor) : null);
+      comment.parentAuthorIsBot ??
+      (parent ? Boolean(parent.isBotAuthor) : null);
     const parentAuthorBotId =
-      comment.parentAuthorBotId ??
-      (parentAuthorIsBot ? parentAuthorId : null);
+      comment.parentAuthorBotId ?? (parentAuthorIsBot ? parentAuthorId : null);
     const resolvedThreadRoot =
       comment.threadRootCommentId ??
       parent?.threadRootCommentId ??
@@ -731,7 +969,8 @@ const fetchRecentNotifications = async (db, sinceMs) => {
         id: doc.id,
         createdAt: createdAtRaw,
         createdAtType: {
-          instanceOfTimestamp: createdAtRaw instanceof admin.firestore.Timestamp,
+          instanceOfTimestamp:
+            createdAtRaw instanceof admin.firestore.Timestamp,
           hasToMillis: typeof createdAtRaw?.toMillis === "function",
           typeof: typeof createdAtRaw,
         },
@@ -751,8 +990,7 @@ const fetchRecentNotifications = async (db, sinceMs) => {
       const parentAuthorId = data.parentAuthorId ?? data.parentUserId ?? null;
       const parentAuthorIsBot = data.parentIsBotAuthor ?? null;
       const parentAuthorBotId =
-        data.parentAuthorBotId ??
-        (parentAuthorIsBot ? parentAuthorId : null);
+        data.parentAuthorBotId ?? (parentAuthorIsBot ? parentAuthorId : null);
       return {
         id: doc.id,
         documentPath: doc.ref.path,
@@ -775,7 +1013,8 @@ const fetchRecentNotifications = async (db, sinceMs) => {
 
     return hydrated.map((comment) => ({
       ...comment,
-      threadRootCommentId: comment.threadRootCommentId ?? resolveThreadRootId(comment),
+      threadRootCommentId:
+        comment.threadRootCommentId ?? resolveThreadRootId(comment),
     }));
   } catch (error) {
     console.error("fetchRecentNotifications failed", {
@@ -901,6 +1140,7 @@ const randomBoolean = (probability) =>
   Math.random() < clamp01(probability ?? 0);
 
 export const runBotActivityForTick = async ({
+  db,
   bot,
   runtimeState,
   now,
@@ -982,7 +1222,8 @@ export const runBotActivityForTick = async ({
       if (comment.createdAtMs < windowStartMs) continue;
       if (comment.authorId === bot.uid) continue;
       const parentAuthorMatchesBot =
-        comment.parentAuthorBotId === bot.uid || comment.parentAuthorId === bot.uid;
+        comment.parentAuthorBotId === bot.uid ||
+        comment.parentAuthorId === bot.uid;
       const mentionsBot =
         botUserNameLower && comment.mentions?.has(botUserNameLower);
       const targetsBot = parentAuthorMatchesBot || mentionsBot;
@@ -1118,7 +1359,8 @@ export const runBotActivityForTick = async ({
     botCommentStateDirty ? botCommentState : null;
   const eligiblePostsCount = commentCandidates.length;
   const lastScheduledActionForCooldown =
-    runtimeState?.lastActionScheduledAt && Number.isFinite(runtimeState.lastActionScheduledAt)
+    runtimeState?.lastActionScheduledAt &&
+    Number.isFinite(runtimeState.lastActionScheduledAt)
       ? Math.min(runtimeState.lastActionScheduledAt, now)
       : null;
 
@@ -1151,131 +1393,35 @@ export const runBotActivityForTick = async ({
         : GLOBAL_ACTIVITY_RATE)
   );
 
+  // Process direct replies to human comments on bot posts
   if (replyCandidates.length) {
-    if (
-      lastScheduledActionForCooldown &&
-      now - lastScheduledActionForCooldown < minutesToMs(MIN_ACTION_SPACING_MINUTES)
-    ) {
-      const cooldownEndsAt =
-        lastScheduledActionForCooldown + minutesToMs(MIN_ACTION_SPACING_MINUTES);
-      console.log(
-        JSON.stringify({
-          type: "bot_cooldown_skip",
-          botId: bot.uid,
-          nowIso,
-          cooldownEndsAt,
-          cooldownMs: minutesToMs(MIN_ACTION_SPACING_MINUTES),
-          actionType: "REPLY",
-          reason: "direct_reply_spacing",
-        })
-      );
-      return {
-        status: "cooldown",
-        eligiblePosts: eligiblePostsCount,
-        effectivePostSince,
-        eligibleCommentPosts: commentCandidates,
-        runtimeUpdate: buildRuntimeUpdate({
-          now,
-          latestPostSeenMs,
-          latestNotificationSeenMs,
-          lastActionAt: runtimeState.lastActionScheduledAt,
-          topLevelCommentStats: commentStatsForUpdate(),
-        }),
-      };
-    }
+    // Process each reply candidate individually through the helper function
+    // Each bot gets at most one reply per human comment, regardless of cooldown resets
+    for (const replyCandidate of replyCandidates) {
+      const result = await maybeScheduleDirectReplyForComment({
+        db,
+        bot,
+        postId: replyCandidate.postId,
+        commentId: replyCandidate.id,
+        nowMs: now,
+        runtimeState,
+        globalCommentState,
+        threadReplyCounts,
+        perBotCommentLimits,
+      });
 
-    const target = chooseNotificationCandidate(bot, replyCandidates, now);
-
-    if (target) {
-      const threadRootCommentId = resolveThreadRootId(target);
-      const threadStats =
-        threadReplyCounts.get(threadRootCommentId) || {
-          count: 0,
-          lastAt: 0,
-        };
-      const perThreadLimit =
-        perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
-      const threadCapReached =
-        perThreadLimit >= 0 && threadStats.count >= perThreadLimit;
-      const globalTickLimitReached =
-        globalCommentState &&
-        numberOrNull(globalCommentState.perTickLimit) !== null &&
-        globalCommentState.commentsScheduledThisTick >=
-          globalCommentState.perTickLimit;
-      const globalHourCapReached =
-        globalCommentState &&
-        numberOrNull(globalCommentState.perHourLimit) !== null &&
-        globalCommentState.hourCount >=
-          (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
-      const shouldReply =
-        !threadCapReached &&
-        !globalTickLimitReached &&
-        !globalHourCapReached &&
-        Math.random() < replyResponseProbability;
-
-      if (shouldReply) {
-        const delayMs = getDelayFromRange(
-          behavior.replyDelayMinutes ?? { min: 2, max: 15 }
-        );
-        const scheduledAt = now + delayMs;
-        const shouldAskQuestion = randomBoolean(behavior.questionProbability);
-        const shouldDisagree = randomBoolean(behavior.disagreementProbability);
-        const plannedActionId = `plan_reply_${bot.uid}_${target.id}_${scheduledAt}`;
-
-        const scheduledAction = buildScheduledBotActionPayload(
-          ScheduledBotActionType.REPLY_TO_COMMENT,
-          {
-            botId: bot.uid,
-            postId: target.postId,
-            scheduledAt,
-            parentCommentId: target.id,
-            threadRootCommentId,
-            metadata: {
-              mode: "REPLY",
-              targetType: "comment",
-              shouldAskQuestion,
-              intent: shouldDisagree ? "disagree" : "default",
-              repliedToBotId: target.parentAuthorId ?? null,
-              triggeredByMention: target.mentions?.has(botUserNameLower) ?? false,
-              targetCommentId: target.id,
-              origin: "activity_tick",
-              plannedActionId,
-            },
-          }
-        );
-
-        threadReplyCounts.set(threadRootCommentId, {
-          count: (threadStats.count ?? 0) + 1,
-          lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
-        });
-        if (globalCommentState) {
-          globalCommentState.commentsScheduledThisTick =
-            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-          globalCommentState.hourCount =
-            (globalCommentState.hourCount ?? 0) + 1;
-          globalCommentState.dayCount =
-            (globalCommentState.dayCount ?? 0) + 1;
-          globalCommentState.dirty = true;
-        }
-
-        console.log("bot_reply_planned", {
-          botId: bot.uid,
-          postId: target.postId,
-          threadRootCommentId,
-          targetCommentId: target.id,
-          actionId: plannedActionId,
-        });
-
+      if (result.scheduled) {
+        // Successfully scheduled a reply - return immediately
         return {
           status: "scheduled",
-          scheduledAction,
+          scheduledAction: result.scheduledAction,
           eligiblePosts: eligiblePostsCount,
           effectivePostSince,
           runtimeUpdate: buildRuntimeUpdate({
             now,
             latestPostSeenMs,
             latestNotificationSeenMs,
-            lastActionAt: scheduledAt,
+            lastActionAt: result.lastActionAt,
             topLevelCommentStats: commentStatsForUpdate(),
           }),
         };
@@ -1301,8 +1447,7 @@ export const runBotActivityForTick = async ({
       notificationCandidates.length > 0
         ? (weights.likeComment ?? 0.1) * replyResponseRate
         : 0,
-    ignore:
-      weights.ignore ?? (commentCandidates.length > 0 ? 0.25 : 1),
+    ignore: weights.ignore ?? (commentCandidates.length > 0 ? 0.25 : 1),
   };
 
   const chosenAction = weightedChoice(weightedActions) || "ignore";
@@ -1323,8 +1468,8 @@ export const runBotActivityForTick = async ({
     commentCandidates.length === 0
       ? "no_eligible_posts"
       : chosenAction === "ignore"
-        ? "no_action_chosen_after_probability"
-        : "action_chosen";
+      ? "no_action_chosen_after_probability"
+      : "action_chosen";
   console.log(
     JSON.stringify({
       type: "bot_post_scan_result",
@@ -1350,10 +1495,7 @@ export const runBotActivityForTick = async ({
     let cooldownMs = minutesToMs(MIN_ACTION_SPACING_MINUTES);
     if (chosenAction === "commentOnPost") {
       cooldownMs = COMMENT_COOLDOWN_MS;
-    } else if (
-      chosenAction === "likePost" ||
-      chosenAction === "likeComment"
-    ) {
+    } else if (chosenAction === "likePost" || chosenAction === "likeComment") {
       cooldownMs = LIKE_COOLDOWN_MS;
     }
     if (lastActionAt && now - lastActionAt < cooldownMs) {
@@ -1369,8 +1511,8 @@ export const runBotActivityForTick = async ({
             chosenAction === "commentOnPost"
               ? "COMMENT"
               : chosenAction === "likePost" || chosenAction === "likeComment"
-                ? "LIKE"
-                : "OTHER",
+              ? "LIKE"
+              : "OTHER",
           reason: "action_spacing",
         })
       );
@@ -1428,8 +1570,7 @@ export const runBotActivityForTick = async ({
       if (globalCommentState) {
         globalCommentState.commentsScheduledThisTick =
           (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-        globalCommentState.hourCount =
-          (globalCommentState.hourCount ?? 0) + 1;
+        globalCommentState.hourCount = (globalCommentState.hourCount ?? 0) + 1;
         globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
         globalCommentState.dirty = true;
       }
@@ -1453,11 +1594,10 @@ export const runBotActivityForTick = async ({
     );
     if (target) {
       const threadRootCommentId = resolveThreadRootId(target);
-      const threadStats =
-        threadReplyCounts.get(threadRootCommentId) || {
-          count: 0,
-          lastAt: 0,
-        };
+      const threadStats = threadReplyCounts.get(threadRootCommentId) || {
+        count: 0,
+        lastAt: 0,
+      };
       const perThreadLimit =
         perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
       const threadCapReached =
@@ -1471,7 +1611,8 @@ export const runBotActivityForTick = async ({
         globalCommentState &&
         numberOrNull(globalCommentState.perHourLimit) !== null &&
         globalCommentState.hourCount >=
-          (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+          (globalCommentState.perHourLimit ??
+            GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
 
       const delayMs = getDelayFromRange(
         behavior.replyDelayMinutes ?? { min: 2, max: 15 }
@@ -1517,8 +1658,7 @@ export const runBotActivityForTick = async ({
             (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
           globalCommentState.hourCount =
             (globalCommentState.hourCount ?? 0) + 1;
-          globalCommentState.dayCount =
-            (globalCommentState.dayCount ?? 0) + 1;
+          globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
           globalCommentState.dirty = true;
         }
         console.log("bot_reply_planned", {
@@ -1654,10 +1794,7 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
     recentNotifications,
     botIdSet
   );
-  const globalCommentState = await loadGlobalCommentActivityState(
-    db,
-    nowValue
-  );
+  const globalCommentState = await loadGlobalCommentActivityState(db, nowValue);
 
   const batch = db.batch();
   let actionsScheduled = 0;
@@ -1748,7 +1885,9 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
       const actionRef = scheduledBotActionsCollection(db).doc();
       batch.set(actionRef, result.scheduledAction);
       actionsScheduled += 1;
-      if (result.scheduledAction.type === ScheduledBotActionType.COMMENT_ON_POST) {
+      if (
+        result.scheduledAction.type === ScheduledBotActionType.COMMENT_ON_POST
+      ) {
         commentsScheduled += 1;
       } else if (
         result.scheduledAction.type === ScheduledBotActionType.LIKE_POST ||
@@ -1813,8 +1952,7 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
             (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
           globalCommentState.hourCount =
             (globalCommentState.hourCount ?? 0) + 1;
-          globalCommentState.dayCount =
-            (globalCommentState.dayCount ?? 0) + 1;
+          globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
           globalCommentState.dirty = true;
         }
         const stateRef = botRuntimeStateCollection(db).doc(bot.uid);
