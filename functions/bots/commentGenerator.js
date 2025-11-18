@@ -1,5 +1,7 @@
 /* global process */
 
+import admin from "firebase-admin";
+
 /**
  * Comment generator for bot characters.
  * - Normalizes post + thread context
@@ -7,6 +9,19 @@
  * - Calls OpenAI for in-character replies
  * - Adds light human-like typos based on bot.behavior
  */
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+const db = admin.firestore();
+
+const hasPostWebMemoryForPost = async (postId) => {
+  if (!postId) return false;
+  const metaRef = db.doc(`posts/${postId}/meta/postWebMemory`);
+  const snap = await metaRef.get();
+  return snap.exists;
+};
 
 const DEFAULT_COMMENT_MODEL = process.env.BOT_COMMENT_MODEL || "gpt-4o-mini";
 
@@ -114,7 +129,7 @@ const buildSystemPrompt = () =>
     "- threadContext: array of recent comments in this thread (oldest first), each { id?, author, text, parentCommentId?, threadRootCommentId?, depth?, isTarget?, isThreadRoot? }",
     "- threadPath: ordered chain from the thread root to the target comment (oldest first), each { id?, author, text, depth?, isTarget?, isThreadRoot? }",
     "- topLevelComments: array of post-level comments (oldest first), each { id, author, text }",
-    "- character: metadata with communicationStyle, responseStyle, speechPatterns, styleInstructions, topicPreferences, favoriteGames, knowledgeRules, etc.",
+    "- character: metadata with communicationStyle, responseStyle, speechPatterns, styleInstructions, topicPreferences, favoriteGames, knowledgeRules, contextSkill, etc.",
     "- mode: 'TOP_LEVEL' or 'REPLY'  // engagement mode is pre-selected; do not change it.",
     "- targetCommentId: string | null  // if mode === 'REPLY', this is the comment you're answering.",
     "- targetType: 'post' or 'comment'  // informational; upstream logic already chose target type.",
@@ -139,6 +154,7 @@ const buildSystemPrompt = () =>
     "- favoriteGameMatches: subset of favoriteGames that appear in the current post/thread; these are your safe 'I've actually played this' titles.",
     "- character.topicPreferences: maps topic keys to { interest, emotion }; treat interest >= 0.9 as home turf.",
     "- character.knowledgeRules: hard constraints on what you claim to know first-hand; obey these strictly.",
+    "- character.contextSkill: reminder to assume shared context with the reader; follow it so you don't restate basics.",
     "- character.stanceProfile + stanceTemplates: how you shape agree/neutral/disagree replies.",
     "- character.styleInstructions + speechPatterns + interactionStyle: your tone, slang, formatting, and quirks.",
     "- character.signatureMoves: optional canned riffs triggered by certain words; use them sparingly when they naturally fit the context.",
@@ -149,6 +165,13 @@ const buildSystemPrompt = () =>
     `- BANNED PHRASES: ${bannedPhraseText}`,
     "- If a banned or similar phrase would appear, rewrite it in plain gamer talk.",
     "- Never narrate like a news article; react conversationally.",
+
+    "CONTEXT + OPENINGS:",
+    "- Assume you and the reader just read the post; do NOT restate the title or basic facts.",
+    "- Refer to the post with shorthand like 'this', 'that', 'they', 'this situation' unless extra detail is needed.",
+    "- First sentence should be an emotional reaction, quick opinion, or short question (never a recap).",
+    "- For REPLY mode, still react to parentComment in sentence one without summarizing the article.",
+    "- Only name the game/company when it adds new clarity; avoid headline-y phrasing like 'legal issue with {game}'.",
 
     "STYLE RULES:",
     "- Obey character communicationStyle, slang, formatting, styleInstructions, and safety/compliance rules exactly.",
@@ -229,6 +252,113 @@ const pickRandomWordMatch = (s, minLen) => {
   const matches = [...s.matchAll(regex)];
   if (!matches.length) return null;
   return matches[randomInt(0, matches.length - 1)];
+};
+
+// Light guardrail to trim headline-style openers
+const restatementKeywords = [
+  "issue",
+  "issues",
+  "controversy",
+  "controversies",
+  "delay",
+  "delays",
+  "delayed",
+  "lawsuit",
+  "legal",
+  "news",
+  "drama",
+  "problem",
+  "problems",
+  "scandal",
+];
+
+const stopWords = new Set([
+  "the",
+  "a",
+  "an",
+  "of",
+  "and",
+  "about",
+  "with",
+  "over",
+  "under",
+  "for",
+  "from",
+  "into",
+  "onto",
+  "their",
+  "this",
+  "that",
+  "game",
+  "games",
+  "legal",
+  "issue",
+  "issues",
+  "delay",
+  "delays",
+  "news",
+  "controversy",
+  "controversies",
+  "faces",
+  "face",
+]);
+
+const extractTitleKeywords = (title) => {
+  if (!title) return [];
+  return title
+    .toLowerCase()
+    .split(/[^a-z0-9+]+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 4 && !stopWords.has(w));
+};
+
+const pickContextualOpener = (sentence) => {
+  const lower = (sentence || "").toLowerCase();
+  if (/(lawsuit|legal)/.test(lower)) return "Oof, this legal mess is rough.";
+  if (/(delay|delays|delayed)/.test(lower)) return "Waiting this out is rough.";
+  if (/(controversy|issue|issues|problem|drama|scandal)/.test(lower)) {
+    return "This is such a mess.";
+  }
+  if (/news/.test(lower)) return "Wild update.";
+  return "Yeah, this is a lot.";
+};
+
+export const rewriteHeadlineyOpener = (comment, postTitle = "") => {
+  if (!comment || typeof comment !== "string") return comment;
+
+  const trimmed = comment.trim();
+  if (!trimmed) return comment;
+
+  const sentences = trimmed.split(/(?<=[.!?])\\s+/).filter(Boolean);
+  if (!sentences.length) return comment;
+
+  const firstSentence = sentences[0].trim();
+  if (!firstSentence) return comment;
+
+  const keywords = extractTitleKeywords(postTitle);
+  if (!keywords.length) return comment;
+
+  const lowerFirst = firstSentence.toLowerCase();
+  const overlap = keywords.filter((kw) => lowerFirst.includes(kw)).length;
+  const minOverlap = Math.min(2, Math.max(1, keywords.length));
+  const hasRestateKeyword = restatementKeywords.some((kw) =>
+    lowerFirst.includes(kw)
+  );
+  const startsHeadlineLead = /^(this|that|the)\b/.test(lowerFirst);
+  const looksLikeRecap =
+    /^this (whole )?(legal|delay|news|controversy|issue)/i.test(lowerFirst) ||
+    (startsHeadlineLead &&
+      /\b(legal|controvers|issue|delay|lawsuit|drama|problem|scandal)\b/i.test(
+        firstSentence
+      ) &&
+      (firstSentence.length >= 40 || overlap >= Math.min(2, keywords.length)));
+
+  if (hasRestateKeyword && overlap >= minOverlap && looksLikeRecap) {
+    sentences[0] = pickContextualOpener(firstSentence);
+    return sentences.join(" ");
+  }
+
+  return comment;
 };
 
 /**
@@ -346,6 +476,9 @@ export const generateInCharacterComment = async ({
 }) => {
   if (!openAI) throw new Error("OpenAI client not provided");
 
+  const postId = post?.id ?? null;
+  const hasPostWebMemory = await hasPostWebMemoryForPost(postId);
+
   const resolvedMode =
     typeof mode === "string" && mode.toUpperCase() === "REPLY"
       ? "REPLY"
@@ -395,13 +528,18 @@ export const generateInCharacterComment = async ({
     return lowered && postTextForMatch.includes(lowered);
   });
 
+  const postWebMemoryForPayload = hasPostWebMemory
+    ? postWebMemory ?? null
+    : null;
+
   const payload = {
     post: normalizedPost,
     parentComment: normalizedParentComment,
     threadContext: normalizedThreadContext,
     threadPath: normalizedThreadPath,
     topLevelComments: normalizedTopLevelComments,
-    postWebMemory: postWebMemory ?? null,
+    postWebMemory: postWebMemoryForPayload,
+    hasPostWebMemory,
     character: bot, // pass through entire profile
     mode: resolvedMode,
     targetCommentId: resolvedTargetCommentId,
@@ -419,6 +557,8 @@ export const generateInCharacterComment = async ({
   // Logging (safe-ish summary)
   try {
     const payloadForLog = {
+      postId,
+      hasPostWebMemory,
       model,
       mode: payload.mode,
       targetType: payload.targetType,
@@ -429,13 +569,9 @@ export const generateInCharacterComment = async ({
       threadPathCount: normalizedThreadPath.length,
       topLevelCommentsCount: normalizedTopLevelComments.length,
       favoriteGameMatches,
-      hasPostWebMemory: Boolean(postWebMemory),
     };
 
-    console.log(
-      "[commentGenerator] Prepared OpenAI payload:",
-      JSON.stringify(payloadForLog, null, 2)
-    );
+    console.log("[commentGenerator] Prepared OpenAI payload", payloadForLog);
   } catch (error) {
     console.warn(
       "[commentGenerator] Failed to serialize OpenAI payload for logging:",
@@ -474,7 +610,11 @@ export const generateInCharacterComment = async ({
 
   // Trim overlong responses as a safety belt
   const rawComment = parsed.comment.trim();
-  const sentences = rawComment.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const openerAdjusted = rewriteHeadlineyOpener(
+    rawComment,
+    normalizedPost.postTitle
+  );
+  const sentences = openerAdjusted.split(/(?<=[.!?])\s+/).filter(Boolean);
   const trimmedComment = sentences.slice(0, 3).join(" ").slice(0, 400);
 
   const humanizedComment = introduceSmallTypos(trimmedComment, bot);

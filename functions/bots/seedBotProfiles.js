@@ -98,6 +98,8 @@ const RAW_BOT_PROFILES = [
       "be heard, correct misinformation, discover hidden gems early, prove competence with receipts",
     responseStyle:
       "short, direct, sometimes curt; cites data/patch notes and concrete steps",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     // Operability & pacing
     behavior: {
@@ -300,6 +302,8 @@ const RAW_BOT_PROFILES = [
       "jumps in to clarify, link resources, or offer step-by-step help when others seem confused or anxious",
     responseStyle:
       "hesitant, polite, informative; admits when he hasn't played something directly",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.4,
@@ -485,6 +489,8 @@ const RAW_BOT_PROFILES = [
     flaw: "turns everything into a luigi victory lap",
     motivation: "prove green > red while keeping threads fun",
     responseStyle: "fast, punchy, playful one-liners with braggy undertone",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.6,
@@ -664,6 +670,8 @@ const RAW_BOT_PROFILES = [
     motivation: "post because silence is scarier",
     responseStyle:
       "deadpan one-liners that sound like tweets from a retired internet veteran",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.6,
@@ -844,6 +852,8 @@ const RAW_BOT_PROFILES = [
       "surface facts fast, compare narratives, link sources so readers decide",
     responseStyle:
       "succinct, link-first, emphasizes uncertainty and evidence over vibes",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.42,
@@ -1048,6 +1058,8 @@ const RAW_BOT_PROFILES = [
       "share finds, react to announcements, help people discover titles and collectibles",
     responseStyle:
       "brief reaction + short follow-up with source or tweet thread when needed",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     // Behavior
     behavior: {
@@ -1257,6 +1269,8 @@ const RAW_BOT_PROFILES = [
       "keep threads lively, poke fun at nonsense, be funny without punching down",
     responseStyle:
       "short quips; playful needling; occasional 'dumb-on-purpose' questions",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.48,
@@ -1487,6 +1501,8 @@ const RAW_BOT_PROFILES = [
     flaw: "wanders off-topic in her excitement; can over-metaphor",
     motivation: "chimes in when art direction, sound, or design sparks joy",
     responseStyle: "poetic, whimsical, positive",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
 
     behavior: {
       baseResponseProbability: 0.45,
@@ -1724,6 +1740,8 @@ const RAW_BOT_PROFILES = [
     motivation: "to make people laugh or say 'what the hell did i just read'",
     responseStyle:
       "chaotic, surreal, confident nonsense with unexpected sincerity",
+    contextSkill:
+      "Reply as if you and the reader both just read the post. Avoid restating the title or basic facts. Use natural shorthand like 'this', 'that', 'they', or 'this whole situation' unless extra detail is truly needed for clarity.",
     behavior: {
       baseResponseProbability: 0.7, // higher activity
       replyResponseProbability: 0.85,

@@ -76,6 +76,55 @@ const mentionRegex = /@([A-Za-z0-9_-]+)/g;
 const numberOrNull = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+const normalizeMentions = (raw) => {
+  const mentions = new Set();
+  const addValue = (value) => {
+    if (value === undefined || value === null) return;
+    const stringValue = `${value}`;
+    mentions.add(stringValue);
+    const lowerValue = stringValue.toLowerCase();
+    mentions.add(lowerValue);
+  };
+
+  if (!raw) {
+    return mentions;
+  }
+  if (raw instanceof Set) {
+    raw.forEach(addValue);
+    return mentions;
+  }
+  if (raw instanceof Map) {
+    raw.forEach((_, key) => addValue(key));
+    return mentions;
+  }
+  if (Array.isArray(raw)) {
+    raw.forEach(addValue);
+    return mentions;
+  }
+  if (typeof raw === "object") {
+    Object.keys(raw).forEach(addValue);
+    return mentions;
+  }
+  addValue(raw);
+  return mentions;
+};
+
+const buildBotMentionIdentifiers = (bot = {}) => {
+  const identifiers = new Set();
+  const addIdentifier = (value) => {
+    if (!value) return;
+    const stringValue = `${value}`;
+    identifiers.add(stringValue);
+    identifiers.add(stringValue.toLowerCase());
+  };
+  addIdentifier(bot.uid);
+  if (bot.id && bot.id !== bot.uid) {
+    addIdentifier(bot.id);
+  }
+  addIdentifier(bot.userName);
+  return identifiers;
+};
+
 /**
  * Check if a bot has already replied to a specific comment and schedule a reply if allowed.
  * This ensures bots reply at most once per comment, regardless of cooldown resets.
@@ -92,7 +141,7 @@ const numberOrNull = (value) =>
  * @param {Object} params.perBotCommentLimits
  * @returns {Promise<{scheduled: boolean, scheduledAction?: Object, lastActionAt?: number}>}
  */
-async function maybeScheduleDirectReplyForComment({
+export async function maybeScheduleDirectReplyForComment({
   db,
   bot,
   postId,
@@ -124,6 +173,22 @@ async function maybeScheduleDirectReplyForComment({
 
   const commentData = commentSnap.data() || {};
   const botRepliesHandled = commentData.botRepliesHandled || {};
+  const mentionSet = normalizeMentions(commentData.mentions);
+  const botMentionIdentifiers = buildBotMentionIdentifiers(bot);
+  const botMentioned = Array.from(botMentionIdentifiers).some((identifier) =>
+    mentionSet.has(identifier)
+  );
+
+  if (!botMentioned) {
+    console.log("bot_reply_candidate_skip", {
+      type: "bot_reply_candidate_skip",
+      botId: bot.uid,
+      postId,
+      commentId,
+      reason: "bot_not_mentioned",
+    });
+    return { scheduled: false };
+  }
 
   // Check if this bot has already replied to this comment
   const botHasReplied =
@@ -167,32 +232,36 @@ async function maybeScheduleDirectReplyForComment({
 
   // Additional safety check: look for existing pending REPLY actions for this bot+commentId
   // This is an extra guard in case botRepliesHandled write failed
-  try {
-    const existingActionsQuery = scheduledBotActionsCollection(db)
-      .where("botId", "==", bot.uid)
-      .where("parentCommentId", "==", commentId)
-      .where("type", "==", ScheduledBotActionType.REPLY_TO_COMMENT)
-      .where("scheduledAt", ">", nowMs - minutesToMs(60 * 24)) // Last 24 hours
-      .limit(1);
+  const existingActionsQuery = scheduledBotActionsCollection(db)
+    .where("botId", "==", bot.uid)
+    .where("parentCommentId", "==", commentId)
+    .where("type", "==", ScheduledBotActionType.REPLY_TO_COMMENT)
+    .where("scheduledAt", ">", nowMs - minutesToMs(60 * 24)) // Last 24 hours
+    .limit(1);
 
-    const existingActionsSnap = await existingActionsQuery.get();
-    if (!existingActionsSnap.empty) {
-      console.log("bot_reply_candidate_skip", {
-        type: "bot_reply_candidate_skip",
-        botId: bot.uid,
-        postId,
-        commentId,
-        reason: "pending_reply_exists",
-      });
-      return { scheduled: false };
-    }
+  let existingActionsSnap = null;
+  try {
+    existingActionsSnap = await existingActionsQuery.get();
   } catch (error) {
-    // Log but don't fail - this is just an extra safety check
-    console.warn("Failed to check for existing reply actions", {
+    console.error("Failed to check for existing reply actions", {
+      error: error?.message,
+      code: error?.code,
+      stack: error?.stack,
       botId: bot.uid,
-      commentId,
-      error: error?.message || error,
+      commentId: commentData?.id || commentData?.commentId || commentId,
     });
+    return { scheduled: false };
+  }
+
+  if (existingActionsSnap && !existingActionsSnap.empty) {
+    console.log("bot_reply_candidate_skip", {
+      type: "bot_reply_candidate_skip",
+      botId: bot.uid,
+      postId,
+      commentId,
+      reason: "pending_reply_exists",
+    });
+    return { scheduled: false };
   }
 
   // Check thread and global caps
@@ -259,9 +328,7 @@ async function maybeScheduleDirectReplyForComment({
         shouldAskQuestion,
         intent: shouldDisagree ? "disagree" : "default",
         repliedToBotId: commentData.parentAuthorId ?? null,
-        triggeredByMention: (commentData.mentions || new Set()).has(
-          bot.userName?.toLowerCase() ?? ""
-        ),
+        triggeredByMention: botMentioned,
         targetCommentId: commentId,
         origin: "activity_tick",
         plannedActionId,
@@ -1075,13 +1142,16 @@ const normalizeActionWeights = (weights = {}) => {
 const chooseNotificationCandidate = (bot, candidates, now) => {
   if (!candidates.length) return null;
 
+  const identifiersToMatch = Array.from(buildBotMentionIdentifiers(bot));
+
   const scored = candidates
     .map((comment) => {
+      const mentionSet = normalizeMentions(comment.mentions);
       let score = 1;
       if (comment.parentAuthorId === bot.uid) {
         score += 0.9;
       }
-      if (comment.mentions?.has(bot.userName?.toLowerCase?.() ?? "")) {
+      if (identifiersToMatch.some((identifier) => mentionSet.has(identifier))) {
         score += 0.6;
       }
       const recencyMinutes = (now - comment.createdAtMs) / minutesToMs(1);
@@ -1215,7 +1285,7 @@ export const runBotActivityForTick = async ({
   );
   let effectivePostSince = postWindowSince;
 
-  const botUserNameLower = bot.userName ? bot.userName.toLowerCase() : "";
+  const botMentionIdentifiers = Array.from(buildBotMentionIdentifiers(bot));
 
   const buildNotificationBuckets = (windowStartMs) => {
     const notificationList = [];
@@ -1223,15 +1293,18 @@ export const runBotActivityForTick = async ({
     for (const comment of notifications) {
       if (comment.createdAtMs < windowStartMs) continue;
       if (comment.authorId === bot.uid) continue;
+      const mentionSet = normalizeMentions(comment.mentions);
       const parentAuthorMatchesBot =
         comment.parentAuthorBotId === bot.uid ||
         comment.parentAuthorId === bot.uid;
-      const mentionsBot =
-        botUserNameLower && comment.mentions?.has(botUserNameLower);
+      const mentionsBot = botMentionIdentifiers.some((identifier) =>
+        mentionSet.has(identifier)
+      );
       const targetsBot = parentAuthorMatchesBot || mentionsBot;
       if (!targetsBot) continue;
       const normalized = {
         ...comment,
+        mentions: mentionSet,
         threadRootCommentId: resolveThreadRootId(comment),
       };
       notificationList.push(normalized);
