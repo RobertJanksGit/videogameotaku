@@ -19,11 +19,10 @@ const shouldFallbackToRedirect = (error) => {
   }
 
   const code = error.code.toLowerCase();
-  return (
-    code.includes("popup-blocked") ||
-    code.includes("popup-closed") ||
-    code.includes("cancelled-popup-request")
-  );
+
+  // Only fall back to redirect when popups are genuinely blocked or unsupported.
+  // If the user closes the popup or cancels, we should NOT redirect them.
+  return code.includes("popup-blocked") || code.includes("operation-not-supported");
 };
 
 /**

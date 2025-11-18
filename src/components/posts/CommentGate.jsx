@@ -38,9 +38,6 @@ const CommentGate = ({
   };
 
   const handleCloseGate = () => {
-    if (isGoogleLoading) {
-      return;
-    }
     setGateError("");
     setIsGateOpen(false);
   };

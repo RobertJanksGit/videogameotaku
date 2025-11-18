@@ -29,9 +29,6 @@ const InlineCommentAuthPrompt = ({
   };
 
   const handleClose = () => {
-    if (activeProvider) {
-      return;
-    }
     resetState();
     onClose();
   };
@@ -89,7 +86,7 @@ const InlineCommentAuthPrompt = ({
         key={type}
         type="button"
         onClick={onClick}
-        disabled={Boolean(activeProvider)}
+        disabled={type === activeProvider}
         className={`${baseClasses} ${appearanceClasses} ${
           isActive ? "opacity-70 cursor-wait" : ""
         }`}
