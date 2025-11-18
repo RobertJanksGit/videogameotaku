@@ -293,6 +293,93 @@ const buildThreadContext = async (
   }));
 };
 
+const fetchThreadContextForModel = async (
+  db,
+  { postId, threadRootCommentId, targetCommentId }
+) => {
+  if (!postId || !targetCommentId) {
+    return {
+      targetComment: null,
+      ancestors: [],
+      depth: 0,
+      allComments: [],
+    };
+  }
+
+  const threadRootId = threadRootCommentId || targetCommentId;
+
+  try {
+    const snapshot = await db
+      .collection(POSTS_COLLECTION)
+      .doc(postId)
+      .collection(COMMENTS_COLLECTION)
+      .where("threadRootCommentId", "==", threadRootId || null)
+      .orderBy("createdAt", "asc")
+      .limit(50)
+      .get();
+
+    const comments = [];
+    for (const doc of snapshot.docs) {
+      const data = doc.data() || {};
+      comments.push({
+        id: doc.id,
+        parentCommentId: data.parentCommentId ?? data.parentId ?? null,
+        authorId: data.authorId ?? null,
+        authorIsBot: Boolean(
+          data.isBotAuthor ?? data.authorIsBot ?? data.author?.isBot
+        ),
+        content: data.content ?? data.text ?? "",
+        createdAt: data.createdAt ?? null,
+      });
+    }
+
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    const target = byId.get(String(targetCommentId)) ?? null;
+
+    const ancestors = [];
+    let current = target;
+    while (current && current.parentCommentId) {
+      const parent = byId.get(String(current.parentCommentId));
+      if (!parent) break;
+      ancestors.unshift(parent);
+      current = parent;
+    }
+
+    const depth = ancestors.length;
+
+    return {
+      targetComment: target,
+      ancestors,
+      depth,
+      allComments: comments,
+    };
+  } catch (error) {
+    console.log("Failed to load full thread context for model", {
+      postId,
+      threadRootCommentId: threadRootId,
+      targetCommentId,
+      error: error.message,
+    });
+    return {
+      targetComment: null,
+      ancestors: [],
+      depth: 0,
+      allComments: [],
+    };
+  }
+};
+
+const buildTranscriptForModel = (ctx) => {
+  if (!ctx || !Array.isArray(ctx.allComments)) return "";
+  const lines = [];
+  for (const comment of ctx.allComments) {
+    if (!comment?.content) continue;
+    const role = comment.authorIsBot ? "bot" : "user";
+    lines.push(`[${role}] ${comment.content}`);
+  }
+  return lines.join("\n");
+};
+
 const buildThreadPath = async (
   db,
   parentComment,
@@ -1012,6 +1099,8 @@ const processSingleAction = async ({
         let threadContextForPrompt = promptThreadContext;
         let threadPathForPrompt = promptThreadPath;
         let parentForPrompt = null;
+        let fullThreadContext = null;
+        let replyDepth = null;
 
         if (replyTarget) {
           promptThreadRootId =
@@ -1024,7 +1113,9 @@ const processSingleAction = async ({
           const rebuiltThreadContext = await buildThreadContext(
             db,
             replyTarget,
-            promptThreadRootId
+            promptThreadRootId,
+            contextResult.post.id,
+            action.id
           );
           if (Array.isArray(rebuiltThreadContext) && rebuiltThreadContext.length) {
             threadContextForPrompt = rebuiltThreadContext;
@@ -1035,7 +1126,9 @@ const processSingleAction = async ({
           const rebuiltThreadPath = await buildThreadPath(
             db,
             replyTarget,
-            promptThreadRootId
+            promptThreadRootId,
+            contextResult.post.id,
+            action.id
           );
           if (Array.isArray(rebuiltThreadPath) && rebuiltThreadPath.length) {
             threadPathForPrompt = rebuiltThreadPath;
@@ -1067,6 +1160,47 @@ const processSingleAction = async ({
               })
             : null;
 
+        if (desiredMode === "REPLY" && replyTarget) {
+          try {
+            const ctx = await fetchThreadContextForModel(db, {
+              postId: contextResult.post.id,
+              threadRootCommentId: promptThreadRootId,
+              targetCommentId: replyTarget.id,
+            });
+            if (ctx && ctx.targetComment) {
+              const transcript = buildTranscriptForModel(ctx);
+              fullThreadContext = {
+                depth: ctx.depth,
+                targetComment: {
+                  id: ctx.targetComment.id,
+                  authorIsBot: ctx.targetComment.authorIsBot,
+                  content: ctx.targetComment.content,
+                },
+                ancestors: ctx.ancestors.map((c) => ({
+                  id: c.id,
+                  authorIsBot: c.authorIsBot,
+                  content: c.content,
+                })),
+                transcript,
+              };
+              replyDepth = ctx.depth;
+            }
+          } catch (error) {
+            logger?.warn?.("Failed to build full thread context for reply", {
+              botUid: bot.uid,
+              postId: contextResult.post?.id,
+              actionId: action.id,
+              error: error.message,
+            });
+          }
+        }
+
+        const metadataForGeneration = {
+          ...metadata,
+          ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
+          ...(fullThreadContext ? { threadContext: fullThreadContext } : {}),
+        };
+
         const generation = await generateInCharacterComment({
           openAI,
           bot,
@@ -1078,7 +1212,7 @@ const processSingleAction = async ({
           threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
           postWebMemory: postWebMemoryForPrompt,
-          metadata,
+          metadata: metadataForGeneration,
         });
         const finalComment = maybeAddTypos(bot, generation.comment);
 
@@ -1205,6 +1339,52 @@ const processSingleAction = async ({
           }
         );
 
+        let fullThreadContext = null;
+        let replyDepth = null;
+
+        try {
+          const ctx = await fetchThreadContextForModel(db, {
+            postId: contextResult.post.id,
+            threadRootCommentId:
+              contextResult.threadRootCommentId ??
+              contextResult.parentComment?.threadRootCommentId ??
+              contextResult.parentComment?.id ??
+              null,
+            targetCommentId,
+          });
+          if (ctx && ctx.targetComment) {
+            const transcript = buildTranscriptForModel(ctx);
+            fullThreadContext = {
+              depth: ctx.depth,
+              targetComment: {
+                id: ctx.targetComment.id,
+                authorIsBot: ctx.targetComment.authorIsBot,
+                content: ctx.targetComment.content,
+              },
+              ancestors: ctx.ancestors.map((c) => ({
+                id: c.id,
+                authorIsBot: c.authorIsBot,
+                content: c.content,
+              })),
+              transcript,
+            };
+            replyDepth = ctx.depth;
+          }
+        } catch (error) {
+          logger?.warn?.("Failed to build full thread context for direct reply", {
+            botUid: bot.uid,
+            postId: contextResult.post?.id,
+            actionId: action.id,
+            error: error.message,
+          });
+        }
+
+        const metadataForGeneration = {
+          ...metadata,
+          ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
+          ...(fullThreadContext ? { threadContext: fullThreadContext } : {}),
+        };
+
         const generation = await generateInCharacterComment({
           openAI,
           bot,
@@ -1216,7 +1396,7 @@ const processSingleAction = async ({
           threadPath: normalizedThreadPath,
           topLevelComments: sanitizedTopLevelContext,
           postWebMemory: postWebMemoryForPrompt,
-          metadata,
+          metadata: metadataForGeneration,
         });
         const finalComment = maybeAddTypos(bot, generation.comment);
         const commentId = await createReplyHelper(db, state, {

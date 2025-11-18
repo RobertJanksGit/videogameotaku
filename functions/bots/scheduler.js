@@ -151,6 +151,26 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
     ...commentDocData,
     ...(providedCommentData || {}),
   };
+
+  // Defensive guard: never schedule a reply to a bot-authored comment
+  const isBotAuthor =
+    (commentData?.authorId && botUserId && commentData.authorId === botUserId) ||
+    commentData?.authorIsBot === true ||
+    commentData?.isBotAuthor === true;
+
+  if (isBotAuthor) {
+    console.log(
+      "bot_reply_candidate_skip",
+      JSON.stringify({
+        type: "bot_reply_candidate_skip",
+        botId: botId ?? bot?.uid,
+        postId: commentData.postId ?? commentData.postRefId ?? postId,
+        commentId: commentData.id ?? commentData.commentId ?? commentId,
+        reason: "author_is_bot",
+      })
+    );
+    return { scheduled: false };
+  }
   const mentionsSet = normalizeMentions(commentData.mentions);
   const lowerMentionsSet = new Set(
     Array.from(mentionsSet).map((value) => value?.toString().toLowerCase())
@@ -1325,19 +1345,46 @@ export const runBotActivityForTick = async ({
       : botUserNameForMatching.toString().toLowerCase();
 
   const buildNotificationBuckets = (windowStartMs) => {
+    const botUserId =
+      botUserIdForMatching ?? botIdForMatching ?? bot.uid ?? null;
     const notificationList = [];
     const replyList = [];
     for (const comment of notifications) {
       if (comment.createdAtMs < windowStartMs) continue;
-      if (comment.authorId === bot.uid) continue;
+      const authorId = comment.authorId ?? null;
+      const parentAuthorId =
+        comment.parentAuthorId ?? comment.parentUserId ?? null;
+      const authorIsBot =
+        (authorId && botUserId && authorId === botUserId) ||
+        comment.authorIsBot === true ||
+        comment.isBotAuthor === true;
+      const parentIsBot =
+        (parentAuthorId && botUserId && parentAuthorId === botUserId) ||
+        comment.parentAuthorIsBot === true ||
+        comment.parentComment?.authorIsBot === true ||
+        comment.parentComment?.isBotAuthor === true;
+
+      // Never notify the bot about its own comments
+      if (authorIsBot) {
+        console.log(
+          "bot_reply_candidate_skip",
+          JSON.stringify({
+            type: "bot_reply_candidate_skip",
+            botId: bot.uid,
+            postId: comment.postId ?? null,
+            commentId: comment.id ?? null,
+            reason: "author_is_bot",
+          })
+        );
+        continue;
+      }
+
       const mentionSet = normalizeMentions(comment.mentions);
       const lowerMentionSet = new Set();
       for (const value of mentionSet) {
         if (value === undefined || value === null) continue;
         lowerMentionSet.add(value.toString().toLowerCase());
       }
-      const parentAuthorId =
-        comment.parentAuthorId ?? comment.parentUserId ?? null;
       const parentAuthorMatchesBot =
         (botIdForMatching && parentAuthorId === botIdForMatching) ||
         (botUserIdForMatching && parentAuthorId === botUserIdForMatching);
@@ -1356,17 +1403,24 @@ export const runBotActivityForTick = async ({
       notificationList.push(normalized);
       const isReply = Boolean(normalized.parentCommentId);
       const isHumanAuthor = normalized.authorIsBot === false;
+      const parentIsBotForReason =
+        parentAuthorMatchesBot ||
+        normalized.parentAuthorIsBot === true ||
+        normalized.parentComment?.authorIsBot === true ||
+        normalized.parentComment?.isBotAuthor === true;
+      const reason =
+        parentIsBotForReason && isHumanAuthor ? "human_reply_to_bot" : "eligible";
       if (isReply && parentAuthorMatchesBot && isHumanAuthor) {
         replyList.push({
           ...normalized,
-          triggerReason: "human_reply_to_bot",
+          triggerReason: reason,
         });
         console.log("bot_reply_candidate", {
           botId: bot.uid,
           postId: normalized.postId,
           commentId: normalized.id,
           parentCommentId: normalized.parentCommentId,
-          reason: "human_reply_to_bot",
+          reason,
         });
       }
     }

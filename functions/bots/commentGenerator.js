@@ -532,6 +532,12 @@ export const generateInCharacterComment = async ({
     ? postWebMemory ?? null
     : null;
 
+  const replyDepth =
+    typeof metadata.replyDepth === "number" && Number.isFinite(metadata.replyDepth)
+      ? metadata.replyDepth
+      : null;
+  const structuredThreadContext = metadata.threadContext ?? null;
+
   const payload = {
     post: normalizedPost,
     parentComment: normalizedParentComment,
@@ -550,7 +556,24 @@ export const generateInCharacterComment = async ({
       intent: metadata.intent ?? "default",
       triggeredByMention: Boolean(metadata.triggeredByMention),
       repliedToBotId: metadata.repliedToBotId ?? null,
+      ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
     },
+    ...(structuredThreadContext
+      ? {
+          threadContextFull: {
+            depth:
+              typeof structuredThreadContext.depth === "number" &&
+              Number.isFinite(structuredThreadContext.depth)
+                ? structuredThreadContext.depth
+                : null,
+            targetComment: structuredThreadContext.targetComment ?? null,
+            ancestors: Array.isArray(structuredThreadContext.ancestors)
+              ? structuredThreadContext.ancestors
+              : [],
+            transcript: structuredThreadContext.transcript ?? "",
+          },
+        }
+      : {}),
     favoriteGameMatches,
   };
 
