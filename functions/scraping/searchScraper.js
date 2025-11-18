@@ -1,39 +1,54 @@
 /* global process */
 
+import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
 
 export const DEFAULT_MAX_RESULTS = 3;
 const DEFAULT_BASE_URL =
   process.env.SEARCH_ENGINE_BASE_URL || "https://duckduckgo.com/?q=";
-const DEFAULT_EXECUTABLE_PATH = "/usr/bin/google-chrome";
-const CHROME_LAUNCH_ARGS = [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-  "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--no-first-run",
-  "--no-zygote",
-  "--single-process",
-];
 
 let browserPromise = null;
 
-const getExecutablePath = () =>
-  process.env.PUPPETEER_EXECUTABLE_PATH ?? DEFAULT_EXECUTABLE_PATH;
+const resolveExecutablePath = async () => {
+  try {
+    const chromiumPath = await chromium.executablePath();
+    if (chromiumPath) return chromiumPath;
+  } catch (error) {
+    console.warn("[scrapeSearchResults] chromium.executablePath failed", {
+      error: error?.message ?? error,
+    });
+  }
+
+  if (process.env.FUNCTIONS_HTTP_PROXY) {
+    throw new Error(
+      "Chromium executable path unavailable inside Cloud Functions runtime."
+    );
+  }
+
+  try {
+    const { executablePath } = await import("puppeteer");
+    return executablePath();
+  } catch (error) {
+    throw new Error(
+      "Chromium executable path unavailable locally and Puppeteer is not installed. Install `puppeteer` for local development."
+    );
+  }
+};
 
 export const getBrowser = async () => {
   if (browserPromise) return browserPromise;
 
-  const executablePath = getExecutablePath();
-  browserPromise = puppeteer
-    .launch({
-      headless: true,
-      executablePath,
-      args: CHROME_LAUNCH_ARGS,
-    })
-    .catch((error) => {
-      console.error("[scrapeSearchResults] Failed to launch Chrome", {
+  browserPromise = resolveExecutablePath()
+    .then((executablePath) =>
+      puppeteer.launch({
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
         executablePath,
+        headless: chromium.headless,
+      })
+    )
+    .catch((error) => {
+      console.error("[scrapeSearchResults] Failed to launch Chromium", {
         error: error?.message ?? error,
       });
       browserPromise = null;
@@ -76,12 +91,10 @@ const dedupeResultsByUrl = (results) => {
   return Array.from(bestByUrl.values());
 };
 
-export const scrapeSearchResults = async (
-  queries,
-  options = {}
-) => {
+export const scrapeSearchResults = async (queries, options = {}) => {
   const maxResultsPerQuery =
-    Number.isFinite(options.maxResultsPerQuery) && options.maxResultsPerQuery > 0
+    Number.isFinite(options.maxResultsPerQuery) &&
+    options.maxResultsPerQuery > 0
       ? options.maxResultsPerQuery
       : DEFAULT_MAX_RESULTS;
 
@@ -176,9 +189,15 @@ export const closeBrowser = async () => {
   if (!browserPromise) return;
   try {
     const browser = await browserPromise;
-    await browser?.close();
+    if (!browser) return;
+    if (typeof browser.close === "function") {
+      await browser.close();
+    }
   } catch (error) {
-    console.warn("[scrapeSearchResults] failed to close browser", error?.message);
+    console.warn(
+      "[scrapeSearchResults] failed to close browser",
+      error?.message
+    );
   } finally {
     browserPromise = null;
   }

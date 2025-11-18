@@ -126,7 +126,9 @@ async function maybeScheduleDirectReplyForComment({
   const botRepliesHandled = commentData.botRepliesHandled || {};
 
   // Check if this bot has already replied to this comment
-  if (botRepliesHandled[bot.id] === true) {
+  const botHasReplied =
+    botRepliesHandled[bot.uid] === true || botRepliesHandled[bot.id] === true;
+  if (botHasReplied) {
     console.log("bot_reply_candidate_skip", {
       type: "bot_reply_candidate_skip",
       botId: bot.uid,
@@ -1592,83 +1594,25 @@ export const runBotActivityForTick = async ({
       notificationCandidates,
       now
     );
+
     if (target) {
-      const threadRootCommentId = resolveThreadRootId(target);
-      const threadStats = threadReplyCounts.get(threadRootCommentId) || {
-        count: 0,
-        lastAt: 0,
-      };
-      const perThreadLimit =
-        perBotCommentLimits?.perPost ?? MAX_BOT_COMMENTS_PER_POST;
-      const threadCapReached =
-        perThreadLimit >= 0 && threadStats.count >= perThreadLimit;
-      const globalTickLimitReached =
-        globalCommentState &&
-        numberOrNull(globalCommentState.perTickLimit) !== null &&
-        globalCommentState.commentsScheduledThisTick >=
-          globalCommentState.perTickLimit;
-      const globalHourCapReached =
-        globalCommentState &&
-        numberOrNull(globalCommentState.perHourLimit) !== null &&
-        globalCommentState.hourCount >=
-          (globalCommentState.perHourLimit ??
-            GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+      const result = await maybeScheduleDirectReplyForComment({
+        db,
+        bot,
+        postId: target.postId,
+        commentId: target.id,
+        nowMs: now,
+        runtimeState,
+        globalCommentState,
+        threadReplyCounts,
+        perBotCommentLimits,
+      });
 
-      const delayMs = getDelayFromRange(
-        behavior.replyDelayMinutes ?? { min: 2, max: 15 }
-      );
-      const scheduledAt = now + delayMs;
-      const shouldAskQuestion = randomBoolean(behavior.questionProbability);
-      const shouldDisagree = randomBoolean(behavior.disagreementProbability);
-      const plannedActionId = `plan_reply_${bot.uid}_${target.id}_${scheduledAt}`;
-
-      if (
-        !threadCapReached &&
-        !globalTickLimitReached &&
-        !globalHourCapReached
-      ) {
-        scheduledAction = buildScheduledBotActionPayload(
-          ScheduledBotActionType.REPLY_TO_COMMENT,
-          {
-            botId: bot.uid,
-            postId: target.postId,
-            scheduledAt,
-            parentCommentId: target.id,
-            threadRootCommentId,
-            metadata: {
-              mode: "REPLY",
-              targetType: "comment",
-              shouldAskQuestion,
-              intent: shouldDisagree ? "disagree" : "default",
-              repliedToBotId: target.parentAuthorId ?? null,
-              triggeredByMention:
-                target.mentions?.has(botUserNameLower) ?? false,
-              targetCommentId: target.id,
-              origin: "activity_tick",
-              plannedActionId,
-            },
-          }
-        );
-        threadReplyCounts.set(threadRootCommentId, {
-          count: (threadStats.count ?? 0) + 1,
-          lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
-        });
-        if (globalCommentState) {
-          globalCommentState.commentsScheduledThisTick =
-            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-          globalCommentState.hourCount =
-            (globalCommentState.hourCount ?? 0) + 1;
-          globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
-          globalCommentState.dirty = true;
+      if (result.scheduled) {
+        scheduledAction = result.scheduledAction;
+        if (Number.isFinite(result.lastActionAt)) {
+          lastActionAt = result.lastActionAt;
         }
-        console.log("bot_reply_planned", {
-          botId: bot.uid,
-          postId: target.postId,
-          threadRootCommentId,
-          targetCommentId: target.id,
-          actionId: plannedActionId,
-        });
-        lastActionAt = scheduledAt;
       }
     }
   } else if (chosenAction === "likePost") {

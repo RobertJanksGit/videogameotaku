@@ -29,7 +29,8 @@ import {
   pingGoogle,
   pingBing,
 } from "./pingSearchEngines.js";
-import puppeteer from "puppeteer";
+import chromium from "@sparticuz/chromium";
+import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
@@ -88,6 +89,26 @@ const VALIDATION_FALLBACK_MESSAGE =
   "Our automated review hit a snag. No action needed—moderators will take a look soon.";
 const MAX_MODERATION_IMAGE_WIDTH = 1280;
 const MAX_MODERATION_IMAGE_BYTES = 450 * 1024; // ~450KB cap for moderation payloads
+
+const resolvePrerenderExecutablePath = async () => {
+  try {
+    const chromiumPath = await chromium.executablePath();
+    if (chromiumPath) return chromiumPath;
+  } catch (error) {
+    console.warn("[prerender] chromium.executablePath failed", {
+      error: error?.message ?? error,
+    });
+  }
+
+  try {
+    const { executablePath } = await import("puppeteer");
+    return executablePath();
+  } catch (error) {
+    throw new Error(
+      "Chromium executable path unavailable and local Puppeteer not installed. Install `puppeteer` for local prerendering."
+    );
+  }
+};
 
 // Initialize OpenAI client
 let openai = null;
@@ -3328,8 +3349,10 @@ export const prerender = onRequest(
 
       // Launch headless browser to render the page
       const browser = await puppeteer.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await resolvePrerenderExecutablePath(),
+        headless: chromium.headless,
       });
 
       try {

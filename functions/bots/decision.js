@@ -3,9 +3,9 @@ import { clamp01, weightedChoice as defaultWeightedChoice } from "./utils.js";
 
 const DEFAULT_ACTION_WEIGHTS = {
   commentOnPost: 0.25,
-  commentOnComment: 0.15,
+  commentOnComment: 0.35,
   likePostOnly: 0.1,
-  likeAndComment: 0.1,
+  likeAndComment: 0.2,
   ignore: 0.4,
 };
 
@@ -18,9 +18,14 @@ const gatherContextText = (context = {}) => {
     segments.push(context.post.content ?? context.post.body ?? "");
   }
   if (context.parentComment) {
-    segments.push(context.parentComment.content ?? context.parentComment.text ?? "");
+    segments.push(
+      context.parentComment.content ?? context.parentComment.text ?? ""
+    );
   }
-  if (context.triggeringComment && context.triggeringComment !== context.parentComment) {
+  if (
+    context.triggeringComment &&
+    context.triggeringComment !== context.parentComment
+  ) {
     segments.push(context.triggeringComment.content ?? "");
   }
   return normalizeText(segments.join(" \n"));
@@ -119,6 +124,55 @@ export const handlePendingAction = async ({
   }
 
   const relevanceBoost = computeRelevanceBoost(bot, context);
+  //
+  // -------------------------------------------------------------
+  //  SELF-REPLY + DUPLICATE-REPLY GUARD LAYER
+  //  (Prevents bot replying to itself OR replying twice to same comment)
+  // -------------------------------------------------------------
+  //
+
+  // Detect if parent comment belongs to the bot
+  const isSelfParentComment =
+    context?.parentComment &&
+    (context.parentComment.authorId === bot.uid ||
+      context.parentComment.authorUid === bot.uid ||
+      context.parentComment.isBotAuthor === true ||
+      context.parentComment.authorName === bot.userName);
+
+  // Detect if the bot already replied to THIS specific parent comment
+  const alreadyRepliedToParent =
+    context?.parentComment &&
+    Array.isArray(context.threadContext) &&
+    context.threadContext.some((c) => {
+      if (!c) return false;
+      const parentId =
+        c.parentCommentId ?? c.parentId ?? c.threadRootCommentId ?? null;
+      return (
+        c.authorId === bot.uid &&
+        (c.parentCommentId === context.parentComment.id ||
+          parentId === context.parentComment.id)
+      );
+    });
+
+  // Override canReply logic to block self-replies or duplicate replies
+  const _originalCanReply = isReplyAllowed(bot, context);
+  const canReply =
+    _originalCanReply && !isSelfParentComment && !alreadyRepliedToParent;
+
+  if (isSelfParentComment) {
+    return {
+      status: "ignored",
+      reason: "self_parent_comment_blocked",
+    };
+  }
+
+  if (alreadyRepliedToParent) {
+    return {
+      status: "ignored",
+      reason: "duplicate_reply_blocked",
+    };
+  }
+
   const effectiveProb = clamp01(baseProb * relevanceBoost);
 
   if (random() > effectiveProb) {
@@ -128,7 +182,6 @@ export const handlePendingAction = async ({
   let weights = getActionWeights(bot);
 
   const canComment = isCommentAllowed(bot, context);
-  const canReply = isReplyAllowed(bot, context);
 
   if (!canComment) {
     weights = adjustActionWeights(weights, {
@@ -202,7 +255,9 @@ export const handlePendingAction = async ({
     }
     case "commentOnComment": {
       const targetComment =
-        context.parentComment && context.parentComment.id ? context.parentComment : null;
+        context.parentComment && context.parentComment.id
+          ? context.parentComment
+          : null;
 
       if (!canReply || !targetComment) {
         logger?.info?.("Bot reply fallback to top-level", {
@@ -287,7 +342,9 @@ export const handlePendingAction = async ({
       };
     }
     case "likeAndComment": {
-      const likeResult = likePost ? await likePost({ bot, post: context.post }) : null;
+      const likeResult = likePost
+        ? await likePost({ bot, post: context.post })
+        : null;
 
       if (!canComment && !canReply) {
         return {
@@ -303,7 +360,9 @@ export const handlePendingAction = async ({
       }
 
       const replyMode =
-        canReply && context.parentComment && context.parentComment.id ? "REPLY" : "TOP_LEVEL";
+        canReply && context.parentComment && context.parentComment.id
+          ? "REPLY"
+          : "TOP_LEVEL";
       const rawComment = await generateComment({
         bot,
         mode: replyMode,

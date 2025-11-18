@@ -48,6 +48,7 @@ const sanitizeSources = (values) =>
 
 const systemPrompt = [
   "You summarize what the broader web is saying about a gaming news post.",
+  "Include what people are saying on reddit and other social media platforms.",
   "You will receive the post content plus scraped search snippets.",
   "Return STRICT JSON matching the schema.",
   "Be concise, hedge speculation, and clearly separate consensus vs rumors.",
@@ -111,10 +112,7 @@ const validateMemory = (memory) => {
   };
 };
 
-export const buildPostWebMemory = async (
-  { post, scraped },
-  options = {}
-) => {
+export const buildPostWebMemory = async ({ post, scraped }, options = {}) => {
   if (!Array.isArray(scraped) || scraped.length === 0) return null;
 
   const { openAI = getOpenAIClient(), model = DEFAULT_MODEL } = options;

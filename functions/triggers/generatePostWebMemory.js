@@ -3,9 +3,7 @@
 import admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import {
-  generateSearchQueriesForPost,
-} from "../llm/generateSearchQueries.js";
+import { generateSearchQueriesForPost } from "../llm/generateSearchQueries.js";
 import { buildPostWebMemory } from "../llm/buildPostWebMemory.js";
 import {
   scrapeSearchResults,
@@ -174,7 +172,7 @@ export const generatePostWebMemory = onDocumentCreated(
   {
     document: "posts/{postId}",
     secrets: [openaiSecret],
-    memory: "512MiB",
+    memory: "1GiB",
     timeoutSeconds: 300,
     region: "us-central1",
   },
