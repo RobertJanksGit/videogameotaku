@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { useAuth } from "../../contexts/AuthContext";
 import Modal from "../common/Modal";
@@ -20,17 +20,6 @@ const CommentGate = ({
   const [isGateOpen, setIsGateOpen] = useState(false);
   const [gateError, setGateError] = useState("");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    const textarea = document.getElementById(textareaId);
-    if (textarea) {
-      textarea.focus();
-    }
-  }, [user, textareaId]);
 
   const handleOpenGate = () => {
     setGateError("");

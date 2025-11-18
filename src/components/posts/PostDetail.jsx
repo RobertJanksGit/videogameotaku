@@ -401,7 +401,14 @@ const PostDetail = () => {
     };
   }, [postId]);
 
-  // Separate useEffect for handling comment scrolling
+  // Always start each post view at the top of the page
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [postId]);
+
+  // Separate useEffect for handling comment scrolling when explicitly targeted
   useEffect(() => {
     if (
       !loading &&
@@ -424,16 +431,6 @@ const PostDetail = () => {
     targetCommentIdFromState,
     targetCommentIdFromHash,
   ]);
-
-  useEffect(() => {
-    if (
-      typeof window !== "undefined" &&
-      !location.hash &&
-      !targetCommentIdFromState
-    ) {
-      window.scrollTo({ top: 0, behavior: "auto" });
-    }
-  }, [postId, location.hash, targetCommentIdFromState]);
 
   useEffect(() => {
     if (

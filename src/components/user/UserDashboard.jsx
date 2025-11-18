@@ -1,11 +1,20 @@
+import { useEffect } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import UserPostManager from "./UserPostManager";
 
 const UserDashboard = () => {
   const { user } = useAuth();
   const { darkMode } = useTheme();
+  const location = useLocation();
+
+  useEffect(() => {
+    // Always start at the top when visiting the dashboard (ignore hashes)
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [location.pathname]);
 
   // Redirect if not logged in
   if (!user) {
