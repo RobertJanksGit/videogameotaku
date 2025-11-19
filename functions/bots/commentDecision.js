@@ -7,15 +7,15 @@ const DEFAULT_DECISION_MODEL =
 
 const buildDecisionSystemPrompt = () =>
   [
-    "You are an engagement strategist for a gaming community bot.",
+    "You are an engagement strategist helping decide how a human gamer on a gaming forum should join a conversation.",
     "You always receive JSON with:",
     "- post: { postTitle, postBody | postContent, postAuthor }",
     "- topLevelComments: array of existing post-level comments (oldest first), each { id, author, text }",
-    "- character: bot profile metadata (likes, dislikes, tone, responseStyle, etc.)",
+    "- character: profile metadata for the gamer persona (likes, dislikes, tone, responseStyle, etc.)",
     "- metadata: context such as shouldAskQuestion, intent, triggeredByMention, repliedToBotId",
     "",
     "GOAL:",
-    "- Decide if the bot should write a new TOP_LEVEL comment on the post or REPLY to one existing top-level comment.",
+    "- Decide if the gamer persona should write a new TOP_LEVEL comment on the post or REPLY to one existing top-level comment.",
     "- Favor REPLY when it avoids duplicating sentiments, deepens discussion, or addresses mentions.",
     "- Favor TOP_LEVEL when you can add a new angle that is not already represented.",
     "",
@@ -31,6 +31,7 @@ const buildDecisionSystemPrompt = () =>
     "   c) Respecting metadata.intent (e.g., 'disagree' nudges toward counterpoints).",
     "5) Mentions: if metadata.triggeredByMention === true or repliedToBotId is set, bias toward replying to that pathway.",
     "6) Never invent comment IDs. Only choose from the provided list.",
+    "7) The only valid values for targetCommentId are the 'id' fields of the provided topLevelComments.",
     "",
     "OUTPUT STRICT JSON:",
     '{ "mode": "TOP_LEVEL" | "REPLY", "targetCommentId": string | null, "reason": string }',
@@ -40,12 +41,19 @@ const normalizeTopLevelComments = (comments = []) =>
   comments
     .map((comment) => {
       if (!comment || (!comment.id && !comment.commentId)) return null;
-      const text = comment.text ?? comment.content ?? "";
-      if (!text) return null;
+
+      const text =
+        comment.text ??
+        comment.content ??
+        comment.body ?? // extra safety for other schemas
+        "";
+
+      if (!text || !String(text).trim()) return null;
+
       return {
         id: comment.id ? String(comment.id) : String(comment.commentId),
         author: comment.authorName ?? comment.author ?? "",
-        text,
+        text: String(text),
       };
     })
     .filter(Boolean);
@@ -73,8 +81,23 @@ export const decideCommentEngagement = async ({
   if (!openAI) throw new Error("OpenAI client not provided");
 
   const normalizedTopLevel = normalizeTopLevelComments(topLevelComments);
+
+  // Debug logging – comment out once you're happy
+  console.log(
+    "[decideCommentEngagement] raw topLevelComments:",
+    topLevelComments
+  );
+  console.log(
+    "[decideCommentEngagement] normalizedTopLevel:",
+    normalizedTopLevel
+  );
+
   if (!normalizedTopLevel.length) {
-    return { mode: "TOP_LEVEL", targetCommentId: null, reason: "no_comments" };
+    return {
+      mode: "TOP_LEVEL",
+      targetCommentId: null,
+      reason: "no_comments",
+    };
   }
 
   const payload = {
@@ -86,6 +109,7 @@ export const decideCommentEngagement = async ({
       intent: metadata.intent ?? "default",
       triggeredByMention: Boolean(metadata.triggeredByMention),
       repliedToBotId: metadata.repliedToBotId ?? null,
+      validCommentIds: normalizedTopLevel.map((c) => c.id), // extra hint
     },
   };
 
@@ -107,10 +131,17 @@ export const decideCommentEngagement = async ({
   const content = completion?.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from comment decision model");
 
+  // Debug: see exactly what the model returned
+  console.log("[decideCommentEngagement] raw model content:", content);
+
   let parsed;
   try {
     parsed = JSON.parse(content);
   } catch (error) {
+    console.error(
+      "[decideCommentEngagement] failed to parse JSON:",
+      error.message
+    );
     throw new Error(`Failed to parse comment decision JSON: ${error.message}`);
   }
 
@@ -120,22 +151,42 @@ export const decideCommentEngagement = async ({
 
   let targetCommentId =
     mode === "REPLY" ? normalizeTargetId(parsed.targetCommentId) : null;
+
   if (mode === "REPLY") {
     const validIds = new Set(normalizedTopLevel.map((entry) => entry.id));
+
     if (!targetCommentId || !validIds.has(targetCommentId)) {
-      return {
-        mode: "TOP_LEVEL",
-        targetCommentId: null,
-        reason: "invalid_target",
-      };
+      // Instead of forcing TOP_LEVEL, fall back to the earliest comment
+      const fallbackId = normalizedTopLevel[0]?.id ?? null;
+      console.warn(
+        "[decideCommentEngagement] invalid targetCommentId from model:",
+        parsed.targetCommentId,
+        "– falling back to first comment id:",
+        fallbackId
+      );
+
+      if (fallbackId) {
+        targetCommentId = fallbackId;
+      } else {
+        // Truly no valid fallback – *then* go top-level
+        return {
+          mode: "TOP_LEVEL",
+          targetCommentId: null,
+          reason: "invalid_target_no_fallback",
+        };
+      }
     }
   } else {
     targetCommentId = null;
   }
 
-  return {
+  const result = {
     mode,
     targetCommentId,
     reason: typeof parsed.reason === "string" ? parsed.reason : null,
   };
+
+  console.log("[decideCommentEngagement] final decision:", result);
+
+  return result;
 };

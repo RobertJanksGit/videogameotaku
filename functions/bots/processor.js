@@ -15,7 +15,11 @@ import {
 } from "./models.js";
 import { nowMs, minutesToMs, isWithinCooldown } from "./utils.js";
 import { maybeAddTypos } from "./typoUtils.js";
-import { generateInCharacterComment } from "./commentGenerator.js";
+import {
+  generateInCharacterComment,
+  containsJailbreakPhrasing,
+  isAIDetectionQuestion,
+} from "./commentGenerator.js";
 import { decideCommentEngagement } from "./commentDecision.js";
 
 const COMMENTS_COLLECTION = "comments";
@@ -803,12 +807,25 @@ const fetchContext = async (db, action, bot) => {
   }
 
   let postWebMemory = null;
+  const memoryDebug = {
+    postId: action.postId,
+    metaPath: `posts/${action.postId}/meta/postWebMemory`,
+    exists: false,
+    hasMemory: false,
+    keys: [],
+  };
+
   try {
-    const memorySnap = await db
-      .doc(`posts/${action.postId}/meta/postWebMemory`)
-      .get();
+    const metaRef = db.doc(memoryDebug.metaPath);
+    const memorySnap = await metaRef.get();
+    memoryDebug.metaPath = metaRef.path;
+    memoryDebug.exists = memorySnap.exists;
+
     if (memorySnap.exists) {
-      postWebMemory = memorySnap.data();
+      const data = memorySnap.data() || {};
+      memoryDebug.keys = Object.keys(data);
+      memoryDebug.hasMemory = memoryDebug.keys.length > 0;
+      postWebMemory = data;
     }
   } catch (error) {
     console.warn?.("Failed to load postWebMemory", {
@@ -817,20 +834,7 @@ const fetchContext = async (db, action, bot) => {
     });
   }
 
-  try {
-    const hasMemory = !!postWebMemory;
-    const keys = hasMemory && postWebMemory ? Object.keys(postWebMemory) : [];
-    console.log("[fetchContext] postWebMemory debug", {
-      postId: action.postId,
-      hasMemory,
-      keys,
-    });
-  } catch (error) {
-    console.warn?.("[fetchContext] Failed to log postWebMemory debug", {
-      postId: action.postId,
-      error: error?.message ?? error,
-    });
-  }
+  console.log("[fetchContext] postWebMemory debug", memoryDebug);
 
   return {
     post: postData,
@@ -910,6 +914,22 @@ const likeCommentHelper = async (db, { bot, comment }) => {
   comment.likeCount = (comment.likeCount ?? 0) + 1;
 
   return true;
+};
+
+const deriveBehaviorModeForComment = (commentLike) => {
+  const text =
+    commentLike?.text ?? commentLike?.content ?? commentLike?.body ?? "";
+  if (!text) {
+    return "normal";
+  }
+
+  if (isAIDetectionQuestion(text)) {
+    return "ai_detection";
+  }
+  if (containsJailbreakPhrasing(text)) {
+    return "jailbreak_curveball";
+  }
+  return "normal";
 };
 
 const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
@@ -1357,10 +1377,16 @@ const processSingleAction = async ({
           }
         }
 
+        const behaviorModeForGeneration =
+          desiredMode === "REPLY" && parentCommentForPrompt
+            ? deriveBehaviorModeForComment(parentCommentForPrompt)
+            : "normal";
+
         const metadataForGeneration = {
           ...metadata,
           ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
           ...(fullThreadContext ? { threadContext: fullThreadContext } : {}),
+          behaviorMode: behaviorModeForGeneration,
         };
 
         const generation = await generateInCharacterComment({
@@ -1578,10 +1604,15 @@ const processSingleAction = async ({
           );
         }
 
+        const behaviorModeForGeneration = deriveBehaviorModeForComment(
+          parentCommentForPrompt
+        );
+
         const metadataForGeneration = {
           ...metadata,
           ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
           ...(fullThreadContext ? { threadContext: fullThreadContext } : {}),
+          behaviorMode: behaviorModeForGeneration,
         };
 
         const generation = await generateInCharacterComment({

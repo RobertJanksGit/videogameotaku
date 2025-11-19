@@ -17,26 +17,8 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const DEFAULT_MAX_RESULTS = 3;
-const BATCH_FETCH_LIMIT = 20;
-const MAX_POSTS_PER_BATCH = 1;
-
 const isFeatureEnabled = () =>
   (process.env.POST_WEB_MEMORY_ENABLED ?? "true").toLowerCase() === "true";
-
-const getBatchCutoffTimestamp = () => {
-  const value = process.env.POST_WEB_MEMORY_MIN_CREATED_AT;
-  if (!value) return null;
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    console.warn(
-      "[postWebMemory] Invalid POST_WEB_MEMORY_MIN_CREATED_AT; ignoring cutoff"
-    );
-    return null;
-  }
-
-  return admin.firestore.Timestamp.fromDate(parsed);
-};
 
 const normalizePostForMemory = (postData = {}) => ({
   title: postData.title ?? "",
@@ -68,7 +50,17 @@ const generateWebMemoryForPost = async (postId, payloadPostData = null) => {
     postData = snapshot.data() || {};
   }
 
-  if ((postData.category ?? "").toLowerCase() !== "news") {
+  const rawCategory = postData.category ?? "";
+  const category =
+    typeof rawCategory === "string"
+      ? rawCategory.trim().toLowerCase()
+      : String(rawCategory).toLowerCase();
+
+  if (category !== "news") {
+    console.log("[postWebMemory] Skipping non-news post", {
+      postId,
+      category: rawCategory ?? null,
+    });
     return;
   }
 
@@ -87,6 +79,10 @@ const generateWebMemoryForPost = async (postId, payloadPostData = null) => {
   let queries = [];
   try {
     queries = await generateSearchQueriesForPost(post, { openAI });
+    console.log("[postWebMemory] Query generation succeeded", {
+      postId,
+      queryCount: Array.isArray(queries) ? queries.length : 0,
+    });
   } catch (error) {
     console.error("[postWebMemory] Query generation failed", {
       postId,
@@ -104,6 +100,10 @@ const generateWebMemoryForPost = async (postId, payloadPostData = null) => {
   try {
     scraped = await scrapeSearchResults(queries, {
       maxResultsPerQuery: DEFAULT_MAX_RESULTS,
+    });
+    console.log("[postWebMemory] Scraping succeeded", {
+      postId,
+      resultCount: Array.isArray(scraped) ? scraped.length : 0,
     });
   } catch (error) {
     console.error("[postWebMemory] Scraping failed", {
@@ -129,22 +129,32 @@ const generateWebMemoryForPost = async (postId, payloadPostData = null) => {
     return;
   }
 
+  console.log("[postWebMemory] Writing memory doc", {
+    postId,
+    hasMemory: Boolean(memory),
+  });
+
   const now = admin.firestore.Timestamp.now();
   const ttlDays = 30;
   const expiresAt = admin.firestore.Timestamp.fromMillis(
     now.toMillis() + ttlDays * 24 * 60 * 60 * 1000
   );
 
-  await metaRef.set({
-    ...memory,
-    createdAt: now,
-    expiresAt,
-    queryCount: queries.length,
-    resultCount: scraped.length,
-  });
+  await metaRef.set(
+    {
+      ...memory,
+      createdAt: now,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt,
+      queryCount: queries.length,
+      resultCount: scraped.length,
+    },
+    { merge: true }
+  );
 
   console.log("[postWebMemory] Stored", {
     postId,
+    metaPath: metaRef.path,
     queryCount: queries.length,
     resultCount: scraped.length,
   });
@@ -181,7 +191,17 @@ export const generatePostWebMemory = onDocumentCreated(
     const postId = event.params.postId;
     const postData = snapshot.data() || {};
 
-    if ((postData.category ?? "").toLowerCase() !== "news") {
+    const rawCategory = postData.category ?? "";
+    const category =
+      typeof rawCategory === "string"
+        ? rawCategory.trim().toLowerCase()
+        : String(rawCategory).toLowerCase();
+
+    if (category !== "news") {
+      console.log("[postWebMemoryQueue] Skipping non-news post", {
+        postId,
+        category: rawCategory ?? null,
+      });
       return;
     }
 
@@ -226,10 +246,14 @@ export const runPostWebMemoryQueue = onSchedule(
     const postId = data.postId;
 
     if (!postId) {
-      console.log("[postWebMemoryQueue] Job missing postId; deleting", {
+      console.log("[postWebMemoryQueue] Job missing postId; marking failed", {
         jobId,
       });
-      await doc.ref.delete();
+      await doc.ref.update({
+        status: "failed",
+        errorMessage: "Missing postId on queue document",
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       return;
     }
 
@@ -237,21 +261,68 @@ export const runPostWebMemoryQueue = onSchedule(
 
     try {
       await handleGeneratePostWebMemory({ postId });
+
+      // Best-effort verification that a memory document exists after processing.
+      let metaExists = false;
+      let metaPath = `posts/${postId}/meta/postWebMemory`;
+      try {
+        const metaRef = db.doc(metaPath);
+        const metaSnap = await metaRef.get();
+        metaPath = metaRef.path;
+        metaExists = metaSnap.exists;
+        console.log("[postWebMemoryQueue] Post memory write check", {
+          jobId,
+          postId,
+          metaPath,
+          exists: metaExists,
+        });
+      } catch (checkError) {
+        console.warn("[postWebMemoryQueue] Failed to verify postWebMemory", {
+          jobId,
+          postId,
+          error: checkError?.message ?? checkError,
+        });
+      }
+
       await doc.ref.update({
-        status: "done",
+        status: "completed",
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-      console.log("[postWebMemoryQueue] Job completed", { jobId, postId });
+      console.log("[postWebMemoryQueue] Job completed", {
+        jobId,
+        postId,
+        status: "completed",
+        metaExists,
+      });
     } catch (error) {
       console.error("[postWebMemoryQueue] Job failed", {
         jobId,
         postId,
         error: error?.message ?? error,
       });
-      await doc.ref.update({
-        status: "error",
-        errorMessage: error?.message ?? String(error),
-      });
+      const attempts =
+        typeof data.attempts === "number" && Number.isFinite(data.attempts)
+          ? data.attempts
+          : 0;
+      const nextAttempts = attempts + 1;
+      const baseUpdate = {
+        attempts: nextAttempts,
+        lastErrorMessage: error?.message ?? String(error),
+        lastErrorAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (nextAttempts >= 3) {
+        await doc.ref.update({
+          ...baseUpdate,
+          status: "failed",
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        await doc.ref.update({
+          ...baseUpdate,
+          status: "pending",
+        });
+      }
     }
   }
 );
