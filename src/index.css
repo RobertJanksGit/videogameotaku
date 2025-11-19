@@ -10,7 +10,8 @@
   }
 
   body {
-    @apply antialiased m-0;
+    /* Global body defaults: remove template centering and ensure dark background */
+    @apply antialiased m-0 bg-[#0D1117] text-[#C9D1D9];
   }
 
   /* Theme transitions only for specific properties and elements */
@@ -32,21 +33,6 @@
   }
 }
 
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
 a {
   font-weight: 500;
   color: #646cff;
@@ -57,9 +43,7 @@ a:hover {
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
+  /* Preserve minimum sizing without centering the root or overriding background */
   min-width: 320px;
   min-height: 100vh;
 }
@@ -86,19 +70,6 @@ button:hover {
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
 }
 
 @layer utilities {

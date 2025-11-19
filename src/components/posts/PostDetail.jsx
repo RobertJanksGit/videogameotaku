@@ -43,6 +43,7 @@ import useAuthorRanks from "../../hooks/useAuthorRanks";
 import { useToast } from "../../contexts/ToastContext";
 import { getBadgeMeta } from "../../constants/badges";
 import toggleCommentLikeAction from "../../lib/comments/toggleLike";
+import MoreFromTodaySection from "./MoreFromTodaySection";
 
 const findParentCommentId = (comment) => {
   if (
@@ -1465,9 +1466,21 @@ const PostDetail = () => {
                 </figure>
               )}
               <div className="p-6">
-                <div className="mb-4 flex flex-col gap-4 min-[500px]:flex-row min-[500px]:items-center min-[500px]:justify-between">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center not-italic h-card p-author">
+                <h1
+                  className={`text-2xl font-bold p-name ${
+                    darkMode ? "text-gray-100" : "text-gray-900"
+                  }`}
+                >
+                  {post.title}
+                </h1>
+                {/* Article metadata: author, streak, platforms, sharing, comments */}
+                <section
+                  aria-label="Article metadata"
+                  className="mt-4 space-y-4 text-xs sm:text-sm text-slate-400"
+                >
+                  <div className="flex flex-col gap-4 min-[640px]:flex-row min-[640px]:items-start min-[640px]:justify-between">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center not-italic h-card p-author">
                       {post.authorId ? (
                         <Link
                           to={`/user/${post.authorId}`}
@@ -1555,12 +1568,10 @@ const PostDetail = () => {
                           </div>
                         </div>
                       )}
-                    </div>
-                    {postAuthorMeta &&
-                    (postAuthorMeta.dailyStreak > 0 ||
-                      postAuthorLastBadgeMeta) ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold">
-                        {postAuthorMeta.dailyStreak > 0 ? (
+                      </div>
+                      {/* Streak: show only the current daily streak in the header. */}
+                      {postAuthorMeta && postAuthorMeta.dailyStreak > 0 ? (
+                        <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
                           <span
                             className={`inline-flex items-center rounded-full px-2 py-0.5 ${
                               darkMode
@@ -1570,114 +1581,96 @@ const PostDetail = () => {
                           >
                             🔥 {postAuthorMeta.dailyStreak} day streak
                           </span>
-                        ) : null}
-                        {postAuthorLastBadgeMeta ? (
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+                        </div>
+                      ) : null}
+                      <div
+                        className="flex flex-wrap items-center gap-2"
+                        role="list"
+                        aria-label="Platforms"
+                      >
+                        <h3
+                          className={`hidden text-sm font-semibold min-[915px]:block ${
+                            darkMode ? "text-gray-300" : "text-gray-700"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          Platforms:
+                        </h3>
+                        {(Array.isArray(post.platforms)
+                          ? post.platforms
+                          : [post.platform]
+                        ).map((platform) => (
+                          <div
+                            key={platform}
+                            role="listitem"
+                            className={`px-3 py-1 rounded-full text-sm p-category ${
                               darkMode
-                                ? "bg-gray-800 text-yellow-200"
-                                : "bg-gray-100 text-yellow-700"
+                                ? "bg-gray-700 text-gray-300"
+                                : "bg-gray-100 text-gray-700"
                             }`}
                           >
-                            <span aria-hidden="true">
-                              {postAuthorLastBadgeMeta.icon}
-                            </span>
-                            <span>{postAuthorLastBadgeMeta.label}</span>
-                          </span>
-                        ) : null}
+                            {platform}
+                          </div>
+                        ))}
                       </div>
-                    ) : null}
-                    <div
-                      className="flex flex-wrap items-center gap-2 min-[840px]:flex-nowrap"
-                      role="list"
-                      aria-label="Platforms"
-                    >
-                      <h3
-                        className={`hidden text-sm font-semibold min-[915px]:block ${
-                          darkMode ? "text-gray-300" : "text-gray-700"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        Platforms:
-                      </h3>
-                      {(Array.isArray(post.platforms)
-                        ? post.platforms
-                        : [post.platform]
-                      ).map((platform) => (
-                        <div
-                          key={platform}
-                          role="listitem"
-                          className={`px-3 py-1 rounded-full text-sm p-category ${
-                            darkMode
-                              ? "bg-gray-700 text-gray-300"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {platform}
-                        </div>
-                      ))}
+                    </div>
+                    <div className="w-full min-[640px]:w-auto min-[640px]:self-start">
+                      <ShareButtons
+                        url={window.location.href}
+                        title={post.title}
+                        darkMode={darkMode}
+                      />
                     </div>
                   </div>
-                  <div className="w-full min-[500px]:w-auto min-[500px]:self-end">
-                    <ShareButtons
-                      url={window.location.href}
-                      title={post.title}
-                      darkMode={darkMode}
-                    />
-                  </div>
-                </div>
-                <h1
-                  className={`text-2xl font-bold mb-4 p-name ${
-                    darkMode ? "text-gray-100" : "text-gray-900"
-                  }`}
-                >
-                  {post.title}
-                </h1>
-                <div className="mt-2 mb-4 flex items-center justify-between text-xs sm:text-sm text-slate-400">
-                  <button
-                    type="button"
-                    onClick={scrollToComments}
-                    className={`inline-flex items-center gap-2 bg-transparent border-none p-0 transition-colors focus:outline-none ${
-                      darkMode
-                        ? "text-gray-400 hover:text-gray-100"
-                        : "text-gray-600 hover:text-gray-800"
-                    }`}
-                    aria-label="View comments"
-                  >
-                    <svg
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <button
+                      type="button"
+                      onClick={handleWritePostClick}
+                      disabled={isWritePostBusy}
+                      className="inline-flex w-full items-center justify-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed sm:w-auto"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                      />
-                    </svg>
-                    <span className="font-semibold">
-                      {post.commentCount != null ? post.commentCount : 0}
-                    </span>
-                    <span className="text-[10px] uppercase tracking-wide opacity-70">
-                      comments
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleWritePostClick}
-                    disabled={isWritePostBusy}
-                    className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    <span aria-hidden="true" className="leading-none">
-                      ＋
-                    </span>
-                    <span>Share your own gaming news</span>
-                  </button>
-                </div>
-                <div className="mb-6 e-content">
+                      <span aria-hidden="true" className="leading-none">
+                        ＋
+                      </span>
+                      <span className="sm:hidden">Share news</span>
+                      <span className="hidden sm:inline">
+                        Share your own gaming news
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={scrollToComments}
+                      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 bg-transparent border border-transparent transition-colors focus:outline-none ${
+                        darkMode
+                          ? "text-gray-400 hover:text-gray-100 hover:border-gray-600"
+                          : "text-gray-600 hover:text-gray-800 hover:border-gray-200"
+                      }`}
+                      aria-label="View comments"
+                    >
+                      <svg
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+                        />
+                      </svg>
+                      <span className="font-semibold">
+                        {post.commentCount != null ? post.commentCount : 0}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-wide opacity-70">
+                        comments
+                      </span>
+                    </button>
+                  </div>
+                </section>
+                <div className="mt-6 mb-6 e-content">
                   <RichContent content={post.content} darkMode={darkMode} />
                 </div>
                 <footer className="mt-6">
@@ -1720,6 +1713,8 @@ const PostDetail = () => {
                 </footer>
               </div>
             </header>
+
+            <MoreFromTodaySection currentPost={post} />
 
             {/* Comments Section */}
             <section

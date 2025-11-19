@@ -154,7 +154,9 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
 
   // Defensive guard: never schedule a reply to a bot-authored comment
   const isBotAuthor =
-    (commentData?.authorId && botUserId && commentData.authorId === botUserId) ||
+    (commentData?.authorId &&
+      botUserId &&
+      commentData.authorId === botUserId) ||
     commentData?.authorIsBot === true ||
     commentData?.isBotAuthor === true;
 
@@ -176,7 +178,8 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
     Array.from(mentionsSet).map((value) => value?.toString().toLowerCase())
   );
   const parentAuthorId =
-    (parentComment?.authorId ?? parentComment?.userId) ??
+    parentComment?.authorId ??
+    parentComment?.userId ??
     commentData.parentAuthorId ??
     commentData.parentUserId ??
     null;
@@ -213,7 +216,7 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
       botId: bot.uid,
       postId,
       commentId,
-      reason: "already_replied_to_comment",
+      reason: "bot_already_replied_to_comment",
     });
     return { scheduled: false };
   }
@@ -1409,7 +1412,9 @@ export const runBotActivityForTick = async ({
         normalized.parentComment?.authorIsBot === true ||
         normalized.parentComment?.isBotAuthor === true;
       const reason =
-        parentIsBotForReason && isHumanAuthor ? "human_reply_to_bot" : "eligible";
+        parentIsBotForReason && isHumanAuthor
+          ? "human_reply_to_bot"
+          : "eligible";
       if (isReply && parentAuthorMatchesBot && isHumanAuthor) {
         replyList.push({
           ...normalized,
@@ -1788,12 +1793,12 @@ export const runBotActivityForTick = async ({
         globalCommentState,
         threadReplyCounts,
         perBotCommentLimits,
-          botId: bot.uid,
-          botUserId: bot.uid,
-          botUserName: bot.userName ?? null,
-          triggerReason: target.triggerReason ?? null,
-          commentData: target,
-          parentComment: target.parentComment ?? null,
+        botId: bot.uid,
+        botUserId: bot.uid,
+        botUserName: bot.userName ?? null,
+        triggerReason: target.triggerReason ?? null,
+        commentData: target,
+        parentComment: target.parentComment ?? null,
       });
 
       if (result.scheduled) {

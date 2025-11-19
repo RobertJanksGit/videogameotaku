@@ -39,6 +39,35 @@ const resolveCommentRef = (db, comment) =>
           .doc(comment.id)
       : db.collection(COMMENTS_COLLECTION).doc(comment.id);
 
+const markBotRepliedToComment = async (
+  db,
+  { parentCommentId, botId, postId = null, documentPath = null }
+) => {
+  if (!parentCommentId || !botId) return;
+
+  let commentRef = null;
+  if (documentPath) {
+    commentRef = db.doc(documentPath);
+  } else if (postId) {
+    commentRef = db
+      .collection(POSTS_COLLECTION)
+      .doc(postId)
+      .collection(COMMENTS_COLLECTION)
+      .doc(parentCommentId);
+  } else {
+    commentRef = db.collection(COMMENTS_COLLECTION).doc(parentCommentId);
+  }
+
+  await commentRef.set(
+    {
+      botRepliesHandled: {
+        [botId]: true,
+      },
+    },
+    { merge: true }
+  );
+};
+
 const pickPostWebMemoryForBot = (bot, postWebMemory) => {
   if (!postWebMemory) return null;
   const rawTendency = bot?.behavior?.tendencyToUsePostWebMemory;
@@ -107,6 +136,9 @@ const sanitizeCommentForContext = (comment) => {
     threadRootCommentId: comment.threadRootCommentId ?? null,
     content,
     createdAt: comment.createdAt ?? null,
+    ...(comment.botRepliesHandled
+      ? { botRepliesHandled: comment.botRepliesHandled }
+      : {}),
   };
 };
 
@@ -543,6 +575,34 @@ const getCount = async (query) => {
   }
   const snapshot = await query.get();
   return snapshot.size;
+};
+
+const hasExistingReplyByBotForParent = async (
+  db,
+  { postId, parentCommentId, botId }
+) => {
+  if (!postId || !parentCommentId || !botId) return false;
+
+  try {
+    const snapshot = await db
+      .collection(POSTS_COLLECTION)
+      .doc(postId)
+      .collection(COMMENTS_COLLECTION)
+      .where("parentCommentId", "==", parentCommentId)
+      .where("authorId", "==", botId)
+      .limit(1)
+      .get();
+
+    return !snapshot.empty;
+  } catch (error) {
+    console.warn?.("Failed to check existing reply by bot for parent", {
+      postId,
+      parentCommentId,
+      botId,
+      error: error?.message ?? error,
+    });
+    return false;
+  }
 };
 
 const computeThreadRoot = (action, parentComment) => {
@@ -1086,6 +1146,64 @@ const processSingleAction = async ({
             outcome = { status: "ignored", reason: "reply_target_not_found" };
             break;
           }
+
+          // Fetch the canonical target comment document to check botRepliesHandled
+          const targetComment = await fetchCommentById(
+            db,
+            contextResult.post.id,
+            desiredTargetCommentId,
+            action.id
+          );
+
+          if (!targetComment) {
+            outcome = { status: "ignored", reason: "reply_target_not_found" };
+            break;
+          }
+
+          const handledMap = targetComment.botRepliesHandled || {};
+          const alreadyRepliedFlag =
+            handledMap[bot.uid] === true ||
+            (bot.id && handledMap[bot.id] === true);
+
+          if (alreadyRepliedFlag) {
+            logger?.info?.("bot_comment_skip", {
+              type: "bot_comment_skip",
+              reason: "bot_already_replied_to_target_comment",
+              botId: bot.uid,
+              postId: contextResult.post?.id,
+              targetCommentId: desiredTargetCommentId,
+            });
+
+            outcome = {
+              status: "ignored",
+              reason: "bot_already_replied_to_target_comment",
+            };
+            break;
+          }
+
+          const alreadyHasReply = await hasExistingReplyByBotForParent(db, {
+            postId: contextResult.post?.id ?? null,
+            parentCommentId: targetComment.id ?? desiredTargetCommentId,
+            botId: bot.uid,
+          });
+
+          if (alreadyHasReply) {
+            outcome = {
+              status: "ignored",
+              reason: "existing_reply_by_bot_for_parent",
+            };
+            logger?.info?.("bot_comment_skip_existing", {
+              type: "bot_comment_skip_existing",
+              actionType: action.type,
+              botId: bot.uid,
+              postId: contextResult.post?.id,
+              targetCommentId: desiredTargetCommentId,
+              parentCommentId: targetComment.id ?? desiredTargetCommentId,
+            });
+            break;
+          }
+
+          // Resolve the replyTarget from top-level context for use in prompts/thread context
           replyTarget = topLevelContext.find(
             (entry) => String(entry.id) === desiredTargetCommentId
           );
@@ -1264,6 +1382,13 @@ const processSingleAction = async ({
             text: finalComment,
           });
 
+          await markBotRepliedToComment(db, {
+            parentCommentId: parentForReply.id,
+            postId: contextResult.post.id,
+            documentPath: parentForReply.documentPath ?? null,
+            botId: bot.uid,
+          });
+
           outcome = {
             status: "engaged",
             action: "replyToComment",
@@ -1302,6 +1427,30 @@ const processSingleAction = async ({
           state.repliesByBotInThread >= 2
         ) {
           outcome = { status: "ignored", reason: "bot_loop_guard" };
+          break;
+        }
+
+        const alreadyHasReplyForParent = await hasExistingReplyByBotForParent(
+          db,
+          {
+            postId: contextResult.post?.id ?? null,
+            parentCommentId: contextResult.parentComment?.id ?? null,
+            botId: bot.uid,
+          }
+        );
+
+        if (alreadyHasReplyForParent) {
+          outcome = {
+            status: "ignored",
+            reason: "existing_reply_by_bot_for_parent",
+          };
+          logger?.info?.("bot_reply_skip_existing", {
+            type: "bot_reply_skip_existing",
+            actionType: action.type,
+            botId: bot.uid,
+            postId: contextResult.post?.id,
+            parentCommentId: contextResult.parentComment?.id,
+          });
           break;
         }
 
@@ -1405,6 +1554,13 @@ const processSingleAction = async ({
           parentComment: contextResult.parentComment,
           threadRootCommentId: contextResult.threadRootCommentId,
           text: finalComment,
+        });
+
+        await markBotRepliedToComment(db, {
+          parentCommentId: contextResult.parentComment.id,
+          postId: contextResult.post.id,
+          documentPath: contextResult.parentComment.documentPath ?? null,
+          botId: bot.uid,
         });
 
         outcome = {
