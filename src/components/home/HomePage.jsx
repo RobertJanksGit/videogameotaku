@@ -887,10 +887,16 @@ const HomePage = () => {
 
   const renderCardFooter = (post) => (
     <div className="flex items-center justify-between pt-4">
-      <div
-        className={`flex items-center gap-2 text-sm ${
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          navigate(`/post/${post.id}#comments`);
+        }}
+        className={`flex items-center gap-2 text-sm bg-transparent border-0 p-0 ${
           darkMode ? "text-gray-400" : "text-gray-600"
         }`}
+        aria-label="View comments"
       >
         <svg
           className="h-4 w-4"
@@ -911,7 +917,7 @@ const HomePage = () => {
         <span className="text-xs uppercase tracking-wide opacity-70">
           comments
         </span>
-      </div>
+      </button>
       <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
         {renderVoteButtons(post)}
       </div>

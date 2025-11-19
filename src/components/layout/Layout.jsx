@@ -104,13 +104,28 @@ const toMillis = (value) => {
 };
 
 const getNotificationDescription = (notification) => {
+  const actorName =
+    notification.actorName && typeof notification.actorName === "string"
+      ? notification.actorName
+      : null;
+
   switch (notification.type) {
+    case "post_comment":
+      return actorName
+        ? `${actorName} commented on your post`
+        : "Someone commented on your post";
     case "reply":
-      return "Someone replied to your comment";
+      return actorName
+        ? `${actorName} replied to your comment`
+        : "Someone replied to your comment";
     case "mention":
-      return "You were mentioned in a discussion";
+      return actorName
+        ? `${actorName} mentioned you in a discussion`
+        : "You were mentioned in a discussion";
     case "like":
-      return "Your comment received a like";
+      return actorName
+        ? `${actorName} liked your comment`
+        : "Your comment received a like";
     default:
       return "You have a new notification";
   }
@@ -240,7 +255,11 @@ const Layout = ({ children }) => {
         toMillis(notification.createdAt) > latestNotificationTsRef.current
     );
     freshNotifications.forEach((notification) => {
-      if (notification.type === "reply" || notification.type === "mention") {
+      if (
+        notification.type === "reply" ||
+        notification.type === "post_comment" ||
+        notification.type === "mention"
+      ) {
         showInfoToast(getNotificationDescription(notification));
       }
     });
@@ -368,10 +387,12 @@ const Layout = ({ children }) => {
                         className="flex items-center space-x-2 group p-0 m-0 bg-transparent border-0 cursor-pointer"
                       >
                         <ProfileIcon photoURL={user.photoURL} />
-                        <span className="text-sm text-[#7D8590] group-hover:text-white transition-colors">
+                        <span className="hidden sm:inline text-sm text-[#7D8590] group-hover:text-white transition-colors">
                           {user.displayName || user.email}
                         </span>
-                        <ChevronDownIcon />
+                        <span className="hidden sm:inline-flex">
+                          <ChevronDownIcon />
+                        </span>
                         {hasUnreadNotifications && (
                           <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500"></span>
                         )}
@@ -430,24 +451,36 @@ const Layout = ({ children }) => {
                   </>
                 )
               ) : (
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-3">
                   <WritePostButton
                     label="Write a Post"
                     className="max-[500px]:hidden"
                   />
-                  <button
-                    onClick={() => handleAuthClick("register")}
-                    className="flex items-center space-x-2 px-3 py-1.5 text-sm text-[#7D8590] hover:text-white transition-colors bg-transparent"
-                  >
-                    <UserPlusIcon />
-                    <span>Register</span>
-                  </button>
+
+                  {/* Desktop / larger screens: show separate Register + Sign in actions */}
+                  <div className="hidden sm:flex items-center space-x-3">
+                    <button
+                      onClick={() => handleAuthClick("register")}
+                      className="flex items-center space-x-2 px-3 py-1.5 text-sm text-[#7D8590] hover:text-white transition-colors bg-transparent"
+                    >
+                      <UserPlusIcon />
+                      <span>Register</span>
+                    </button>
+                    <button
+                      onClick={() => handleAuthClick("login")}
+                      className="flex items-center space-x-2 px-3 py-1.5 text-sm text-[#7D8590] hover:text-white transition-colors bg-transparent"
+                    >
+                      <LoginIcon />
+                      <span>Sign in</span>
+                    </button>
+                  </div>
+
+                  {/* Mobile: single primary Sign in button that opens the auth modal */}
                   <button
                     onClick={() => handleAuthClick("login")}
-                    className="flex items-center space-x-2 px-3 py-1.5 text-sm text-[#7D8590] hover:text-white transition-colors bg-transparent"
+                    className="sm:hidden inline-flex items-center justify-center rounded-full bg-[#316DCA] px-3 py-1.5 text-sm font-semibold text-white whitespace-nowrap shadow-sm transition hover:bg-[#265DB5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                   >
-                    <LoginIcon />
-                    <span>Sign in</span>
+                    Sign in
                   </button>
                 </div>
               )}

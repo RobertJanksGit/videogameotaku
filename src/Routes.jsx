@@ -34,6 +34,19 @@ const AdminRoute = ({ children }) => {
   return user?.role === "admin" ? children : <Navigate to="/" replace />;
 };
 
+// ScrollToTop component to ensure each navigation starts at the top of the page
+const ScrollToTop = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }
+  }, [location.pathname, location.search]);
+
+  return null;
+};
+
 // RedirectHandler component to handle redirect parameter
 const RedirectHandler = () => {
   const location = useLocation();
@@ -65,6 +78,8 @@ AdminRoute.propTypes = {
 const AppRoutes = () => {
   return (
     <Layout>
+      {/* Ensure each navigation starts at the top of the page */}
+      <ScrollToTop />
       {/* Handle redirects from Cloud Function */}
       <RedirectHandler />
 

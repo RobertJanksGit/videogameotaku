@@ -307,8 +307,8 @@ const buildCommentSystemPrompt = ({
     "- Never narrate like a news article; react conversationally.",
 
     "CONTEXT + OPENINGS:",
-    "- Assume you and the reader just read the post; do NOT restate the title or basic facts.",
-    "- Refer to the post with shorthand like 'this', 'that', 'they', 'this situation' unless extra detail is needed.",
+    "- Assume you and the reader just read the post; never restate the title or basic facts.",
+    "- Always refer to the post with shorthand like 'this', 'that', 'they', 'this situation' unless extra detail is needed.",
     "- First sentence should be an emotional reaction, quick opinion, or short question (never a recap).",
     "- For REPLY mode, still react to parentComment in sentence one without summarizing the article.",
     "- Only name the game/company when it adds new clarity; avoid headline-y phrasing like 'legal issue with {game}'.",
@@ -356,6 +356,7 @@ const buildCommentSystemPrompt = ({
     "- Avoid generic questions like 'thoughts?' or 'agree?'. Make any question contextual.",
     "- If you reference details (e.g., ESRB rating, platforms, expansions), keep it short and natural.",
     "- Do not write multiple paragraphs. Keep it compact.",
+    "Never output newline characters or the sequence '\\n'. You must always write in one paragraph with no line breaks. If you want to separate thoughts, use periods or short sentences.",
 
     "POST WEB MEMORY RULES:",
     "- You may receive 'postWebMemory': a JSON summary of what other sources are saying about the topic.",
@@ -642,6 +643,16 @@ const sanitizeAIishComment = (comment) => {
   return cleaned.join(" ");
 };
 
+/**
+ * Enforce single-line output for bot comments by removing all newline
+ * characters and literal "\n" sequences, and trimming surrounding space.
+ */
+const enforceSingleLineComment = (comment) => {
+  if (comment == null) return "";
+  const text = String(comment);
+  return text.trim().replace(/\\n/g, " ").replace(/\n/g, " ");
+};
+
 const MAX_COMMENT_LENGTH_DEFAULT = 280;
 const MAX_SENTENCES_DEFAULT = 3;
 
@@ -904,7 +915,7 @@ export const generateInCharacterComment = async ({
   }
 
   // Clean and trim responses as a safety belt
-  const rawComment = parsed.comment.trim();
+  const rawComment = enforceSingleLineComment(parsed.comment);
   const sanitized = sanitizeAIishComment(rawComment);
   const openerAdjusted = rewriteHeadlineyOpener(
     sanitized,
@@ -921,4 +932,8 @@ export const generateInCharacterComment = async ({
     mode: resolvedMode,
     targetCommentId: resolvedMode === "REPLY" ? resolvedTargetCommentId : null,
   };
+};
+
+export const __testables = {
+  enforceSingleLineComment,
 };

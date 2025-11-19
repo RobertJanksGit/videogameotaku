@@ -12,6 +12,7 @@ import {
   rewriteHeadlineyOpener,
   containsJailbreakPhrasing,
   isAIDetectionQuestion,
+  __testables,
 } from "../commentGenerator.js";
 
 describe("rewriteHeadlineyOpener", () => {
@@ -63,5 +64,24 @@ describe("phrase detection helpers", () => {
     expect(isAIDetectionQuestion("this boss feels so unfair lmao")).toBe(
       false
     );
+  });
+});
+
+describe("enforceSingleLineComment", () => {
+  const { enforceSingleLineComment } = __testables;
+
+  it("removes actual newlines and literal \\n sequences", () => {
+    const input = "line one\nline two\\nline three";
+    const result = enforceSingleLineComment(input);
+
+    expect(result).not.toMatch(/\n/);
+    expect(result).not.toContain("\\n");
+  });
+
+  it("trims surrounding whitespace and keeps content otherwise intact", () => {
+    const input = "  hello world  ";
+    const result = enforceSingleLineComment(input);
+
+    expect(result).toBe("hello world");
   });
 });

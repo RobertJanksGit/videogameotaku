@@ -266,6 +266,7 @@ export const createNotificationItem = async ({
   recipientId,
   type,
   actorId,
+  actorName,
   postId,
   commentId,
   title = "",
@@ -293,6 +294,7 @@ export const createNotificationItem = async ({
   await itemsRef.add({
     type,
     actorId,
+    actorName: actorName || "",
     postId: postId || null,
     commentId: commentId || null,
     title: title || "",

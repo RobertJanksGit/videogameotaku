@@ -258,7 +258,9 @@ const CommunityActivityWidget = ({ className = "", userId = null, title = "Commu
         if (item.type === "comment" && item.postId) {
           linkTarget = {
             pathname: `/post/${item.postId}`,
-            hash: item.commentId ? `#comment-${item.commentId}` : undefined,
+            // Navigate directly to the comments section and let PostDetail
+            // handle scrolling/highlighting the specific comment via state.
+            hash: "#comments",
             state: item.commentId
               ? { targetCommentId: item.commentId }
               : undefined,

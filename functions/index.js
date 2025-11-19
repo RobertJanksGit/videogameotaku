@@ -3583,8 +3583,49 @@ export const onCommentWrite = onDocumentWritten(
   "posts/{postId}/comments/{commentId}",
   async (event) => {
     const { postId, commentId } = event.params;
-    const before = event.data.before.exists ? event.data.before.data() : null;
-    const after = event.data.after.exists ? event.data.after.data() : null;
+    const hasBefore = event.data.before.exists;
+    const hasAfter = event.data.after.exists;
+    const before = hasBefore ? event.data.before.data() : null;
+    const after = hasAfter ? event.data.after.data() : null;
+
+    // Handle deletes: decrement parent replyCount server-side
+    if (!hasAfter && hasBefore && before) {
+      const normalizedBefore = normalizeCommentFields(before);
+      const parentCommentId =
+        normalizedBefore.parentCommentId || normalizedBefore.parentId || null;
+
+      if (parentCommentId) {
+        try {
+          const parentRef = await resolveCommentRefByArgs(
+            postId,
+            parentCommentId
+          );
+          if (!parentRef) {
+            console.warn(
+              "onCommentWrite delete: parent comment ref not found",
+              {
+                parentCommentId,
+                postId,
+                commentId,
+              }
+            );
+          } else {
+            await parentRef.update({
+              replyCount: admin.firestore.FieldValue.increment(-1),
+            });
+          }
+        } catch (error) {
+          console.error("Failed to decrement parent replyCount on delete", {
+            parentCommentId,
+            postId,
+            commentId,
+            error: error.message,
+          });
+        }
+      }
+
+      return;
+    }
 
     if (!after) {
       return;
@@ -3652,18 +3693,27 @@ export const onCommentWrite = onDocumentWritten(
     const parentCommentId =
       normalized.parentCommentId || normalized.parentId || null;
     if (parentCommentId) {
-      const parentRef = commentRef.parent.doc(parentCommentId);
-      await parentRef
-        .update({
-          replyCount: admin.firestore.FieldValue.increment(1),
-        })
-        .catch((error) => {
-          console.error("Failed to increment parent replyCount", {
+      try {
+        const parentRef = await resolveCommentRefByArgs(postId, parentCommentId);
+        if (!parentRef) {
+          console.warn("onCommentWrite create: parent comment ref not found", {
             parentCommentId,
             postId,
-            error: error.message,
+            commentId,
           });
+        } else {
+          await parentRef.update({
+            replyCount: admin.firestore.FieldValue.increment(1),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to increment parent replyCount", {
+          parentCommentId,
+          postId,
+          commentId,
+          error: error.message,
         });
+      }
     }
 
     await updateUserStatsOnComment({
@@ -3675,30 +3725,58 @@ export const onCommentWrite = onDocumentWritten(
     const snippet = getNotificationSnippet(normalized.content);
 
     if (parentCommentId) {
-      const parentSnap = await commentRef.parent.doc(parentCommentId).get();
-      const parentAuthorId = parentSnap.exists
-        ? parentSnap.get("authorId")
-        : null;
+      let parentAuthorId = null;
+      try {
+        // Prefer nested post-scoped comment; fall back to legacy root comment
+        const parentRef = await resolveCommentRefByArgs(postId, parentCommentId);
+        if (parentRef) {
+          const parentSnap = await parentRef.get();
+          parentAuthorId = parentSnap.exists
+            ? parentSnap.get("authorId")
+            : null;
+        } else {
+          console.warn(
+            "onCommentWrite notification: parent comment not found",
+            {
+              parentCommentId,
+              postId,
+              commentId,
+            }
+          );
+        }
+      } catch (error) {
+        console.error("Failed to load parent comment for notification", {
+          parentCommentId,
+          postId,
+          commentId,
+          error: error.message,
+        });
+      }
       if (parentAuthorId && parentAuthorId !== normalized.authorId) {
+        // Reply to another user's comment
         await createNotificationItem({
           db,
           recipientId: parentAuthorId,
           type: "reply",
           actorId: normalized.authorId,
+          actorName: normalized.authorName || "",
           postId,
           commentId,
           snippet,
         });
       }
     } else {
+      // New top-level comment on a post: notify the post author that their
+      // post received a comment (distinct from replies to a specific comment).
       const postSnap = await commentRef.parent.parent.get();
       const postAuthorId = postSnap.exists ? postSnap.get("authorId") : null;
       if (postAuthorId && postAuthorId !== normalized.authorId) {
         await createNotificationItem({
           db,
           recipientId: postAuthorId,
-          type: "reply",
+          type: "post_comment",
           actorId: normalized.authorId,
+          actorName: normalized.authorName || "",
           postId,
           commentId,
           snippet,
@@ -3716,6 +3794,7 @@ export const onCommentWrite = onDocumentWritten(
             recipientId: userId,
             type: "mention",
             actorId: normalized.authorId,
+            actorName: normalized.authorName || "",
             postId,
             commentId,
             snippet,

@@ -1010,22 +1010,13 @@ const createReplyHelper = async (
     .doc(post.id)
     .collection(COMMENTS_COLLECTION)
     .add(commentData);
-  await Promise.all([
-    db
-      .collection(POSTS_COLLECTION)
-      .doc(post.id)
-      .update({
-        commentCount: admin.firestore.FieldValue.increment(1),
-        updatedAt: now,
-      }),
-    resolveCommentRef(db, parentComment).set(
-      {
-        replyCount: admin.firestore.FieldValue.increment(1),
-        updatedAt: now,
-      },
-      { merge: true }
-    ),
-  ]);
+  await db
+    .collection(POSTS_COLLECTION)
+    .doc(post.id)
+    .update({
+      commentCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now,
+    });
 
   state.commentsByBotOnPost += 1;
   state.repliesByBotInThread += 1;

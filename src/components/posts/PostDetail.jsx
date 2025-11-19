@@ -44,6 +44,7 @@ import { useToast } from "../../contexts/ToastContext";
 import { getBadgeMeta } from "../../constants/badges";
 import toggleCommentLikeAction from "../../lib/comments/toggleLike";
 import MoreFromTodaySection from "./MoreFromTodaySection";
+import JoinCommunityBanner from "../common/JoinCommunityBanner";
 
 const findParentCommentId = (comment) => {
   if (
@@ -178,6 +179,7 @@ const PostDetail = () => {
   const [pendingSubmission, setPendingSubmission] = useState(null);
   const [isInlineAuthPromptOpen, setInlineAuthPromptOpen] = useState(false);
   const [isAuthModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
   const [replyResolutionSignal, setReplyResolutionSignal] = useState(null);
   const [isProcessingPending, setIsProcessingPending] = useState(false);
   const previousUserRef = useRef(user);
@@ -437,15 +439,25 @@ const PostDetail = () => {
     if (
       !hasScrolledToComment.current &&
       typeof window !== "undefined" &&
-      location.hash === "#comments"
+      location.hash === "#comments" &&
+      !loading &&
+      !commentsLoading
     ) {
-      commentsSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-      hasScrolledToComment.current = true;
+      const timeoutId = window.setTimeout(() => {
+        if (!commentsSectionRef.current || hasScrolledToComment.current) {
+          return;
+        }
+
+        commentsSectionRef.current.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        hasScrolledToComment.current = true;
+      }, 400);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [location.hash]);
+  }, [location.hash, loading, commentsLoading]);
 
   // Reset the scroll flag when the postId or target changes
   useEffect(() => {
@@ -723,11 +735,6 @@ const PostDetail = () => {
         return { status: "error", message: "Reply cannot be empty.", targetId };
       }
 
-      console.log("[Comments] currentUser (reply)", {
-        uid: user.uid,
-        isAnonymous: user.isAnonymous,
-      });
-
       const authorName = resolveAuthorName(user);
       const authorPhotoURL = resolveAuthorPhoto(user);
       const effectiveTargetId = targetId || parentId;
@@ -761,29 +768,16 @@ const PostDetail = () => {
           mentionHandles: mentionPayload.mentionMetadata,
         };
 
-        console.log("[Comments] reply payload", replyPayload);
-
         const replyRef = await addDoc(
           postCommentsCollection(db, postId),
           replyPayload
         );
-
-        console.log("[Comments] wrote reply doc", {
-          path: replyRef.path,
-        });
 
         const newReply = {
           id: replyRef.id,
           ...replyPayload,
           createdAt: new Date(),
         };
-
-        const parentCommentRef = resolveCommentDocRef(parentComment);
-        if (parentCommentRef) {
-          await updateDoc(parentCommentRef, {
-            replyCount: increment(1),
-          });
-        }
 
         const postRef = doc(db, "posts", postId);
         await updateDoc(postRef, {
@@ -801,9 +795,6 @@ const PostDetail = () => {
         markStarterPackCommented(user.uid);
 
         try {
-          console.log("[Comments] updating commentMeta (reply)", {
-            uid: user.uid,
-          });
           await setDoc(
             doc(db, "commentMeta", user.uid),
             {
@@ -1188,20 +1179,6 @@ const PostDetail = () => {
       batch.delete(commentRef);
     }
 
-    if (parentCommentId) {
-      const parentComment = comments.find(
-        (comment) => comment.id === parentCommentId
-      );
-      const parentCommentRef = resolveCommentDocRef(
-        parentComment || { id: parentCommentId }
-      );
-      if (parentCommentRef) {
-        batch.update(parentCommentRef, {
-          replyCount: increment(-1),
-        });
-      }
-    }
-
     try {
       await batch.commit();
     } catch (error) {
@@ -1238,7 +1215,8 @@ const PostDetail = () => {
         ...repliesToDelete.map((reply) => reply.id),
       ]);
 
-      const nextComments = prevComments
+      return prevComments
+        .filter((comment) => !idsToRemove.has(comment.id))
         .map((comment) => {
           if (comment.id === parentCommentId) {
             return {
@@ -1247,10 +1225,7 @@ const PostDetail = () => {
             };
           }
           return comment;
-        })
-        .filter((comment) => !idsToRemove.has(comment.id));
-
-      return nextComments;
+        });
     });
   };
 
@@ -1714,6 +1689,8 @@ const PostDetail = () => {
               </div>
             </header>
 
+            <JoinCommunityBanner />
+
             <MoreFromTodaySection currentPost={post} />
 
             {/* Comments Section */}
@@ -1863,7 +1840,7 @@ const PostDetail = () => {
             setInlineAuthPromptOpen(true);
           }
         }}
-        initialMode="login"
+        initialMode={authMode}
       />
     </>
   );
