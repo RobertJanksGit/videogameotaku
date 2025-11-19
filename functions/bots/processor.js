@@ -13,11 +13,7 @@ import {
   MAX_PENDING_ACTION_ATTEMPTS,
   BOT_COOLDOWN_MINUTES,
 } from "./models.js";
-import {
-  nowMs,
-  minutesToMs,
-  isWithinCooldown,
-} from "./utils.js";
+import { nowMs, minutesToMs, isWithinCooldown } from "./utils.js";
 import { maybeAddTypos } from "./typoUtils.js";
 import { generateInCharacterComment } from "./commentGenerator.js";
 import { decideCommentEngagement } from "./commentDecision.js";
@@ -32,12 +28,12 @@ const resolveCommentRef = (db, comment) =>
   comment?.documentPath
     ? db.doc(comment.documentPath)
     : comment?.postId
-      ? db
-          .collection(POSTS_COLLECTION)
-          .doc(comment.postId)
-          .collection(COMMENTS_COLLECTION)
-          .doc(comment.id)
-      : db.collection(COMMENTS_COLLECTION).doc(comment.id);
+    ? db
+        .collection(POSTS_COLLECTION)
+        .doc(comment.postId)
+        .collection(COMMENTS_COLLECTION)
+        .doc(comment.id)
+    : db.collection(COMMENTS_COLLECTION).doc(comment.id);
 
 const markBotRepliedToComment = async (
   db,
@@ -161,14 +157,14 @@ const prepareCommentForPrompt = (
     threadRootCommentId != null
       ? String(threadRootCommentId)
       : comment.threadRootCommentId != null
-        ? String(comment.threadRootCommentId)
-        : null;
+      ? String(comment.threadRootCommentId)
+      : null;
   const depth =
     Number.isFinite(depthOverride) && depthOverride >= 0
       ? depthOverride
       : Number.isFinite(comment.depth)
-        ? comment.depth
-        : null;
+      ? comment.depth
+      : null;
 
   return {
     id,
@@ -176,9 +172,7 @@ const prepareCommentForPrompt = (
     text: content,
     parentCommentId: comment.parentCommentId ?? comment.parentId ?? null,
     threadRootCommentId: normalizedThreadRootId,
-    isTarget: Boolean(
-      normalizedTargetId && id && normalizedTargetId === id
-    ),
+    isTarget: Boolean(normalizedTargetId && id && normalizedTargetId === id),
     isThreadRoot: Boolean(
       normalizedThreadRootId && id && normalizedThreadRootId === id
     ),
@@ -199,7 +193,10 @@ const normalizeThreadEntriesForPrompt = (
   Array.isArray(entries)
     ? entries
         .map((entry) =>
-          prepareCommentForPrompt(entry, { targetCommentId, threadRootCommentId })
+          prepareCommentForPrompt(entry, {
+            targetCommentId,
+            threadRootCommentId,
+          })
         )
         .filter(Boolean)
     : [];
@@ -321,7 +318,8 @@ const buildThreadContext = async (
         entry.id &&
         String(entry.id) === String(threadRootCommentId)
     ),
-    threadRootCommentId: entry.threadRootCommentId ?? threadRootCommentId ?? null,
+    threadRootCommentId:
+      entry.threadRootCommentId ?? threadRootCommentId ?? null,
   }));
 };
 
@@ -450,8 +448,7 @@ const buildThreadPath = async (
     const nextParentId =
       current.parentCommentId ??
       current.parentId ??
-      (current.threadRootCommentId &&
-      current.threadRootCommentId !== current.id
+      (current.threadRootCommentId && current.threadRootCommentId !== current.id
         ? current.threadRootCommentId
         : null);
 
@@ -498,7 +495,11 @@ const buildThreadPath = async (
         .doc(normalizedRootId)
         .get();
       if (rootSnap?.exists) {
-        const data = { id: rootSnap.id, documentPath: rootSnap.ref.path, ...rootSnap.data() };
+        const data = {
+          id: rootSnap.id,
+          documentPath: rootSnap.ref.path,
+          ...rootSnap.data(),
+        };
         const sanitized = sanitizeCommentForContext(data);
         if (sanitized) {
           path.push({
@@ -559,11 +560,14 @@ const buildTopLevelContext = async (db, action, bot) => {
 
     return entries.slice(-TOP_LEVEL_CONTEXT_LIMIT);
   } catch (error) {
-    console.error?.("Failed to load top-level comments for bot prompt context", {
-      postId: action.postId,
-      actionId: action.id,
-      error: error.message,
-    });
+    console.error?.(
+      "Failed to load top-level comments for bot prompt context",
+      {
+        postId: action.postId,
+        actionId: action.id,
+        error: error.message,
+      }
+    );
     return [];
   }
 };
@@ -813,6 +817,21 @@ const fetchContext = async (db, action, bot) => {
     });
   }
 
+  try {
+    const hasMemory = !!postWebMemory;
+    const keys = hasMemory && postWebMemory ? Object.keys(postWebMemory) : [];
+    console.log("[fetchContext] postWebMemory debug", {
+      postId: action.postId,
+      hasMemory,
+      keys,
+    });
+  } catch (error) {
+    console.warn?.("[fetchContext] Failed to log postWebMemory debug", {
+      postId: action.postId,
+      error: error?.message ?? error,
+    });
+  }
+
   return {
     post: postData,
     parentComment,
@@ -829,8 +848,12 @@ const fetchContext = async (db, action, bot) => {
 const likePostHelper = async (db, { bot, post }) => {
   if (!post) return false;
 
-  const likes = new Set(Array.isArray(post.usersThatLiked) ? post.usersThatLiked : []);
-  const dislikes = new Set(Array.isArray(post.usersThatDisliked) ? post.usersThatDisliked : []);
+  const likes = new Set(
+    Array.isArray(post.usersThatLiked) ? post.usersThatLiked : []
+  );
+  const dislikes = new Set(
+    Array.isArray(post.usersThatDisliked) ? post.usersThatDisliked : []
+  );
 
   if (likes.has(bot.uid)) {
     return false;
@@ -912,10 +935,13 @@ const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
     .collection(COMMENTS_COLLECTION)
     .add(commentData);
 
-  await db.collection(POSTS_COLLECTION).doc(post.id).update({
-    commentCount: admin.firestore.FieldValue.increment(1),
-    updatedAt: now,
-  });
+  await db
+    .collection(POSTS_COLLECTION)
+    .doc(post.id)
+    .update({
+      commentCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now,
+    });
 
   state.commentsByBotOnPost += 1;
 
@@ -939,7 +965,10 @@ const createReplyHelper = async (
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const rootId = threadRootCommentId || parentComment.threadRootCommentId || parentComment.id;
+  const rootId =
+    threadRootCommentId ||
+    parentComment.threadRootCommentId ||
+    parentComment.id;
 
   const commentData = {
     postId: post.id,
@@ -961,18 +990,20 @@ const createReplyHelper = async (
     .doc(post.id)
     .collection(COMMENTS_COLLECTION)
     .add(commentData);
-
   await Promise.all([
-    db.collection(POSTS_COLLECTION).doc(post.id).update({
-      commentCount: admin.firestore.FieldValue.increment(1),
-      updatedAt: now,
-    }),
-    resolveCommentRef(db, parentComment).update(
+    db
+      .collection(POSTS_COLLECTION)
+      .doc(post.id)
+      .update({
+        commentCount: admin.firestore.FieldValue.increment(1),
+        updatedAt: now,
+      }),
+    resolveCommentRef(db, parentComment).set(
       {
         replyCount: admin.firestore.FieldValue.increment(1),
         updatedAt: now,
       },
-      { exists: true }
+      { merge: true }
     ),
   ]);
 
@@ -1077,7 +1108,10 @@ const processSingleAction = async ({
     switch (action.type) {
       case ScheduledBotActionType.COMMENT_ON_POST: {
         const maxPerPost = behavior.maxCommentsPerPost;
-        if (Number.isFinite(maxPerPost) && state.commentsByBotOnPost >= maxPerPost) {
+        if (
+          Number.isFinite(maxPerPost) &&
+          state.commentsByBotOnPost >= maxPerPost
+        ) {
           outcome = { status: "ignored", reason: "post_quota_reached" };
           break;
         }
@@ -1119,7 +1153,9 @@ const processSingleAction = async ({
             if (!requestedMode) {
               desiredMode = decision.mode;
             }
-            desiredTargetCommentId = normalizeTargetId(decision.targetCommentId);
+            desiredTargetCommentId = normalizeTargetId(
+              decision.targetCommentId
+            );
             if (requestedMode === "REPLY") {
               desiredMode = "REPLY";
             }
@@ -1130,16 +1166,20 @@ const processSingleAction = async ({
               error: error.message,
             });
             desiredMode = requestedMode === "REPLY" ? "REPLY" : "TOP_LEVEL";
-            desiredTargetCommentId = requestedMode === "REPLY"
-              ? normalizeTargetId(metadata.targetCommentId)
-              : null;
+            desiredTargetCommentId =
+              requestedMode === "REPLY"
+                ? normalizeTargetId(metadata.targetCommentId)
+                : null;
           }
         }
 
         let replyTarget = null;
         if (desiredMode === "REPLY") {
           if (!topLevelContext.length) {
-            outcome = { status: "ignored", reason: "reply_context_unavailable" };
+            outcome = {
+              status: "ignored",
+              reason: "reply_context_unavailable",
+            };
             break;
           }
           if (!desiredTargetCommentId) {
@@ -1213,7 +1253,8 @@ const processSingleAction = async ({
           }
         }
 
-        const targetIdForPrompt = desiredMode === "REPLY" ? desiredTargetCommentId : null;
+        const targetIdForPrompt =
+          desiredMode === "REPLY" ? desiredTargetCommentId : null;
         let threadContextForPrompt = promptThreadContext;
         let threadPathForPrompt = promptThreadPath;
         let parentForPrompt = null;
@@ -1235,7 +1276,10 @@ const processSingleAction = async ({
             contextResult.post.id,
             action.id
           );
-          if (Array.isArray(rebuiltThreadContext) && rebuiltThreadContext.length) {
+          if (
+            Array.isArray(rebuiltThreadContext) &&
+            rebuiltThreadContext.length
+          ) {
             threadContextForPrompt = rebuiltThreadContext;
           } else {
             threadContextForPrompt = [replyTarget];
@@ -1417,7 +1461,10 @@ const processSingleAction = async ({
         }
 
         const maxReplies = behavior.maxRepliesPerThread;
-        if (Number.isFinite(maxReplies) && state.repliesByBotInThread >= maxReplies) {
+        if (
+          Number.isFinite(maxReplies) &&
+          state.repliesByBotInThread >= maxReplies
+        ) {
           outcome = { status: "ignored", reason: "thread_quota_reached" };
           break;
         }
@@ -1462,8 +1509,8 @@ const processSingleAction = async ({
         const rawThreadPath = Array.isArray(contextResult.threadPath)
           ? contextResult.threadPath
           : contextResult.parentComment
-            ? [contextResult.parentComment]
-            : [];
+          ? [contextResult.parentComment]
+          : [];
 
         const normalizedThreadContext = normalizeThreadEntriesForPrompt(
           rawThreadContext,
@@ -1520,12 +1567,15 @@ const processSingleAction = async ({
             replyDepth = ctx.depth;
           }
         } catch (error) {
-          logger?.warn?.("Failed to build full thread context for direct reply", {
-            botUid: bot.uid,
-            postId: contextResult.post?.id,
-            actionId: action.id,
-            error: error.message,
-          });
+          logger?.warn?.(
+            "Failed to build full thread context for direct reply",
+            {
+              botUid: bot.uid,
+              postId: contextResult.post?.id,
+              actionId: action.id,
+              error: error.message,
+            }
+          );
         }
 
         const metadataForGeneration = {
@@ -1639,9 +1689,7 @@ export const processScheduledBotActions = async ({
   };
 
   const now = nowMs();
-  const snapshot = await scheduledActionsDueQuery(db, now)
-    .limit(limit)
-    .get();
+  const snapshot = await scheduledActionsDueQuery(db, now).limit(limit).get();
   const nowIso = new Date(now).toISOString();
   const firstScheduledMs = snapshot.empty
     ? null
@@ -1651,7 +1699,9 @@ export const processScheduledBotActions = async ({
       type: "scheduled_actions_query",
       nowIso,
       range: {
-        from: firstScheduledMs ? new Date(firstScheduledMs).toISOString() : null,
+        from: firstScheduledMs
+          ? new Date(firstScheduledMs).toISOString()
+          : null,
         to: nowIso,
       },
       limit,
@@ -1690,7 +1740,8 @@ export const processScheduledBotActions = async ({
       }
 
       if (isWithinCooldown(bot.lastEngagedAt, BOT_COOLDOWN_MINUTES)) {
-        const remainingMs = minutesToMs(BOT_COOLDOWN_MINUTES) - (nowMs() - bot.lastEngagedAt);
+        const remainingMs =
+          minutesToMs(BOT_COOLDOWN_MINUTES) - (nowMs() - bot.lastEngagedAt);
         await rescheduleForCooldown(doc.ref, remainingMs);
         stats.cooldownDeferred += 1;
         continue;
@@ -1725,7 +1776,11 @@ export const processScheduledBotActions = async ({
       });
 
       stats.errors += 1;
-      const outcome = await rescheduleWithBackoff(doc.ref, action, action.attempts ?? 0);
+      const outcome = await rescheduleWithBackoff(
+        doc.ref,
+        action,
+        action.attempts ?? 0
+      );
       if (outcome.deleted) {
         stats.deleted += 1;
       } else if (outcome.rescheduled) {

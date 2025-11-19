@@ -1,7 +1,5 @@
 /* global process */
 
-import admin from "firebase-admin";
-
 /**
  * Comment generator for bot characters.
  * - Normalizes post + thread context
@@ -9,19 +7,6 @@ import admin from "firebase-admin";
  * - Calls OpenAI for in-character replies
  * - Adds light human-like typos based on bot.behavior
  */
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
-
-const hasPostWebMemoryForPost = async (postId) => {
-  if (!postId) return false;
-  const metaRef = db.doc(`posts/${postId}/meta/postWebMemory`);
-  const snap = await metaRef.get();
-  return snap.exists;
-};
 
 const DEFAULT_COMMENT_MODEL = process.env.BOT_COMMENT_MODEL || "gpt-4o-mini";
 
@@ -475,9 +460,8 @@ export const generateInCharacterComment = async ({
   model = DEFAULT_COMMENT_MODEL,
 }) => {
   if (!openAI) throw new Error("OpenAI client not provided");
-
   const postId = post?.id ?? null;
-  const hasPostWebMemory = await hasPostWebMemoryForPost(postId);
+  const hasPostWebMemory = !!postWebMemory;
 
   const resolvedMode =
     typeof mode === "string" && mode.toUpperCase() === "REPLY"
@@ -532,6 +516,19 @@ export const generateInCharacterComment = async ({
     ? postWebMemory ?? null
     : null;
 
+  const postWebMemorySummary =
+    hasPostWebMemory && postWebMemory
+      ? {
+          title: postWebMemory.title ?? null,
+          tags: Array.isArray(postWebMemory.tags)
+            ? postWebMemory.tags
+            : [],
+          topics: Array.isArray(postWebMemory.topics)
+            ? postWebMemory.topics
+            : [],
+        }
+      : null;
+
   const replyDepth =
     typeof metadata.replyDepth === "number" && Number.isFinite(metadata.replyDepth)
       ? metadata.replyDepth
@@ -557,6 +554,7 @@ export const generateInCharacterComment = async ({
       triggeredByMention: Boolean(metadata.triggeredByMention),
       repliedToBotId: metadata.repliedToBotId ?? null,
       ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
+      ...(postWebMemorySummary ? { postWebMemorySummary } : {}),
     },
     ...(structuredThreadContext
       ? {
