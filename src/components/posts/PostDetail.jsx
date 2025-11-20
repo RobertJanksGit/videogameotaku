@@ -1600,20 +1600,6 @@ const PostDetail = () => {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
                       type="button"
-                      onClick={handleWritePostClick}
-                      disabled={isWritePostBusy}
-                      className="inline-flex w-full items-center justify-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed sm:w-auto"
-                    >
-                      <span aria-hidden="true" className="leading-none">
-                        ＋
-                      </span>
-                      <span className="sm:hidden">Share news</span>
-                      <span className="hidden sm:inline">
-                        Share your own gaming news
-                      </span>
-                    </button>
-                    <button
-                      type="button"
                       onClick={scrollToComments}
                       className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 bg-transparent border border-transparent transition-colors focus:outline-none ${
                         darkMode
@@ -1692,6 +1678,25 @@ const PostDetail = () => {
             <JoinCommunityBanner />
 
             <MoreFromTodaySection currentPost={post} />
+
+            {/* Subtle write-post CTA above comments */}
+            <section className="mt-6 border-t border-slate-700 pt-5">
+              <p className="text-sm text-slate-300">
+                Have gaming news to share?{" "}
+                <button
+                  type="button"
+                  onClick={handleWritePostClick}
+                  disabled={isWritePostBusy}
+                  className={`bg-transparent border-0 p-0 font-semibold align-baseline transition-colors hover:underline ${
+                    darkMode
+                      ? "text-blue-400 hover:text-blue-300"
+                      : "text-blue-600 hover:text-blue-500"
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                  Share your own news →
+                </button>
+              </p>
+            </section>
 
             {/* Comments Section */}
             <section
