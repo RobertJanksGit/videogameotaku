@@ -851,6 +851,34 @@ const CommentThread = ({
     setActiveReplyTargetId((prev) => (prev === commentId ? null : commentId));
   };
 
+  // When a reply form is opened, automatically focus its textarea so users can
+  // start typing right away after clicking "Reply".
+  useEffect(() => {
+    if (!activeReplyTargetId) return;
+
+    const inputId = `reply-${activeReplyTargetId}`;
+
+    // Defer to the next frame to ensure the form is mounted in the DOM
+    const focusHandle = window.requestAnimationFrame(() => {
+      const textarea = document.getElementById(inputId);
+      if (textarea && typeof textarea.focus === "function") {
+        textarea.focus();
+        try {
+          const length = textarea.value?.length ?? 0;
+          if (typeof textarea.setSelectionRange === "function") {
+            textarea.setSelectionRange(length, length);
+          }
+        } catch {
+          // Ignore selection positioning errors (e.g., non-text inputs)
+        }
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(focusHandle);
+    };
+  }, [activeReplyTargetId]);
+
   const handleReplyCancel = () => {
     const targetId = activeReplyTargetId || parentComment.id;
     onClearReplyError(targetId);

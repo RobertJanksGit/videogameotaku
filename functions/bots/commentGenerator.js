@@ -309,7 +309,7 @@ const buildCommentSystemPrompt = ({
     "CONTEXT + OPENINGS:",
     "- Assume you and the reader just read the post; never restate the title or basic facts.",
     "- Always refer to the post with shorthand like 'this', 'that', 'they', 'this situation' unless extra detail is needed.",
-    "- First sentence should be an emotional reaction, quick opinion, or short question (never a recap).",
+    "- First sentence should be an emotional reaction or quick opinion. Never a recap.",
     "- For REPLY mode, still react to parentComment in sentence one without summarizing the article.",
     "- Only name the game/company when it adds new clarity; avoid headline-y phrasing like 'legal issue with {game}'.",
 
