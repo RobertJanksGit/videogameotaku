@@ -304,14 +304,21 @@ const buildCommentSystemPrompt = ({
     "- No buzzwords, no corporate/marketing voice, no article-y recaps.",
     `- BANNED PHRASES: ${bannedPhraseText}`,
     "- If a banned or similar phrase would appear, rewrite it in plain gamer talk.",
+    "- Treat recap-y patterns like 'this [specific noun phrase] is ...' as if they were banned phrasing; rewrite them to be vague or opinion-focused instead of descriptive.",
+    "- If any sentence would copy 8 or more consecutive words from the post text, rewrite that sentence to be vague shorthand instead.",
+    "- HARD RULE: Do NOT repeat or describe post details. Avoid naming characters, events, companies, or specifics unless the bot is expressing a personal take that naturally requires naming them.",
     "- Never narrate like a news article; react conversationally.",
 
     "CONTEXT + OPENINGS:",
     "- Assume you and the reader just read the post; never restate the title or basic facts.",
+    "- HIGH PRIORITY RULE: Humans rarely restate the post; start with vibe or emotion, not details. Favor vague shorthand like 'this is wild', 'such a mess', 'kinda hype', 'not sure how to feel about this' instead of describing what happened.",
     "- Always refer to the post with shorthand like 'this', 'that', 'they', 'this situation' unless extra detail is needed.",
     "- First sentence should be an emotional reaction or quick opinion. Never a recap.",
     "- For REPLY mode, still react to parentComment in sentence one without summarizing the article.",
     "- Only name the game/company when it adds new clarity; avoid headline-y phrasing like 'legal issue with {game}'.",
+
+    "POST CONTEXT:",
+    "- Default to vague references unless answering a direct question. Only use specifics when they meaningfully add a unique opinion or humor. Never summarize what the post says.",
 
     "STYLE RULES:",
     "- Obey character communicationStyle, slang, formatting, styleInstructions, and safety/compliance rules exactly.",
@@ -323,7 +330,7 @@ const buildCommentSystemPrompt = ({
     "- In REPLY mode, treat parentComment as the specific comment you're answering.",
     "- Use threadPath to understand the higher-level chain in the thread and keep your reply grounded in that flow.",
     "- Use threadContext to notice recent points so you don't repeat or contradict them accidentally.",
-    "- If mode === 'REPLY', your first sentence must react directly to parentComment (quote, paraphrase, or push back on something specific).",
+    "- If mode === 'REPLY', your first sentence must react to the parentComment’s vibe or point, not the factual content of the post.",
 
     "KNOWLEDGE & EXPERIENCE RULES:",
     "- You do NOT actually play every game.",
@@ -333,6 +340,10 @@ const buildCommentSystemPrompt = ({
     "- Never invent detailed personal anecdotes (hours, grinds, ranked tiers) unless it's explicitly your lane or a favoriteGameMatch.",
     "- Asking 1–2 specific questions beats pretending expertise.",
     "- If character.knowledgeRules are present, treat them as hard constraints on what you claim to know first-hand.",
+    "- metadata.isHomeTurf tells you whether this topic is actually your lane (true means home turf; false means off-lane).",
+    "- If metadata.isHomeTurf === false, do NOT act like a super fan.",
+    "- If metadata.isHomeTurf === false, do NOT say you love this game or that it’s a favorite.",
+    "- If metadata.isHomeTurf === false, default to mild curiosity, neutral takes, or admitting you don’t really know it yet.",
 
     "EXPERTISE SCALING:",
     "- Topics with interest >= 0.9 in character.topicPreferences are 'home turf' where you can sound hands-on.",
@@ -343,6 +354,8 @@ const buildCommentSystemPrompt = ({
     "- If you can't map the game/build to your core topics, ask one clarifying question, admit partial knowledge, or pivot to what you do know.",
     "- Saying 'I don't know' or 'haven't tried this yet' is acceptable and often better than faking it.",
     "- Use light, conversational hedging instead of formal disclaimers.",
+    "- When metadata.isHomeTurf is false, explicitly saying things like 'I haven't really played this one yet tbh' is good and honest.",
+    "- Never fake expertise or pretend you've played a ton when metadata.isHomeTurf is false.",
 
     "MODE HANDOFF:",
     "- Never re-decide the engagement path. mode already encodes TOP_LEVEL vs REPLY.",
@@ -377,6 +390,8 @@ const buildCommentSystemPrompt = ({
     "- Does this match the character's communicationStyle and styleInstructions?",
     "- Does it avoid claiming hands-on experience outside topicPreferences home turf or favoriteGameMatches?",
     "- If not, rewrite once to fix tone or knowledge issues before returning.",
+    "- If the comment sounds like you’re recapping the post, remove details and rewrite using shorthand.",
+    "- Just before returning, if your comment mentions more than one specific name, place, character, game title, or company from the post, strip or generalize them unless they’re absolutely necessary for your point or joke.",
 
     "OUTPUT FORMAT (strict JSON):",
     '{ "comment": string }',
@@ -501,6 +516,43 @@ export const rewriteHeadlineyOpener = (comment, postTitle = "") => {
   }
 
   return comment;
+};
+
+const softenOffLaneHype = (comment, opts = {}) => {
+  if (!comment || typeof comment !== "string") return comment;
+  const { isHomeTurf } = opts || {};
+  if (isHomeTurf) return comment;
+
+  let result = comment;
+
+  const replacementOptions = [
+    "kinda curious about this one",
+    "looks interesting tbh",
+    "this looks pretty cool",
+    "kinda interested to see how this goes",
+    "i've only seen bits and pieces so far",
+  ];
+
+  const pickReplacement = () =>
+    replacementOptions[randomInt(0, replacementOptions.length - 1)];
+
+  const patterns = [
+    /i love this game/gi,
+    /one of my favou?rites/gi,
+    /this is my favorite game/gi,
+    /i['’]m so hyped for this/gi,
+    /i['’]ve sunk [0-9]+ hours/gi,
+    /i['’]ve been playing this for years/gi,
+  ];
+
+  for (const pattern of patterns) {
+    if (pattern.test(result)) {
+      const replacement = pickReplacement();
+      result = result.replace(pattern, replacement);
+    }
+  }
+
+  return result;
 };
 
 /**
@@ -722,6 +774,34 @@ const buildCommentPrompt = ({
     return lowered && postTextForMatch.includes(lowered);
   });
 
+  // Determine if this topic is genuinely the bot's "home turf"
+  const topicPreferences =
+    bot && typeof bot.topicPreferences === "object" && bot.topicPreferences
+      ? bot.topicPreferences
+      : {};
+
+  let hasHomeTurfTopicMatch = false;
+  for (const [key, value] of Object.entries(topicPreferences)) {
+    if (!key) continue;
+    let interest = 0;
+    if (typeof value === "number") {
+      interest = value;
+    } else if (value && typeof value === "object") {
+      if (typeof value.interest === "number") {
+        interest = value.interest;
+      }
+    }
+    if (interest >= 0.9) {
+      const keyLower = String(key).toLowerCase();
+      if (keyLower && postTextForMatch.includes(keyLower)) {
+        hasHomeTurfTopicMatch = true;
+        break;
+      }
+    }
+  }
+
+  const isHomeTurf = favoriteGameMatches.length > 0 || hasHomeTurfTopicMatch;
+
   const postWebMemoryForPayload = hasPostWebMemory
     ? postWebMemory ?? null
     : null;
@@ -762,6 +842,7 @@ const buildCommentPrompt = ({
       intent: metadata.intent ?? "default",
       triggeredByMention: Boolean(metadata.triggeredByMention),
       repliedToBotId: metadata.repliedToBotId ?? null,
+      isHomeTurf,
       ...(Number.isFinite(replyDepth) ? { replyDepth } : {}),
       ...(postWebMemorySummary ? { postWebMemorySummary } : {}),
     },
@@ -915,13 +996,16 @@ export const generateInCharacterComment = async ({
   }
 
   // Clean and trim responses as a safety belt
+  const isHomeTurf =
+    favoriteGameMatches.length > 0 || Boolean(payload?.metadata?.isHomeTurf);
   const rawComment = enforceSingleLineComment(parsed.comment);
   const sanitized = sanitizeAIishComment(rawComment);
   const openerAdjusted = rewriteHeadlineyOpener(
     sanitized,
     normalizedPost.postTitle
   );
-  const sentences = openerAdjusted.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const softened = softenOffLaneHype(openerAdjusted, { isHomeTurf });
+  const sentences = softened.split(/(?<=[.!?])\s+/).filter(Boolean);
   const trimmedComment = sentences
     .slice(0, maxSentences)
     .join(" ")
