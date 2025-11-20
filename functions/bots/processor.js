@@ -414,6 +414,41 @@ const buildTranscriptForModel = (ctx) => {
   return lines.join("\n");
 };
 
+// Derive this bot's earlier comments within a thread for self-consistency.
+// Returns the first comment text plus an ordered list of all prior texts.
+// If you want to change how many comments are exposed, adjust this helper.
+const deriveBotThreadMemory = (ctx, bot) => {
+  const botId = bot?.uid ?? bot?.id ?? null;
+  if (!botId || !ctx || !Array.isArray(ctx.allComments)) {
+    return {
+      botFirstCommentInThread: null,
+      botPreviousComments: [],
+    };
+  }
+
+  // Sort by createdAt so we expose comments in true chronological order.
+  const sorted = [...ctx.allComments].sort(
+    (a, b) => timestampToMillis(a.createdAt) - timestampToMillis(b.createdAt)
+  );
+
+  const texts = sorted
+    .filter((c) => c && c.authorId && String(c.authorId) === String(botId))
+    .map((c) => c.content)
+    .filter((text) => typeof text === "string" && text.trim().length > 0);
+
+  if (!texts.length) {
+    return {
+      botFirstCommentInThread: null,
+      botPreviousComments: [],
+    };
+  }
+
+  return {
+    botFirstCommentInThread: texts[0],
+    botPreviousComments: texts,
+  };
+};
+
 const buildThreadPath = async (
   db,
   parentComment,
@@ -972,6 +1007,18 @@ const createCommentOnPostHelper = async (db, state, { bot, post, text }) => {
     commentId: commentRef.id,
   });
 
+  try {
+    console.log("cap_debug", {
+      type: "comment_written",
+      mode: "TOP_LEVEL",
+      botId: bot.uid,
+      postId: post.id,
+      commentId: commentRef.id,
+    });
+  } catch (e) {
+    // Best-effort logging only
+  }
+
   return commentRef.id;
 };
 
@@ -1028,6 +1075,19 @@ const createReplyHelper = async (
     parentComment,
     commentId: commentRef.id,
   });
+
+  try {
+    console.log("cap_debug", {
+      type: "comment_written",
+      mode: "REPLY",
+      botId: bot.uid,
+      postId: post.id,
+      parentCommentId: parentComment.id,
+      commentId: commentRef.id,
+    });
+  } catch (e) {
+    // Best-effort logging only
+  }
 
   return commentRef.id;
 };
@@ -1342,6 +1402,7 @@ const processSingleAction = async ({
             });
             if (ctx && ctx.targetComment) {
               const transcript = buildTranscriptForModel(ctx);
+              const botThreadMemory = deriveBotThreadMemory(ctx, bot);
               fullThreadContext = {
                 depth: ctx.depth,
                 targetComment: {
@@ -1355,6 +1416,10 @@ const processSingleAction = async ({
                   content: c.content,
                 })),
                 transcript,
+                // Bot self-consistency data: earlier comments by this bot
+                // within this thread. The commentGenerator wiring decides
+                // how to expose these to the LLM.
+                ...botThreadMemory,
               };
               replyDepth = ctx.depth;
             }
@@ -1393,6 +1458,15 @@ const processSingleAction = async ({
           postWebMemory: postWebMemoryForPrompt,
           metadata: metadataForGeneration,
         });
+
+        if (!generation || !generation.comment) {
+          outcome = {
+            status: "ignored",
+            reason: "decision_model_declined",
+          };
+          break;
+        }
+
         const finalComment = maybeAddTypos(bot, generation.comment);
 
         const wantsReply = desiredMode === "REPLY";
@@ -1567,6 +1641,7 @@ const processSingleAction = async ({
           });
           if (ctx && ctx.targetComment) {
             const transcript = buildTranscriptForModel(ctx);
+            const botThreadMemory = deriveBotThreadMemory(ctx, bot);
             fullThreadContext = {
               depth: ctx.depth,
               targetComment: {
@@ -1580,6 +1655,10 @@ const processSingleAction = async ({
                 content: c.content,
               })),
               transcript,
+              // Bot self-consistency data: earlier comments by this bot
+              // within this thread. The commentGenerator wiring decides
+              // how to expose these to the LLM.
+              ...botThreadMemory,
             };
             replyDepth = ctx.depth;
           }
@@ -1619,6 +1698,15 @@ const processSingleAction = async ({
           postWebMemory: postWebMemoryForPrompt,
           metadata: metadataForGeneration,
         });
+
+        if (!generation || !generation.comment) {
+          outcome = {
+            status: "ignored",
+            reason: "decision_model_declined",
+          };
+          break;
+        }
+
         const finalComment = maybeAddTypos(bot, generation.comment);
         const commentId = await createReplyHelper(db, state, {
           bot,

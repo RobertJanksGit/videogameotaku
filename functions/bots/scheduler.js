@@ -47,7 +47,7 @@ const COMMENTS_COLLECTION = "comments";
 
 const TEXT_FIELDS = ["title", "content", "body", "summary"];
 const POST_LOOKBACK_MINUTES = 720; // 12 hours
-const NOTIFICATION_LOOKBACK_MINUTES = 720; // 12 hours
+const NOTIFICATION_LOOKBACK_MINUTES = 1440; // 24 hours, so daily caps see a full day of comments
 const STATE_BUFFER_MINUTES = 5;
 const INITIAL_SCAN_MINUTES = 180;
 const MAX_POSTS_TO_SCAN = 60;
@@ -301,13 +301,12 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
     globalCommentState.commentsScheduledThisTick >=
       globalCommentState.perTickLimit;
 
-  const globalHourCapReached =
-    globalCommentState &&
-    numberOrNull(globalCommentState.perHourLimit) !== null &&
-    globalCommentState.hourCount >=
-      (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR);
+  // For direct replies, we respect per-thread limits and per-tick limits, but
+  // we intentionally do NOT enforce the global per-hour cap here. This gives
+  // human replies to bots a more reliable path while still keeping a hard
+  // safety limit via per-tick and per-thread guards.
 
-  if (threadCapReached || globalTickLimitReached || globalHourCapReached) {
+  if (threadCapReached || globalTickLimitReached) {
     console.log("bot_reply_candidate_skip", {
       type: "bot_reply_candidate_skip",
       botId: bot.uid,
@@ -315,9 +314,7 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
       commentId,
       reason: threadCapReached
         ? "thread_cap_reached"
-        : globalTickLimitReached
-        ? "global_cap_reached"
-        : "global_hour_cap_reached",
+        : "global_cap_reached",
     });
     return { scheduled: false };
   }
@@ -358,15 +355,6 @@ export async function maybeScheduleDirectReplyForComment(ctx) {
     count: (threadStats.count ?? 0) + 1,
     lastAt: Math.max(threadStats.lastAt ?? 0, scheduledAt),
   });
-
-  // Update global state
-  if (globalCommentState) {
-    globalCommentState.commentsScheduledThisTick =
-      (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-    globalCommentState.hourCount = (globalCommentState.hourCount ?? 0) + 1;
-    globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
-    globalCommentState.dirty = true;
-  }
 
   // Mark this comment as handled by this bot
   await commentRef.set(
@@ -530,16 +518,86 @@ const summarizeBotCommentsByPost = (comments = [], botIds = new Set()) => {
   };
 };
 
+/**
+ * Build lightweight cap snapshots from real comment documents.
+ *
+ * Only bot-authored comments (authorId in botIds) are counted. These snapshots
+ * are used for global/hourly and per-bot caps so that caps reflect *actual*
+ * comments written, not just scheduled or attempted actions.
+ *
+ * @param {Array<Object>} comments
+ * @param {Set<string>} botIds
+ * @param {number} now
+ */
+const buildCommentCapSnapshots = (comments = [], botIds = new Set(), now) => {
+  const hourWindowMs = minutesToMs(60);
+  const dayWindowMs = minutesToMs(24 * 60);
+  const hourWindowStartMs = now - hourWindowMs;
+  const dayWindowStartMs = now - dayWindowMs;
+
+  const perBot = new Map();
+  let globalHourCount = 0;
+  let globalDayCount = 0;
+
+  for (const comment of comments) {
+    const authorId = comment.authorId ?? null;
+    if (!authorId || !botIds.has(authorId)) continue;
+    const createdAtMs = comment.createdAtMs || 0;
+    if (!createdAtMs) continue;
+
+    let stats = perBot.get(authorId);
+    if (!stats) {
+      stats = {
+        hourWindowStartMs,
+        hourCount: 0,
+        dayWindowStartMs,
+        dayCount: 0,
+        lastTopLevelCommentAt: null,
+      };
+      perBot.set(authorId, stats);
+    }
+
+    if (createdAtMs >= hourWindowStartMs) {
+      stats.hourCount += 1;
+      globalHourCount += 1;
+    }
+    if (createdAtMs >= dayWindowStartMs) {
+      stats.dayCount += 1;
+      globalDayCount += 1;
+    }
+
+    // Track the last time this bot left a *top-level* comment for cooldowns.
+    if (
+      !comment.parentCommentId &&
+      (!stats.lastTopLevelCommentAt ||
+        createdAtMs > stats.lastTopLevelCommentAt)
+    ) {
+      stats.lastTopLevelCommentAt = createdAtMs;
+    }
+  }
+
+  return {
+    global: {
+      hourWindowStartMs,
+      hourCount: globalHourCount,
+      dayWindowStartMs,
+      dayCount: globalDayCount,
+    },
+    perBot,
+  };
+};
+
 const canBotLeaveTopLevelCommentOnPost = ({
   bot: _bot, // eslint-disable-line no-unused-vars
   post,
-  botCommentState,
   recentBotActivity,
   globalCommentState,
+  globalCommentCaps,
+  botCommentCaps,
   commentLimits,
   now,
 }) => {
-  const commentState = botCommentState?.state ?? botCommentState ?? {};
+  const commentState = botCommentCaps ?? {};
   const postAgeMinutes = (now - (post.createdAtMs || 0)) / minutesToMs(1);
   if (postAgeMinutes > COMMENT_ELIGIBILITY_LOOKBACK_MINUTES) {
     return { eligible: false, reason: "post_too_old" };
@@ -573,21 +631,44 @@ const canBotLeaveTopLevelCommentOnPost = ({
     return { eligible: false, reason: "global_cap_reached" };
   }
 
-  if (
-    globalCommentState &&
-    numberOrNull(globalCommentState.perHourLimit) !== null &&
-    globalCommentState.hourCount >=
-      (globalCommentState.perHourLimit ?? GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR)
-  ) {
+  const globalHourLimit =
+    numberOrNull(globalCommentState?.perHourLimit) ??
+    GLOBAL_TOP_LEVEL_COMMENTS_PER_HOUR;
+  const globalHourCount = numberOrNull(globalCommentCaps?.hourCount) ?? 0;
+  if (numberOrNull(globalHourLimit) !== null && globalHourCount >= globalHourLimit) {
+    const nowIso = new Date(now).toISOString();
+    console.log("cap_debug", {
+      type: "global_cap_check",
+      scope: "top_level_comment",
+      nowIso,
+      recentBotCommentsLastHour: globalHourCount,
+      maxCommentsPerHour: globalHourLimit,
+    });
     return { eligible: false, reason: "global_hour_cap_reached" };
   }
 
   const hourlyLimit = commentLimits?.perHour ?? BOT_TOP_LEVEL_COMMENTS_PER_HOUR;
   const dailyLimit = commentLimits?.perDay ?? BOT_TOP_LEVEL_COMMENTS_PER_DAY;
   if (hourlyLimit >= 0 && commentState.hourCount >= hourlyLimit) {
+    const nowIso = new Date(now).toISOString();
+    console.log("cap_debug", {
+      type: "bot_hourly_cap_check",
+      botId: _bot?.uid ?? null,
+      nowIso,
+      botCommentsThisHour: commentState.hourCount ?? 0,
+      maxBotCommentsPerHour: hourlyLimit,
+    });
     return { eligible: false, reason: "bot_hourly_cap" };
   }
   if (dailyLimit >= 0 && commentState.dayCount >= dailyLimit) {
+    const nowIso = new Date(now).toISOString();
+    console.log("cap_debug", {
+      type: "bot_daily_cap_check",
+      botId: _bot?.uid ?? null,
+      nowIso,
+      botCommentsToday: commentState.dayCount ?? 0,
+      maxBotCommentsPerDay: dailyLimit,
+    });
     return { eligible: false, reason: "bot_daily_cap" };
   }
   if (
@@ -1266,6 +1347,8 @@ export const runBotActivityForTick = async ({
   notifications,
   recentBotCommentSummary = null,
   globalCommentState = null,
+  botCommentCaps = null,
+  globalCommentCaps = null,
   commentLimits: commentLimitOverrides = null,
 }) => {
   const behavior = bot.behavior || {};
@@ -1509,9 +1592,10 @@ export const runBotActivityForTick = async ({
     const evaluation = canBotLeaveTopLevelCommentOnPost({
       bot,
       post,
-      botCommentState,
       recentBotActivity: botCommentActivity,
       globalCommentState,
+      globalCommentCaps,
+      botCommentCaps,
       commentLimits: perBotCommentLimits,
       now,
     });
@@ -1756,13 +1840,6 @@ export const runBotActivityForTick = async ({
       botCommentState.dayCount += 1;
       botCommentState.lastTopLevelCommentAt = scheduledAt;
       botCommentStateDirty = true;
-      if (globalCommentState) {
-        globalCommentState.commentsScheduledThisTick =
-          (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-        globalCommentState.hourCount = (globalCommentState.hourCount ?? 0) + 1;
-        globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
-        globalCommentState.dirty = true;
-      }
       console.log(
         JSON.stringify({
           type: "bot_comment_planned",
@@ -1931,6 +2008,8 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
     recentNotifications,
     botIdSet
   );
+  const { global: globalCommentCaps, perBot: perBotCommentCaps } =
+    buildCommentCapSnapshots(recentNotifications, botIdSet, nowValue);
   const globalCommentState = await loadGlobalCommentActivityState(db, nowValue);
 
   const batch = db.batch();
@@ -1969,6 +2048,8 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
       notifications: recentNotifications,
       recentBotCommentSummary,
       globalCommentState,
+      botCommentCaps: perBotCommentCaps.get(bot.uid) ?? null,
+      globalCommentCaps,
     });
 
     if (typeof result.eligiblePosts === "number") {
@@ -2077,32 +2158,10 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
             nowIso,
           })
         );
-        const { state: botCommentState } = normalizeBotCommentState(
-          runtimeState?.topLevelCommentStats,
-          nowValue
-        );
-        botCommentState.hourCount += 1;
-        botCommentState.dayCount += 1;
-        botCommentState.lastTopLevelCommentAt = scheduledAt;
-        if (globalCommentState) {
-          globalCommentState.commentsScheduledThisTick =
-            (globalCommentState.commentsScheduledThisTick ?? 0) + 1;
-          globalCommentState.hourCount =
-            (globalCommentState.hourCount ?? 0) + 1;
-          globalCommentState.dayCount = (globalCommentState.dayCount ?? 0) + 1;
-          globalCommentState.dirty = true;
-        }
         const stateRef = botRuntimeStateCollection(db).doc(bot.uid);
         batch.set(
           stateRef,
           {
-            topLevelCommentStats: {
-              hourWindowStartMs: botCommentState.hourWindowStartMs,
-              hourCount: botCommentState.hourCount,
-              dayWindowStartMs: botCommentState.dayWindowStartMs,
-              dayCount: botCommentState.dayCount,
-              lastTopLevelCommentAt: botCommentState.lastTopLevelCommentAt,
-            },
             lastActionScheduledAt: scheduledAt,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -2121,10 +2180,10 @@ export const runBotActivityTick = async ({ db, now = getNowMs() }) => {
     batch.set(
       globalCommentState.ref,
       {
-        hourWindowStartMs: globalCommentState.hourWindowStartMs,
-        hourCount: globalCommentState.hourCount,
-        dayWindowStartMs: globalCommentState.dayWindowStartMs,
-        dayCount: globalCommentState.dayCount,
+        hourWindowStartMs: globalCommentCaps.hourWindowStartMs,
+        hourCount: globalCommentCaps.hourCount,
+        dayWindowStartMs: globalCommentCaps.dayWindowStartMs,
+        dayCount: globalCommentCaps.dayCount,
         perTickLimit: globalCommentState.perTickLimit,
         perHourLimit: globalCommentState.perHourLimit,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

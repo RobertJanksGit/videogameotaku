@@ -34,7 +34,10 @@ import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 import { generateSitemap } from "./generateSitemap.js";
 import normalizeUrl from "./utils/normalizeUrl.js";
-import { runBotActivityTick, processScheduledBotActions } from "./bots/index.js";
+import {
+  runBotActivityTick,
+  processScheduledBotActions,
+} from "./bots/index.js";
 export {
   generatePostWebMemory,
   runPostWebMemoryQueue,
@@ -440,7 +443,9 @@ const getSystemUserIdPool = () => {
 
   const ids = new Set();
 
-  const optionalIds = parseSystemUserIdList(getOptionalSecretValue(systemUserIds));
+  const optionalIds = parseSystemUserIdList(
+    getOptionalSecretValue(systemUserIds)
+  );
   optionalIds.forEach((id) => ids.add(id));
 
   const defaultId = (() => {
@@ -2385,9 +2390,9 @@ async function processArticleBatch(
       article.publishDelayMs = publishDelayMs;
       if (publishAtTimestamp) {
         console.log(
-          `Scheduling article "${article.title}" to publish at ${publishAtTimestamp
-            .toDate()
-            .toISOString()}`
+          `Scheduling article "${
+            article.title
+          }" to publish at ${publishAtTimestamp.toDate().toISOString()}`
         );
       } else {
         console.log(
@@ -2850,9 +2855,9 @@ export const testFetchAndSavePosts = onRequest(
           article.publishDelayMs = publishDelayMs;
           if (publishAtTimestamp) {
             console.log(
-              `Scheduling article "${article.title}" to publish at ${publishAtTimestamp
-                .toDate()
-                .toISOString()}`
+              `Scheduling article "${
+                article.title
+              }" to publish at ${publishAtTimestamp.toDate().toISOString()}`
             );
           } else {
             console.log(
@@ -2945,11 +2950,26 @@ export const autoPostToFacebook = onDocumentWritten(
   async (event) => {
     console.log("autoPostToFacebook function triggered");
     let pageId = null;
+    let fbPageToken = null;
 
     // Validate configurations immediately
     try {
-      if (!FACEBOOK_PAGE_ACCESS_TOKEN.value()) {
+      const rawFbToken = FACEBOOK_PAGE_ACCESS_TOKEN.value();
+      fbPageToken =
+        typeof rawFbToken === "string" ? rawFbToken.trim() : rawFbToken;
+
+      if (!fbPageToken) {
         throw new Error("Facebook Page Access Token is not configured");
+      }
+
+      if (process.env.DEBUG_FACEBOOK === "true") {
+        console.log("[fb] token length:", fbPageToken.length);
+        console.log(
+          "[fb] token preview:",
+          fbPageToken.slice(0, 6),
+          "...",
+          fbPageToken.slice(-6)
+        );
       }
 
       // Validate website URL format
@@ -2967,16 +2987,33 @@ export const autoPostToFacebook = onDocumentWritten(
 
       // Get the page ID and verify access
       const pageResponse = await fetch(
-        `https://graph.facebook.com/v19.0/me?fields=id,access_token`,
-        {
-          headers: {
-            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
-          },
-        }
+        `https://graph.facebook.com/v21.0/me?fields=id,name&access_token=${encodeURIComponent(
+          fbPageToken
+        )}`
       );
 
       if (!pageResponse.ok) {
         const errorData = await pageResponse.json();
+        console.error("Facebook token validation failed:", {
+          fbErrorMessage: errorData.error?.message,
+          fbErrorType: errorData.error?.type,
+          fbErrorCode: errorData.error?.code,
+        });
+
+        if (
+          errorData.error?.type === "OAuthException" &&
+          typeof errorData.error?.message === "string" &&
+          errorData.error.message.includes("Cannot parse access token") &&
+          process.env.DEBUG_FACEBOOK === "true"
+        ) {
+          console.error("[fb] Cannot parse access token details:", {
+            tokenLength: fbPageToken.length,
+            tokenPreview: `${fbPageToken.slice(0, 6)}...${fbPageToken.slice(
+              -6
+            )}`,
+          });
+        }
+
         throw new Error(
           `Invalid Facebook token or page access: ${
             errorData.error?.message || "Token validation failed"
@@ -2990,16 +3027,19 @@ export const autoPostToFacebook = onDocumentWritten(
 
       // Verify the token works for posting
       const testResponse = await fetch(
-        `https://graph.facebook.com/v19.0/${pageId}?fields=id,name`,
-        {
-          headers: {
-            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
-          },
-        }
+        `https://graph.facebook.com/v21.0/${pageId}?fields=id,name&access_token=${encodeURIComponent(
+          fbPageToken
+        )}`
       );
 
       if (!testResponse.ok) {
         const errorData = await testResponse.json();
+        console.error("Facebook page access verification failed:", {
+          fbErrorMessage: errorData.error?.message,
+          fbErrorType: errorData.error?.type,
+          fbErrorCode: errorData.error?.code,
+        });
+
         throw new Error(
           `Cannot access page with token: ${
             errorData.error?.message || "Access verification failed"
@@ -3089,6 +3129,7 @@ export const autoPostToFacebook = onDocumentWritten(
       const postData = new URLSearchParams({
         message,
         link: postUrl,
+        access_token: fbPageToken,
       });
 
       console.log("Final Facebook post data:", {
@@ -3100,11 +3141,11 @@ export const autoPostToFacebook = onDocumentWritten(
 
       // Create the post
       const response = await fetch(
-        `https://graph.facebook.com/v19.0/${pageId}/feed`,
+        `https://graph.facebook.com/v21.0/${pageId}/feed`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN.value()}`,
+            "Content-Type": "application/x-www-form-urlencoded",
           },
           body: postData,
         }
@@ -3122,6 +3163,12 @@ export const autoPostToFacebook = onDocumentWritten(
       }
 
       if (!response.ok) {
+        console.error("Facebook post failed:", {
+          fbErrorMessage: responseData.error?.message,
+          fbErrorType: responseData.error?.type,
+          fbErrorCode: responseData.error?.code,
+        });
+
         throw new Error(
           `Facebook API error: ${
             responseData.error?.message || "Unknown error"
@@ -3421,8 +3468,6 @@ export const prerender = onRequest(
   }
 );
 
-
-
 export const runBotActivityScheduler = onSchedule(
   {
     schedule: "*/5 * * * *",
@@ -3437,14 +3482,13 @@ export const runBotActivityScheduler = onSchedule(
         db,
         now: Date.now(),
       });
-      const breakdown =
-        stats.breakdown ?? {
-          inactive_window: 0,
-          cooldown: 0,
-          no_targets: 0,
-          below_threshold: 0,
-          scheduled: 0,
-        };
+      const breakdown = stats.breakdown ?? {
+        inactive_window: 0,
+        cooldown: 0,
+        no_targets: 0,
+        below_threshold: 0,
+        scheduled: 0,
+      };
       const summary = {
         botsProcessed: stats.botsProcessed ?? 0,
         actionsScheduled: stats.actionsScheduled ?? 0,
@@ -3640,7 +3684,10 @@ export const onCommentWrite = onDocumentWritten(
         normalized.parentCommentId || normalized.parentId || commentId;
     }
 
-    if (!Array.isArray(normalized.mentions) || normalized.mentions.length === 0) {
+    if (
+      !Array.isArray(normalized.mentions) ||
+      normalized.mentions.length === 0
+    ) {
       try {
         const mentionResult = await buildMentionPayload(
           db,
@@ -3694,7 +3741,10 @@ export const onCommentWrite = onDocumentWritten(
       normalized.parentCommentId || normalized.parentId || null;
     if (parentCommentId) {
       try {
-        const parentRef = await resolveCommentRefByArgs(postId, parentCommentId);
+        const parentRef = await resolveCommentRefByArgs(
+          postId,
+          parentCommentId
+        );
         if (!parentRef) {
           console.warn("onCommentWrite create: parent comment ref not found", {
             parentCommentId,
@@ -3728,7 +3778,10 @@ export const onCommentWrite = onDocumentWritten(
       let parentAuthorId = null;
       try {
         // Prefer nested post-scoped comment; fall back to legacy root comment
-        const parentRef = await resolveCommentRefByArgs(postId, parentCommentId);
+        const parentRef = await resolveCommentRefByArgs(
+          postId,
+          parentCommentId
+        );
         if (parentRef) {
           const parentSnap = await parentRef.get();
           parentAuthorId = parentSnap.exists
@@ -3814,10 +3867,7 @@ export const toggleCommentLike = onCall(
       throw new HttpsError("unauthenticated", "Sign in to like comments.");
     }
 
-    if (
-      !commentPath &&
-      (!postId || !commentId)
-    ) {
+    if (!commentPath && (!postId || !commentId)) {
       throw new HttpsError(
         "invalid-argument",
         "Provide commentPath or postId/commentId."
@@ -3857,8 +3907,7 @@ export const toggleCommentLike = onCall(
           ? commentData.likeCount
           : 0;
         const resolvedPostId = commentData.postId || postId || null;
-        const resolvedCommentId =
-          commentData.id || commentId || commentRef.id;
+        const resolvedCommentId = commentData.id || commentId || commentRef.id;
 
         let liked;
         let nextLikeCount;
