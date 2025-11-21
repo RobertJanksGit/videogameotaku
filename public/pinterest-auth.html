@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pinterest OAuth Redirect</title>
+    <style>
+      body {
+        background: #111827;
+        color: #ffffff;
+        font-family: Arial, Helvetica, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 40px;
+      }
+      .container {
+        max-width: 600px;
+        width: 100%;
+        background: #1f2937;
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid #374151;
+      }
+      h1 {
+        margin-top: 0;
+        color: #93c5fd;
+      }
+      code {
+        background: #111827;
+        padding: 12px;
+        display: block;
+        white-space: pre-wrap;
+        border-radius: 6px;
+        border: 1px solid #374151;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Pinterest Authorization Code</h1>
+      <p>
+        Copy the authorization code below and paste it into your terminal to
+        exchange it for tokens:
+      </p>
+      <code id="authCode">Waiting for code...</code>
+
+      <p>
+        If this box shows <strong>“Waiting for code…”</strong>, your redirect
+        link wasn’t used correctly — contact your assistant.
+      </p>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+
+      document.getElementById("authCode").textContent = code
+        ? code
+        : "No code found in URL.";
+    </script>
+  </body>
+</html>

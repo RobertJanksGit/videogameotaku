@@ -8,7 +8,8 @@
  */
 
 "use strict";
-
+export { createPinterestPinOnNewPost } from "./pinterest.js";
+export { createXPostOnNewPost, postToX } from "./x.js";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
@@ -3467,6 +3468,34 @@ export const prerender = onRequest(
     }
   }
 );
+
+// LEGACY: OAuth2 PKCE redirect handler - kept for compatibility but no longer used
+// X integration now uses OAuth 1.0a with user context credentials
+export const xRedirect = onRequest((req, res) => {
+  const code = req.query.code;
+  const state = req.query.state;
+
+  console.log("[xRedirect] Incoming OAuth callback", { code, state });
+
+  if (!code) {
+    res.status(400).send("Missing ?code in query string.");
+    return;
+  }
+
+  res.status(200).send(
+    `
+      <html>
+        <body style="font-family: system-ui; padding: 24px;">
+          <h2>X OAuth callback received</h2>
+          <p><strong>Authorization code:</strong></p>
+          <pre style="white-space: pre-wrap; word-break: break-all; background:#f5f5f5; padding:12px;">${code}</pre>
+          <p><strong>state:</strong> ${state || "(none)"}</p>
+          <p>Copy the code above and use it in your terminal command to exchange it for access + refresh tokens.</p>
+        </body>
+      </html>
+    `
+  );
+});
 
 export const runBotActivityScheduler = onSchedule(
   {
